@@ -30,12 +30,21 @@ H.sentChatMessages={}
 Sync.HandleIncoming("WLRQ|Current|"..bh.."|"..dh.."|req-current","Current")
 Pump(20)
 assert(#H.sentChatMessages==0,"current requester should receive no duplicate traffic")
--- Identical peer claims the response first, so this peer suppresses its queued copy.
+-- A matching per-build bucket claim suppresses only that safely relayable
+-- build bucket. Legacy whole-state claims cannot suppress owner-only state.
 H.sentChatMessages={}
 Sync.HandleIncoming("WLRQ|NewPeer|0|0|req-claim","NewPeer")
-Sync.HandleIncoming("WLRC|RelayA|NewPeer|req-claim|"..bh.."|"..dh,"RelayA")
+local buildParts={}; for p in bh:gmatch("([^,]+)") do buildParts[#buildParts+1]=p end
+local buildBucket,buildBucketHash
+for i,value in ipairs(buildParts) do if value~="0" then buildBucket,buildBucketHash=i,value break end end
+assert(buildBucket,"test build did not occupy a reconciliation bucket")
+Sync.HandleIncoming("WLBC|RelayA|NewPeer|req-claim|B|"..buildBucket.."|"..buildBucketHash,"RelayA")
 Pump(20)
-assert(#H.sentChatMessages==0,"identical responder claim did not suppress duplicate reply")
+local duplicateBuild=false
+for _,m in ipairs(H.sentChatMessages) do
+  duplicateBuild=duplicateBuild or not not m.text:find("^WLRB|")
+end
+assert(not duplicateBuild,"matching build-bucket claim did not suppress duplicate build reply")
 -- A claim advertising different state must not suppress our useful contribution.
 H.sentChatMessages={}
 Sync.HandleIncoming("WLRQ|OtherPeer|0|0|req-different","OtherPeer")

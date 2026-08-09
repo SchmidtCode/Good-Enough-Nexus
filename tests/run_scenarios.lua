@@ -653,6 +653,8 @@ do
     })
     expect(result.type == "take",
         "disabled automatic Banish must fall through to a selectable action")
+    expect(result.forced == true,
+        "mandatory least-harmful selections must preserve forced-take metadata")
 end
 
 -- Final Phase B has no protected guarantee/frozen fallback, but its search

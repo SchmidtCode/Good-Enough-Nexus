@@ -380,6 +380,11 @@ function H.ResolveSelect(ok)
 end
 
 function Service.BanishPerk(idx)
+    H.banishAttempts = (H.banishAttempts or 0) + 1
+    if H.refuseNextBanish then
+        H.refuseNextBanish = nil
+        return false
+    end
     if Perks.pendingBanishIndex then return false end
     if not idx or idx < 0 or idx > 2 then return false end
     local c = Perks.currentChoice and Perks.currentChoice[idx + 1]
@@ -411,6 +416,11 @@ function Service.FreezePerk(idx)
 end
 
 function Service.RequestReroll()
+    H.rerollAttempts = (H.rerollAttempts or 0) + 1
+    if H.refuseNextReroll then
+        H.refuseNextReroll = nil
+        return false
+    end
     if Perks.pendingReroll then return false end
     Perks.pendingReroll = true
     H.rerollCalls = H.rerollCalls + 1

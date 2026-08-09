@@ -886,6 +886,9 @@ function Policy.Decide(state)
         annotations[convergencePick] == "duplicate"
             and "Forced take: every selectable Echo is already owned"
             or "Forced least-harmful selection")
+    -- Every executable search path has already returned. This selection is
+    -- mandatory, so preserve that fact for the save gate's pollution model.
+    convergenceAction.forced = true
     return finalSelection and Endgame(convergenceAction) or convergenceAction
 end
 

@@ -694,9 +694,13 @@ end
 
 local function RowMatchesBuild(row, buildId, key, hash)
     if type(row) ~= "table" then return false end
-    if buildId and row.buildId == buildId then return true end
     local rowKey = row.fingerprint
     local rowHash = row.loadoutHash or (rowKey and EchoHashFromKey(rowKey))
+    if buildId and row.buildId == buildId then
+        if key and rowKey and rowKey ~= key then return false end
+        if hash and rowHash and rowHash ~= hash then return false end
+        return true
+    end
     return (key and rowKey == key) or (hash and rowHash == hash)
 end
 
@@ -1385,7 +1389,17 @@ function DPS.ReceiveRecord(record, transportSender)
     local C = Nexus.CommunityBuilds
     if echoes and C and C.EnsureDpsBuildForEchoes then
         local ok, ensuredId = pcall(C.EnsureDpsBuildForEchoes, echoes, category, row)
-        if ok and ensuredId then row.buildId = ensuredId end
+        if ok and ensuredId then
+            row.buildId = ensuredId
+        elseif row.buildId then
+            -- The claimed opaque ID collided with a different loadout or
+            -- owner. Retry without it so the exact evidence receives a safe,
+            -- deterministic record page instead of attaching to that build.
+            row.buildId = nil
+            local safeOk, safeId = pcall(
+                C.EnsureDpsBuildForEchoes, echoes, category, row)
+            if safeOk and safeId then row.buildId = safeId end
+        end
     end
     bucket[PlayerKey(player)] = row
     if Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then

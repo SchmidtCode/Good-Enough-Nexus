@@ -51,8 +51,8 @@ local fillerFishState = {
 -- Reset at the same run boundary as fillerFishState (level == 1, below).
 local forcedTakesBySpell = {}
 local frozeThisBoard = nil       -- board signature we already spent a freeze on
-local refusedFinalBanishSig = nil
-local refusedFinalRerollSig = nil
+local refusedBanishSig = nil
+local refusedRerollSig = nil
 local externalPauseUntil = 0
 
 -- SAVE state
@@ -1283,11 +1283,11 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
         return
     end
 
-    if refusedFinalBanishSig and refusedFinalBanishSig ~= board.signature then
-        refusedFinalBanishSig = nil
+    if refusedBanishSig and refusedBanishSig ~= board.signature then
+        refusedBanishSig = nil
     end
-    if refusedFinalRerollSig and refusedFinalRerollSig ~= board.signature then
-        refusedFinalRerollSig = nil
+    if refusedRerollSig and refusedRerollSig ~= board.signature then
+        refusedRerollSig = nil
     end
 
     if armTargetSlot and not armedConfirmed then
@@ -1336,8 +1336,8 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
         params = DefaultProfile.params,
         allowBanish = settings.autoBanish ~= false,
         searchRefused = {
-            banish = refusedFinalBanishSig == board.signature,
-            reroll = refusedFinalRerollSig == board.signature,
+            banish = refusedBanishSig == board.signature,
+            reroll = refusedRerollSig == board.signature,
         },
         rerollBudget = {
             consecutive = fillerFishState.consecutive,
@@ -1545,10 +1545,12 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
         local ok, err = Adapter.Banish(action.index - 1)
         if ok then
             SetStatus(string.format("|cffff6666Banished|r echo #%d", action.index))
-        elseif action.endgame then
-            refusedFinalBanishSig = board.signature
+        else
+            refusedBanishSig = board.signature
             lastDecidedSig = nil
-            SetStatus("final-search Banish refused -- re-evaluating")
+            SetStatus(action.endgame
+                and "final-search Banish refused -- re-evaluating"
+                or "Banish refused -- trying another action")
         end
     elseif action.type == "freeze" then
         fillerFishState.consecutive = 0
@@ -1572,10 +1574,12 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
             else
                 fillerFishState.consecutive = 0
             end
-        elseif action.endgame then
-            refusedFinalRerollSig = board.signature
+        else
+            refusedRerollSig = board.signature
             lastDecidedSig = nil
-            SetStatus("final-search Reroll refused -- taking held Echo")
+            SetStatus(action.endgame
+                and "final-search Reroll refused -- taking held Echo"
+                or "Reroll refused -- taking the least-harmful Echo")
         end
     end
 end
@@ -1822,7 +1826,7 @@ local function Step()
             lastLoggedSig = nil
             lastBoardForRerollWatch = nil
             frozeThisBoard = nil
-            refusedFinalBanishSig, refusedFinalRerollSig = nil, nil
+            refusedBanishSig, refusedRerollSig = nil, nil
             Adapter.RunBoundaryReset()   -- void the dead run's picks/trust
         end
         if level ~= 80 then savedThisVisit = false end

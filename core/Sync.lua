@@ -278,6 +278,13 @@ local function TombAuthor(value)
     return type(value) == "table" and tostring(value.author or "") or ""
 end
 
+local function BucketContainsTombstone(bucket)
+    for id in pairs(tombstones or {}) do
+        if BuildBucket(id) == bucket then return true end
+    end
+    return false
+end
+
 local function LibraryHash(builds)
     local buckets = {}
     for i = 1, BUILD_BUCKETS do buckets[i] = {} end
@@ -1242,10 +1249,16 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
     local entry={key=key,requester=requester,requestId=requestId,peerBuildHash=peerBuildHash,peerDpsHash=peerDpsHash,buckets={}}
     for i=1,BUILD_BUCKETS do
         if tostring(peerB[i] or "") ~= tostring(myB[i] or "") then
-            entry.buckets["B"..i]={kind="B",bucket=i,hash=tostring(myB[i] or "0"),phase="wait",remaining=BucketDelay(key,"B",i)}
+            entry.buckets["B"..i]={kind="B",bucket=i,hash=tostring(myB[i] or "0"),
+                claimable=not BucketContainsTombstone(i),phase="wait",
+                remaining=BucketDelay(key,"B",i)}
         end
         if tostring(peerD[i] or "") ~= tostring(myD[i] or "") then
-            entry.buckets["D"..i]={kind="D",bucket=i,hash=tostring(myD[i] or "0"),phase="wait",remaining=BucketDelay(key,"D",i)}
+            -- Exact DPS evidence is owner-only. A peer that merely holds the
+            -- same row cannot retransmit it, so DPS buckets are never elected
+            -- through suppressible claims.
+            entry.buckets["D"..i]={kind="D",bucket=i,hash=tostring(myD[i] or "0"),
+                claimable=false,phase="wait",remaining=BucketDelay(key,"D",i)}
         end
     end
     if next(entry.buckets) then pendingResponses[key]=entry end
@@ -1254,10 +1267,13 @@ end
 
 local function HandleClaim(responder, requester, requestId, buildHash, dpsHash)
     local key=tostring(requester)..":"..tostring(requestId)
-    local pending=pendingResponses[key]
-    if pending and responder~=MyName() and tostring(buildHash)==tostring(CurrentBuildHash()) and tostring(dpsHash)==tostring(CurrentDpsHash()) then
-        pendingResponses[key]=nil
-        LogEvent("RX","suppressed duplicate legacy whole-state response; %s claimed",tostring(responder))
+    if pendingResponses[key] and responder~=MyName() then
+        -- Legacy whole-state claims cannot prove that the claimant owns every
+        -- DPS row or tombstone represented by the hashes. Keep the packet
+        -- readable for older peers, but never let it suppress an authoritative
+        -- owner response.
+        LogEvent("RX","ignored legacy whole-state claim from %s for owner-only safety",
+            tostring(responder))
     end
 end
 
@@ -1267,7 +1283,8 @@ local function HandleBucketClaim(responder, requester, requestId, kind, bucket, 
     local entry=pendingResponses[key]; if not entry then return end
     local id=tostring(kind)..tostring(tonumber(bucket) or 0)
     local b=entry.buckets and entry.buckets[id]
-    if b and tostring(b.hash)==tostring(bucketHash) then
+    if b and b.claimable ~= false
+        and tostring(b.hash)==tostring(bucketHash) then
         entry.buckets[id]=nil
         LogEvent("RX","mesh bucket %s claimed by %s for %s",id,tostring(responder),tostring(requester))
         if not next(entry.buckets) then pendingResponses[key]=nil end
@@ -1281,7 +1298,7 @@ local function ProcessPendingResponses(elapsed)
         for id,b in pairs(entry.buckets or {}) do
             b.remaining=(tonumber(b.remaining) or 0)-elapsed
             if b.remaining<=0 then
-                if b.phase=="wait" then
+                if b.phase=="wait" and b.claimable ~= false then
                     EnqueueControl(string.format("%s|%s|%s|%s|%s|%d|%s",CODE_BUCKET_CLAIM,MyName(),entry.requester,entry.requestId,b.kind,b.bucket,b.hash))
                     b.phase="settle"; b.remaining=BUCKET_SETTLE
                 else

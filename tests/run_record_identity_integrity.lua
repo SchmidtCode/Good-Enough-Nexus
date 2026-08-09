@@ -23,6 +23,7 @@ local id,b=C.EnsureDpsBuildForEchoes(mageEchoes,"dummy",{
 })
 assert(id and b and b.class=="MAGE", "local Mage record must create a Mage build")
 assert(type(b.fingerprintHash)=="string" and b.fingerprintHash~=""
+  and b.fingerprintHash==DPS.GetEchoHash(mageEchoes)
   and b.echoCount==2 and b.loadoutAvailable==true,
   "DPS build creation must refresh every derived identity field")
 assert(C.IsOwnBuild(id), "capturing character must own its record page")
@@ -46,6 +47,7 @@ for _,build in pairs(NexusDB.communityBuilds) do
 end
 assert(found and found.class=="MAGE", "remote Mage record must not inherit local Shaman class")
 assert(type(found.fingerprintHash)=="string" and found.fingerprintHash~=""
+  and found.fingerprintHash==DPS.GetEchoHash(remoteEchoes)
   and found.echoCount==3 and found.loadoutAvailable==true,
   "remote DPS build completion must refresh every derived identity field")
 assert(not found.isMine and not C.IsOwnBuild(found), "remote record build must remain non-editable")
@@ -57,5 +59,31 @@ assert(not DPS.ReceiveRecord({v=7,f=remoteFp,e=remoteEchoes,c="dummy",d=26000000
 assert(not DPS.ReceiveRecord({v=7,f=remoteFp,e=remoteEchoes,c="dummy",d=26000000,u=65,t=now,
   p="Remotemage",k="MAGE",o="someoneelse@ebonhold",r="ebonhold",l=80}),
   "mismatched owner identity must be rejected")
+
+-- A hostile/accidental build ID collision must not attach an exact DPS row
+-- to an unrelated loadout merely because the opaque IDs match.
+local collisionEchoes={{spellId=200104,stacks=1}}
+NexusDB.communityBuilds.collision={id="collision",title="Unrelated",author="Other",
+  ownerKey="other@ebonhold",class="MAGE",echoes=collisionEchoes,
+  fingerprint=DPS.GetEchoKey(collisionEchoes),postedAt=1,lastModified=1}
+local winningEchoes={{spellId=200105,stacks=2}}
+local winningFp=DPS.GetEchoKey(winningEchoes)
+assert(DPS.ReceiveRecord({v=7,f=winningFp,h=DPS.GetEchoHash(winningEchoes),e=winningEchoes,
+  c="dummy",d=27000000,u=65,t=now+1,p="Collisionmage",k="MAGE",
+  o="collisionmage@ebonhold",r="ebonhold",l=80,b="collision"},"Collisionmage"),
+  "valid colliding DPS record was rejected")
+local collisionRow
+for _,row in ipairs(DPS.GetDpsBoard("dummy")) do
+  if row.player=="Collisionmage" then collisionRow=row break end
+end
+assert(collisionRow and collisionRow.buildId~="collision"
+  and NexusDB.communityBuilds[collisionRow.buildId]
+  and NexusDB.communityBuilds[collisionRow.buildId].fingerprint==winningFp,
+  "colliding DPS build ID was not detached to an exact safe loadout")
+local unrelated=DPS.GetLeaderboard("collision","dummy")
+for _,row in ipairs(unrelated) do
+  assert(row.player~="Collisionmage",
+    "colliding DPS row leaked onto the unrelated build leaderboard")
+end
 
 print("record class, ownership, and identity integrity -- OK")

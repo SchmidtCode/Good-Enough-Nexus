@@ -585,6 +585,15 @@ local function FingerprintHash(text)
     return string.format("%08x%08x", h1, h2)
 end
 
+local function CanonicalFingerprintHash(text)
+    if type(text) ~= "string" or text == "" then return nil end
+    local h = 5381
+    for i = 1, #text do
+        h = ((h * 33) + text:byte(i)) % 2147483648
+    end
+    return string.format("%x", h)
+end
+
 local function NormalizeDiscordBuildLink(value)
     local link = tostring(value or ""):gsub("^%s+",""):gsub("%s+$","")
     if link == "" then return nil end
@@ -641,7 +650,9 @@ RefreshBuildIdentity = function(build)
         fingerprint = table.concat(parts, ",")
     end
     build.fingerprint = fingerprint
-    build.fingerprintHash = FingerprintHash(fingerprint)
+    build.fingerprintHash = D and D.GetEchoHash
+        and D.GetEchoHash(build.echoes)
+        or CanonicalFingerprintHash(fingerprint)
     build.echoCount = count
     build.loadoutAvailable = true
     build.needsFullBuild = false
@@ -2898,6 +2909,13 @@ end
 function M.Init(adapter, model)
     Adapter, Model = adapter, model
     RemoveLegacyBuilds()  -- once at startup, not on every Store() access
+    -- Repair hashes written by the short-lived two-part hash implementation.
+    -- This is metadata-only: no timestamps or ownership fields are changed.
+    for _, build in pairs(Store()) do
+        if type(build.echoes) == "table" and #build.echoes > 0 then
+            RefreshBuildIdentity(build)
+        end
+    end
 end
 
 function M.Select(id)
