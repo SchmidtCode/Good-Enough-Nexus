@@ -7,7 +7,7 @@ local clock=1000; GetTime=function() return clock end; time=function() return 50
 local function Pump(steps) for _=1,steps do clock=clock+0.2; Sync.OnUpdate(0.2) end end
 local who='Source'; UnitName=function() return who end
 local echoes={}; for i=1,79 do echoes[i]={spellId=200000+i,stacks=(i%3)+1,quality=3} end
-local build={id='build-79',title='Full Record Build',description=string.rep('description ',50),
+local build={id='build-79',title='AoE | ST',description=string.rep('description ',50),
     author='Source',ownerKey='source@ebonhold',class='MAGE',echoes=echoes,
     postedAt=10,lastModified=10,isMine=true}
 NexusDB={communityBuilds={[build.id]=build},syncTombstones={},dpsCapture={}}
@@ -41,6 +41,32 @@ for _,m in ipairs(summaries) do Sync.HandleIncoming(m.text,'Source') end
 local placeholder=NexusDB.communityBuilds['build-79']
 assert(placeholder and not placeholder.loadoutAvailable and not placeholder.echoes,
     'legacy summary was incorrectly treated as exact evidence')
+assert(placeholder.title=='AoE | ST',
+    'Base64-encoded summary title containing a wire delimiter was rejected')
 local immediate,why=Sync.RequestLoadout('build-79')
 assert(not immediate and why,'legacy recovery request did not remain background-only')
-print('complete current sync and safe legacy-summary compatibility -- OK')
+
+-- A recovery rejected at the queue cap must remain immediately eligible once
+-- a slot opens; rejected work must not receive the 120-second cooldown.
+Sync.Init(Nexus.Codec,{})
+local recoveryLimit=Sync.WorkState().maxRecoveryQueue
+for i=1,recoveryLimit do
+    local sent,reason=Sync.RequestLoadout('recovery-'..i)
+    assert(not sent and reason=='queued for background recovery',
+        'recovery queue rejected work before its documented cap')
+end
+assert(Sync.WorkState().recovery==recoveryLimit,
+    'recovery queue did not reach its documented cap')
+local sentOverflow,overflowReason=Sync.RequestLoadout('recovery-overflow')
+assert(not sentOverflow and overflowReason=='awaiting sync',
+    'overflow recovery request was not rejected explicitly')
+Sync.OnUpdate(1.6)
+assert(Sync.WorkState().recovery==recoveryLimit-1,
+    'recovery pump did not release one queue slot')
+local sentRetry,retryReason=Sync.RequestLoadout('recovery-overflow')
+assert(not sentRetry and retryReason=='queued for background recovery',
+    'rejected recovery request was incorrectly left on cooldown')
+assert(Sync.WorkState().recovery==recoveryLimit,
+    'immediate recovery retry did not enter the released slot')
+
+print('complete current sync, legacy recovery, and cooldown admission -- OK')

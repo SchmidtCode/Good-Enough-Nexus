@@ -31,4 +31,22 @@ local parts={}; for p in fullHash:gmatch("([^,]+)") do parts[#parts+1]=p end; pa
 broadcasts={}
 local n=DPS.BroadcastAllBuildBests(table.concat(parts,","))
 assert(n>0 and n<40,"one changed bucket should send a bounded subset, got "..tostring(n))
+local attempts,room,firstAdmitted={},1,nil
+DPS.Init({}, {BroadcastDpsRecord=function(record)
+ local key=tostring(record.category)..":"..tostring(record.player)
+ attempts[key]=(attempts[key] or 0)+1
+ if room<=0 then return false,"sync queue full" end
+ room=room-1; firstAdmitted=firstAdmitted or key
+ return true
+end})
+local progress={}
+local admitted,complete=DPS.BroadcastAllBuildBests("0",nil,progress)
+assert(admitted==1 and complete==false and firstAdmitted,
+ "partial DPS bucket admission was incorrectly reported as complete")
+room=200
+local resumed,resumeComplete=DPS.BroadcastAllBuildBests("0",nil,progress)
+assert(resumed==99 and resumeComplete==true,
+ "DPS bucket retry did not resume after the admitted record")
+assert(attempts[firstAdmitted]==1,
+ "DPS bucket retry re-enqueued an already admitted record")
 print("100-entry leaderboard and bucket-delta sync stress -- OK")

@@ -149,10 +149,21 @@ local record = {
     k="MAGE", o="alice@ebonhold", r="ebonhold",
 }
 local dpsData = Codec.Base64Encode(Codec.JSONEncode(record))
-Sync.HandleIncoming("WLD2|Mallory|spoof|1/1|" .. dpsData, "Mallory")
+local function DeliverDps(sender, transferId, encoded)
+    local chunkSize = 160
+    local total = math.ceil(#encoded / chunkSize)
+    for i = 1, total do
+        local chunk = encoded:sub((i - 1) * chunkSize + 1, i * chunkSize)
+        local packet = "WLD2|" .. sender .. "|" .. transferId .. "|"
+            .. i .. "/" .. total .. "|" .. chunk
+        assert(#packet <= 255, "DPS test fixture exceeded the real wire limit")
+        Sync.HandleIncoming(packet, sender)
+    end
+end
+DeliverDps("Mallory", "spoof", dpsData)
 assert(#DPS.GetDpsBoard("dummy") == 0,
     "DPS player spoof entered the verified board")
-Sync.HandleIncoming("WLD2|Alice|valid|1/1|" .. dpsData, "Alice")
+DeliverDps("Alice", "valid", dpsData)
 assert(#DPS.GetDpsBoard("dummy") == 1,
     "valid owner-bound DPS record was rejected")
 Sync.HandleIncoming("WLDS|Mallory|x|Mallory|999999999999|80|dummy",

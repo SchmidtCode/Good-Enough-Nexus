@@ -865,44 +865,73 @@ function DPS.BroadcastBestForBuild(buildId)
     return sent
 end
 
-function DPS.BroadcastAllBuildBests(peerHash, onlyBucket)
-    if peerHash and tostring(peerHash) == tostring(DPS.GetSyncHash()) then return 0 end
+function DPS.BroadcastAllBuildBests(peerHash, onlyBucket, progress)
+    if peerHash and tostring(peerHash) == tostring(DPS.GetSyncHash()) then
+        return 0, true
+    end
+    progress = type(progress) == "table" and progress or {}
     MigrateLegacyLeaderboard()
     local peerBuckets = SplitBucketHash(peerHash)
     local myBuckets = SplitBucketHash(DPS.GetSyncHash())
     local legacyPeer = #peerBuckets ~= DPS_BUCKETS
-    local n = 0
+    local n, complete = 0, true
     local store = CharacterBestStore()
+    local candidates = {}
     for _, category in ipairs({ "dummy", "lk" }) do
         for playerKey, row in pairs(store[category] or {}) do
             local bucket = DpsBucket(category, playerKey)
             if (not onlyBucket or bucket == onlyBucket) and (legacyPeer or tostring(peerBuckets[bucket] or "") ~= tostring(myBuckets[bucket] or ""))
                 and row and (tonumber(row.dps) or 0) > 0 and Sync and Sync.BroadcastDpsRecord then
-                local record = {
-                    protocolVersion=PROTOCOL_VERSION, fingerprint=row.fingerprint,
-                    loadoutHash=row.loadoutHash or EchoHashFromKey(row.fingerprint or ""),
-                    category=category, dps=math.floor(tonumber(row.dps) or 0),
-                    duration=tonumber(row.duration) or 0, ts=tonumber(row.ts) or 0,
-                    player=row.player or "?", level=tonumber(row.level) or 0, buildId=row.buildId,
-                    class=row.class, ownerKey=row.ownerKey, realm=row.realm,
-                    echoes=row.echoes,
-                    lockedEchoes=row.lockedEchoes,
+                local loadoutHash = row.loadoutHash
+                    or EchoHashFromKey(row.fingerprint or "")
+                candidates[#candidates + 1] = {
+                    key=table.concat({ category, tostring(playerKey),
+                        tostring(math.floor(tonumber(row.dps) or 0)),
+                        tostring(loadoutHash or "0") }, "|"),
+                    category=category, row=row, loadoutHash=loadoutHash,
                 }
-                local ok, result=pcall(Sync.BroadcastDpsRecord,record)
-                if ok and result~=false then
-                    n=n+1
-                    -- Also broadcast the build's echo list so peers can view
-                    -- and copy the exact loadout without needing the original
-                    -- player to be online.
-                    local build = row.buildId and (NexusDB and NexusDB.communityBuilds or {})[row.buildId]
-                    if build and type(build.echoes)=="table" and #build.echoes>0 and Sync.BroadcastBuild then
-                        pcall(Sync.BroadcastBuild, build)
-                    end
-                end
             end
         end
     end
-    return n
+    table.sort(candidates, function(a, b) return a.key < b.key end)
+    for _, item in ipairs(candidates) do
+        if not progress[item.key] then
+            local row, category = item.row, item.category
+            local record = {
+                protocolVersion=PROTOCOL_VERSION, fingerprint=row.fingerprint,
+                loadoutHash=item.loadoutHash,
+                category=category, dps=math.floor(tonumber(row.dps) or 0),
+                duration=tonumber(row.duration) or 0, ts=tonumber(row.ts) or 0,
+                player=row.player or "?", level=tonumber(row.level) or 0,
+                buildId=row.buildId, class=row.class, ownerKey=row.ownerKey,
+                realm=row.realm, echoes=row.echoes,
+                lockedEchoes=row.lockedEchoes,
+            }
+            local ok, result, why=pcall(Sync.BroadcastDpsRecord,record)
+            if ok and result~=false then
+                progress[item.key] = "admitted"
+                n=n+1
+                -- Also broadcast the build's echo list so peers can view and
+                -- copy it. DPS progress does not depend on this convenience
+                -- copy because the record already carries exact Echo evidence.
+                local build = row.buildId
+                    and (NexusDB and NexusDB.communityBuilds or {})[row.buildId]
+                if build and type(build.echoes)=="table"
+                    and #build.echoes>0 and Sync.BroadcastBuild then
+                    pcall(Sync.BroadcastBuild, build)
+                end
+            elseif not ok or why == "sync queue full" then
+                -- Stop at the first transient failure. The caller preserves
+                -- progress so the next attempt resumes here.
+                complete=false
+                break
+            else
+                -- Invalid/non-owner records are not retryable queue work.
+                progress[item.key] = "skipped"
+            end
+        end
+    end
+    return n, complete
 end
 
 -- Public board: one row per character for the selected encounter. The row is

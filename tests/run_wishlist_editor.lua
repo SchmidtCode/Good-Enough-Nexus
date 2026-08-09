@@ -44,4 +44,46 @@ for i = 1, 5 do
     assert(ok2, "Refresh() threw on iteration " .. i)
 end
 
-print("wishlist editor: lifecycle + seeding OK (checks=5)")
+-- Regression: opening Wishlists with an active Saved Build that has no
+-- association used to initialize the new-wishlist draft without showing the
+-- editor. The Panel had already suppressed its HUD, leaving both windows
+-- invisible and causing the HUD to flash closed on every subsequent render.
+-- Seed a prior unsaved draft with a queued lock design and a fulfilled lock
+-- target. Neither may carry into the new active-loadout draft.
+local staleEchoes = {}
+for i = 1, 80 do
+    staleEchoes[i] = { spellId = 310000 + i, quality = 3, stacks = 1 }
+end
+staleEchoes[80].locked = true
+local seededOk = pcall(EW.OpenForCandidate,
+    { title="Stale draft", echoes=staleEchoes })
+assert(seededOk, "failed to seed the prior unsaved lock-design draft")
+local staleDraft = EW.DebugDraftState()
+assert(staleDraft.pendingLock == 1,
+    "test setup did not create a queued stale lock design")
+EW._fulfilledDraftTargets[399999] = true
+frame:Hide()
+Adapter.Slots = function()
+    return {
+        activeSlot = 2,
+        maxSlots = 5,
+        bySlot = {
+            [2] = { slot = 2, name = "best2", echoes = {
+                { spellId = 200100, quality = 3, stacks = 1 },
+            } },
+        },
+    }
+end
+Adapter.GetLoadoutWishlist = function() return nil end
+local ok3 = pcall(EW.Show)
+assert(ok3, "Show() threw for an unassociated active loadout")
+assert(frame:IsShown(), "editor stayed hidden for an unassociated active loadout")
+local freshDraft = EW.DebugDraftState()
+assert(freshDraft.pending == 0 and freshDraft.pendingLock == 0
+    and freshDraft.fulfilled == 0,
+    "unassociated active loadout inherited stale draft or lock state")
+assert(freshDraft.scrollOffset == 0 and freshDraft.pickOffset == 0
+    and freshDraft.pendingLoadoutOpen == nil,
+    "unassociated active loadout did not reset complete editor draft state")
+
+print("wishlist editor: lifecycle + clean unassociated loadout open OK (checks=11)")
