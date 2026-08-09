@@ -93,4 +93,34 @@ assert(H.sentChatMessages[1]
     and H.sentChatMessages[1].text:find("queued%-1", 1, false),
     "queue overflow overwrote the oldest retained packet")
 
-print("sync channel validation, retry retention, and queue overflow policy -- OK")
+-- A responder must never publish a WLLC claim when the corresponding WLRB
+-- payload was rejected by bulk backpressure. Keep the response pending until
+-- capacity is available instead of suppressing every other responder.
+Sync.Init(Nexus.Codec, {})
+NexusDB.communityBuilds["claim-build"] = {
+    id="claim-build", title="Claim Build", author="Alice", class="MAGE",
+    lastModified=10, postedAt=10,
+    echoes={{spellId=200100, quality=3, stacks=1}},
+}
+limits = Sync.WorkState()
+for i = 1, limits.maxOutboundQueue do
+    assert(Sync.BroadcastDps("claim-fill-" .. i, "Alice", 3000 + i,
+        80, "dummy"), "failed to fill claim backpressure queue")
+end
+assert(Sync.HandleIncoming("WLLQ|Requester|claim-build", "Requester"),
+    "valid on-demand loadout request was rejected")
+assert(Sync.WorkState().pendingLoadouts == 1,
+    "on-demand loadout response was not scheduled")
+local oldTemporary2, oldNamed2 = JoinTemporaryChannel, JoinChannelByName
+H.joinedChannels = {}
+JoinTemporaryChannel = function() end
+JoinChannelByName = function() end
+Sync.OnUpdate(2)
+local rejectedResponse = Sync.WorkState()
+assert(rejectedResponse.control == 0,
+    "loadout claim was queued without an admitted build payload")
+assert(rejectedResponse.pendingLoadouts == 1,
+    "backpressured loadout response was not retained for retry")
+JoinTemporaryChannel, JoinChannelByName = oldTemporary2, oldNamed2
+
+print("sync channel validation, retry retention, overflow, and claim safety -- OK")

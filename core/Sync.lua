@@ -330,6 +330,14 @@ local function ValidIdentifier(value, maxBytes)
         and value:match("^[%w%._:@%+%-]+$") ~= nil
 end
 
+local function ValidTransferIdentifier(value)
+    -- Transfer IDs embed a player name, and valid WoW names may contain
+    -- non-ASCII UTF-8 bytes. Keep the wire delimiter/control protections
+    -- without applying the ASCII-oriented identifier character class.
+    return ValidField(value, MAX_TRANSFER_ID_BYTES, false)
+        and not value:find("%s")
+end
+
 local function ValidPeerName(value)
     return ValidField(value, 80, false)
         and not value:find("%s")
@@ -939,12 +947,12 @@ QueueLegacyRecovery = function(buildId)
     if build and type(build.echoes) == "table" and #build.echoes > 0 then return false end
     local now = Now()
     if requestedLoadouts[buildId] and now - requestedLoadouts[buildId] < 120 then return false end
-    requestedLoadouts[buildId] = now
     local depth = QueueDepth(legacyRecoveryHead, legacyRecoveryTail)
     if depth >= MAX_RECOVERY_QUEUE then
         RejectQueueOverflow("recovery", 1, depth, MAX_RECOVERY_QUEUE)
         return false
     end
+    requestedLoadouts[buildId] = now
     legacyRecoveryTail = legacyRecoveryTail + 1
     legacyRecoveryQueue[legacyRecoveryTail] = tostring(buildId)
     return true
@@ -1209,7 +1217,7 @@ function Sync.BroadcastDpsRecord(record)
     }
     local encoded = Codec.Base64Encode(Codec.JSONEncode(payload))
     local transferId = tostring(payload.p) .. ":" .. tostring(payload.t) .. ":" .. tostring(payload.d)
-    if not ValidIdentifier(transferId, MAX_TRANSFER_ID_BYTES)
+    if not ValidTransferIdentifier(transferId)
         or #encoded > MAX_ENCODED_BYTES then return false end
     local header = CODE_DPS2 .. "|" .. MyName() .. "|" .. transferId .. "|999/999|"
     local chunkSize = CHAT_LIMIT - CHAT_SAFETY - EscapedLen(header)
@@ -1248,7 +1256,7 @@ end
 local function HandleDps2(parts)
     local sender, transferId, spec, data = parts[2], parts[3], parts[4], parts[5]
     if not ValidPeerName(sender)
-        or not ValidIdentifier(transferId, MAX_TRANSFER_ID_BYTES)
+        or not ValidTransferIdentifier(transferId)
         or not ValidField(spec, 16, false)
         or not ValidField(data, MAX_CHUNK_BYTES, false) then return false end
     local idx, total = spec:match("^(%d+)/(%d+)$")
@@ -1621,10 +1629,20 @@ local function ProcessPendingResponses(elapsed)
     for _,entry in ipairs(loadoutReady) do
         local b=NexusDB and NexusDB.communityBuilds and NexusDB.communityBuilds[entry.buildId]
         if b and type(b.echoes)=="table" and #b.echoes>0 then
-            local claimed = EnqueueControl(string.format("%s|%s|%s|%s",
-                CODE_LOADOUT_CLAIM,MyName(),entry.requester,entry.buildId))
-            if claimed then
-                Sync.BroadcastBuild(b)
+            -- Queue the payload before publishing the prioritized claim. If
+            -- bulk backpressure rejects the build, keep this response pending
+            -- so another attempt or responder can still satisfy the request.
+            local sent, sendWhy = Sync.BroadcastBuild(b)
+            if sent and sendWhy ~= "duplicate suppressed" then
+                local claimed, claimWhy = EnqueueControl(string.format(
+                    "%s|%s|%s|%s",CODE_LOADOUT_CLAIM,MyName(),
+                    entry.requester,entry.buildId))
+                if not claimed then
+                    -- The payload is already retained in the bulk queue. It is
+                    -- safer to allow a duplicate response than to discard it.
+                    LogEvent("TX","loadout claim skipped for '%s': %s",
+                        tostring(entry.buildId),tostring(claimWhy or "control queue full"))
+                end
                 LogEvent("TX","answered on-demand loadout '%s' for %s",
                     tostring(entry.buildId),tostring(entry.requester))
             else

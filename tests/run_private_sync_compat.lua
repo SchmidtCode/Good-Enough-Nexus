@@ -4,7 +4,7 @@ local H=dofile('tests/harness.lua')
 dofile('core/Codec.lua'); dofile('core/Sync.lua'); dofile('core/DpsCapture.lua')
 local Codec,Sync,DPS=Nexus.Codec,Nexus.Sync,Nexus.DpsCapture
 local clock=1000; GetTime=function() return clock end; time=function() return 50000 end
-UnitName=function() return 'Localhero' end
+local currentName='Localhero'; UnitName=function() return currentName end
 UnitClass=function() return 'Mage','MAGE' end
 UnitLevel=function() return 80 end
 GetNormalizedRealmName=function() return 'Ebonhold' end
@@ -45,6 +45,32 @@ assert(payload.v==7 and payload.f==fp and payload.h==hash and type(payload.e)=='
 assert(payload.p=='Localhero' and payload.k=='MAGE' and payload.o=='localhero@ebonhold',
     'current wire lost sender identity evidence')
 
+-- Localized player names are valid in both the WLD2 envelope and its transfer
+-- ID. Exercise outbound generation and inbound reassembly with UTF-8 bytes.
+currentName='Duká'
+local localizedRecord={protocolVersion=7,fingerprint=fp,loadoutHash=hash,echoes=echoes,
+    category='dummy',dps=26000000,duration=66,ts=49001,player='Duká',class='MAGE',
+    ownerKey='duká@ebonhold',realm='ebonhold',level=80,buildId='dps-localized'}
+H.sentChatMessages={}
+assert(Sync.BroadcastDpsRecord(localizedRecord),
+    'localized player name was rejected from DPS transfer ID')
+Pump(8)
+local localizedMessages=H.sentChatMessages
+local localizedPayload=DecodeDps(localizedMessages)
+assert(localizedPayload.p=='Duká','localized DPS identity changed on the wire')
+
+currentName='Receiver'
+NexusDB={communityBuilds={},syncTombstones={},dpsCapture={}}
+Sync.Init(Codec,{}); DPS.Init({},Sync)
+for _,message in ipairs(localizedMessages) do
+    Sync.HandleIncoming(message.text,'Duká')
+end
+local receivedLocalized=false
+for _,row in pairs(NexusDB.dpsCapture.characterBest.dummy or {}) do
+    if row.player=='Duká' then receivedLocalized=true end
+end
+assert(receivedLocalized,'localized DPS transfer was rejected during reassembly')
+
 -- A v6 peer remains acceptable only when it supplies the same complete proof.
 assert(DPS.ReceiveRecord({v=6,f=fp,h=hash,e=echoes,c='dummy',d=18000000,u=61,t=40000,
     p='Legacy',k='MAGE',o='legacy@ebonhold',r='ebonhold',l=80,b='legacy-build'},'Legacy'),
@@ -60,4 +86,4 @@ assert(not DPS.ReceiveRecord({v=7,f=fp,h=hash,e=echoes,c='dummy',d=19000000,u=61
 local before=#DPS.GetDpsBoard('dummy')
 Sync.HandleIncoming('WLDS|Attacker|victim|dummy|999999999999|80|Attacker','Attacker')
 assert(#DPS.GetDpsBoard('dummy')==before,'legacy enormous/no-duration DPS was accepted')
-print('safe v6 evidence compatibility, protocol 7 wire, and legacy rejection -- OK')
+print('safe v6 compatibility, localized protocol 7 wire, and legacy rejection -- OK')

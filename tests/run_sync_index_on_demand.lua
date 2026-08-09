@@ -43,4 +43,28 @@ assert(placeholder and not placeholder.loadoutAvailable and not placeholder.echo
     'legacy summary was incorrectly treated as exact evidence')
 local immediate,why=Sync.RequestLoadout('build-79')
 assert(not immediate and why,'legacy recovery request did not remain background-only')
-print('complete current sync and safe legacy-summary compatibility -- OK')
+
+-- A recovery rejected at the queue cap must remain immediately eligible once
+-- a slot opens; rejected work must not receive the 120-second cooldown.
+Sync.Init(Nexus.Codec,{})
+local recoveryLimit=Sync.WorkState().maxRecoveryQueue
+for i=1,recoveryLimit do
+    local sent,reason=Sync.RequestLoadout('recovery-'..i)
+    assert(not sent and reason=='queued for background recovery',
+        'recovery queue rejected work before its documented cap')
+end
+assert(Sync.WorkState().recovery==recoveryLimit,
+    'recovery queue did not reach its documented cap')
+local sentOverflow,overflowReason=Sync.RequestLoadout('recovery-overflow')
+assert(not sentOverflow and overflowReason=='awaiting sync',
+    'overflow recovery request was not rejected explicitly')
+Sync.OnUpdate(1.6)
+assert(Sync.WorkState().recovery==recoveryLimit-1,
+    'recovery pump did not release one queue slot')
+local sentRetry,retryReason=Sync.RequestLoadout('recovery-overflow')
+assert(not sentRetry and retryReason=='queued for background recovery',
+    'rejected recovery request was incorrectly left on cooldown')
+assert(Sync.WorkState().recovery==recoveryLimit,
+    'immediate recovery retry did not enter the released slot')
+
+print('complete current sync, legacy recovery, and cooldown admission -- OK')
