@@ -44,4 +44,25 @@ for i = 1, 5 do
     assert(ok2, "Refresh() threw on iteration " .. i)
 end
 
-print("wishlist editor: lifecycle + seeding OK (checks=5)")
+-- Regression: opening Wishlists with an active Saved Build that has no
+-- association used to initialize the new-wishlist draft without showing the
+-- editor. The Panel had already suppressed its HUD, leaving both windows
+-- invisible and causing the HUD to flash closed on every subsequent render.
+frame:Hide()
+Adapter.Slots = function()
+    return {
+        activeSlot = 2,
+        maxSlots = 5,
+        bySlot = {
+            [2] = { slot = 2, name = "best2", echoes = {
+                { spellId = 200100, quality = 3, stacks = 1 },
+            } },
+        },
+    }
+end
+Adapter.GetLoadoutWishlist = function() return nil end
+local ok3 = pcall(EW.Show)
+assert(ok3, "Show() threw for an unassociated active loadout")
+assert(frame:IsShown(), "editor stayed hidden for an unassociated active loadout")
+
+print("wishlist editor: lifecycle + seeding + unassociated loadout open OK (checks=7)")

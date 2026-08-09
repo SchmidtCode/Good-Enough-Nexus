@@ -1442,6 +1442,11 @@ local function LoadEditorForLoadout(slot)
     currentLockKey = 0
     pendingSeeded = true
     if wishlistNameBox then wishlistNameBox:SetText("") end
+    -- M.Show delegates here whenever a real Saved Build is active. An
+    -- unassociated build is a valid new-wishlist destination, so this branch
+    -- must show the editor just like OpenForWishlist does for linked builds.
+    -- Without this, the Panel remains menu-suppressed while no editor appears.
+    frame:Show()
     M.Refresh()
 end
 
