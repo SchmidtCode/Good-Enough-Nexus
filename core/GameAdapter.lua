@@ -27,11 +27,15 @@ local lastBuildOpAt = -10
 local ownedSyncedFlag, ownedRequestAt, ownedRetries = false, nil, 0
 local selfCalling = false
 local ownedSeen = false
+local ownedGeneration, ownedConfirmedGeneration = 0, -1
+local ownedRequestGeneration = -1
+local ownedBaselineRef, ownedBaselineSig = nil, nil
 local boundaryAt = 0     -- time of last run boundary / PEW (owned-sync settle)
 local GHOST_OWNED = 25   -- level-1 owned count at/above which we suspect a dead-run ghost
 local pewDone = false
 local externalActionSeen = false
 local hooksInstalled = false
+local tomeMutationPausedUntil = 0
 -- per-latch watchdog: a client latch stuck >10s with no reply is DEAD for
 -- the session (per-action, like the client itself); never a whole-loop stall
 local latchSince, deadLatch = {}, {}
@@ -351,7 +355,8 @@ function A.LockedOwned()
         local fam = FamilyOf(id) or id
         byFamily[fam] = (byFamily[fam] or 0) + n
     end
-    return { bySpell = bySpell, byFamily = byFamily }
+    return { bySpell = bySpell, byFamily = byFamily,
+        synced = type(locked) == "table" }
 end
 
 -- Confirmed live via /nexus sniff, 2026-08-01: the server exposes the real
@@ -359,6 +364,28 @@ end
 function A.MaxPermanentEchoes()
     local svc = PS()
     return tonumber(svc and SafeCall(svc.GetMaximumPermanentEchoes)) or 6
+end
+
+local function GrantedSignature(granted)
+    if type(granted) ~= "table" then return nil end
+    local counts = {}
+    for _, entries in pairs(granted) do
+        if type(entries) == "table" then
+            for i = 1, #entries do
+                local id = type(entries[i]) == "table"
+                    and tonumber(entries[i].spellId) or nil
+                if id then counts[id] = (counts[id] or 0) + 1 end
+            end
+        end
+    end
+    local ids = {}
+    for id in pairs(counts) do ids[#ids + 1] = id end
+    table.sort(ids)
+    local out = {}
+    for i = 1, #ids do
+        out[#out + 1] = tostring(ids[i]) .. ":" .. tostring(counts[ids[i]])
+    end
+    return table.concat(out, ",")
 end
 
 function A.Owned()
@@ -394,32 +421,27 @@ function A.Owned()
         distinct = distinct + 1
         total = total + (tonumber(n) or 0)
     end
-    if distinct > 0 then ownedSeen = true end
-
-    -- Sync/trust model. MUST NOT DEADLOCK -- an earlier change-detection
-    -- version could stick "unsynced" for the whole run until /reload:
-    --  * distinct == 0  -> data not loaded yet (empty {} right after a
-    --    reset/reload). Always arrives within ~1s -> not synced, but transient.
-    --  * level >= 2      -> granted reflects the CURRENT run (the dead-run
-    --    ghost is a level-1-only artifact) -> trust it.
-    --  * level 1         -> a HUGE owned set is the dead run's ghost still
-    --    cached; a small set is the fresh run. Level-1 sync gates nothing
-    --    critical (ARM does not read owned.synced), so this is advisory only.
+    -- A response belongs to this run only when it changes the pre-request
+    -- table/reference or content snapshot. A successful prior run must not
+    -- satisfy a later generation, and elapsed time alone never makes an empty
+    -- snapshot authoritative. Replacing the granted table with a fresh empty
+    -- table is the supported confirmed-empty signal.
     local level = A.Level()
     local ghost = (level <= 1 and distinct >= GHOST_OWNED)
-    local synced
-    if level >= 2 then
-        -- trust once granted has loaded (distinct>0); or after a short
-        -- settle window since the last reset/reload, so a run that
-        -- genuinely owns nothing yet is not blocked forever (the empty-{}
-        -- reload window is covered without a deadlock)
-        synced = (distinct > 0) or ((GetTime() - (boundaryAt or 0)) > 4)
-    else
-        synced = not ghost   -- level 1 gates nothing critical
+    local currentResponse = ownedRequestGeneration == ownedGeneration
+        and type(granted) == "table"
+        and (granted ~= ownedBaselineRef
+            or GrantedSignature(granted) ~= ownedBaselineSig)
+    if (currentResponse or (ownedGeneration == 0 and distinct > 0))
+        and not ghost then
+        ownedConfirmedGeneration = ownedGeneration
     end
+    ownedSeen = ownedConfirmedGeneration == ownedGeneration
+    local synced = ownedSeen and not ghost
     return { bySpell = bySpell, byFamily = byFamily,
              synced = synced, ghostSuspect = ghost,
-             distinct = distinct, total = total }
+             distinct = distinct, total = total,
+             generation = ownedGeneration }
 end
 
 -- Run boundary (each visit to level 1): the previous run's recorded picks
@@ -428,6 +450,13 @@ end
 function A.RunBoundaryReset()
     recordedPicks = {}
     pendingOwnPick = nil
+    ownedGeneration = ownedGeneration + 1
+    ownedConfirmedGeneration = -1
+    ownedRequestGeneration = -1
+    ownedBaselineRef, ownedBaselineSig = nil, nil
+    ownedSeen = false
+    ownedSyncedFlag = false
+    ownedRequestAt = nil
     ownedRetries = 0
     boundaryAt = GetTime()
     A.RequestGranted()
@@ -436,6 +465,12 @@ end
 function A.RequestGranted()
     local svc = PS()
     if svc and svc.RequestGrantedPerks then
+        if ownedRequestGeneration ~= ownedGeneration then
+            local before = SafeCall(svc.GetGrantedPerks)
+            ownedBaselineRef = before
+            ownedBaselineSig = GrantedSignature(before)
+            ownedRequestGeneration = ownedGeneration
+        end
         SafeCall(svc.RequestGrantedPerks)
         ownedRequestAt = GetTime()
         ownedRetries = ownedRetries + 1
@@ -1076,6 +1111,9 @@ end
 
 function A.ToggleLever(leverId, wantDisabled)
     if A.DIAGNOSTIC_PASSIVE then return false, "internal.6 passive diagnostic: write blocked" end
+    if A.TomeMutationPaused and A.TomeMutationPaused() then
+        return false, "Tome of Echo transaction settling"
+    end
     local cat = A.Catalog()
     local svc = PS()
     if not cat or not svc or not svc.ToggleTomeEcho then return false, "no api" end
@@ -1314,7 +1352,12 @@ function A.Freeze(index0)
     if A.DIAGNOSTIC_PASSIVE then return false, "internal.6 passive diagnostic: write blocked" end
     if A.InFlight() then return false, "in flight" end
     if deadLatch.freeze then return false, "freeze dead this session" end
-    if (UnitLevel("player") or 0) >= 80 then return false, "no next board" end
+    if (UnitLevel("player") or 0) >= 80 then
+        local horizon = A.Horizon()
+        if type(horizon) ~= "number" or horizon <= 1 then
+            return false, "no trustworthy next board"
+        end
+    end
     local board = A.Board()
     if not board then return false, "no board" end
     local card = board.cards[index0 + 1]
@@ -1404,7 +1447,12 @@ function A.UploadWishlist(slot, name, echoes)
             else
                 family = "s:" .. tostring(spellId)
             end
-            local maxStack = math.max(1, tonumber(row and row.maxStack) or 1)
+            local requestedStacks = math.max(1, tonumber(e.stacks) or 1)
+            -- Unknown-but-well-formed Echoes come from newer server data. Do
+            -- not silently collapse their requested stack count to one merely
+            -- because this client's catalog has not learned the row yet.
+            local maxStack = row and math.max(1, tonumber(row.maxStack) or 1)
+                or requestedStacks
             -- Catalog first -- a known spellId's quality is fixed, not a
             -- variable roll result, so it's always authoritative once the
             -- catalog has the row. e.quality is only a fallback for a
@@ -1414,7 +1462,7 @@ function A.UploadWishlist(slot, name, echoes)
             -- below) needs the real value to pick the right survivor.
             local candidate = { spellId = spellId,
                 quality = tonumber(row and row.quality) or tonumber(e.quality) or 0,
-                stacks = math.min(maxStack, math.max(1, tonumber(e.stacks) or 1)) }
+                stacks = math.min(maxStack, requestedStacks) }
             local prior = byFamily[family]
             if not prior or candidate.quality > prior.quality then
                 byFamily[family] = candidate
@@ -1536,7 +1584,8 @@ function A.Horizon()
     if (UnitLevel("player") or 0) < 2 then return nil end
     local svc = PS()
     local n = svc and SafeCall(svc.GetPendingRollsCount)
-    return tonumber(n)
+    if type(n) ~= "number" then return nil end
+    return n
 end
 
 function A.ExternalActionSeen()
@@ -1557,6 +1606,65 @@ end
 ------------------------------------------------------------------------
 -- Hooks + events + poll
 ------------------------------------------------------------------------
+
+-- Rare Tome of Echo items use the stock bind-on-use popup. Pause only
+-- Nexus's automatic ToggleTomeEcho traffic before the first click and for a
+-- settling window after the item disappears. The popup remains stock-owned;
+-- inspection below is read-only and secondary to carried-bag detection.
+local BIND_SETTLE_SECONDS = 20
+
+local function IsBindConfirmation(which, popupText)
+    local key = tostring(which or ""):upper()
+    local lower = tostring(popupText or ""):lower()
+    if key:find("BIND", 1, true) then return true end
+    return lower:find("using this item will bind it to you", 1, true) ~= nil
+end
+
+local function HoldTomeMutations()
+    tomeMutationPausedUntil = math.max(tomeMutationPausedUntil,
+        (GetTime and GetTime() or 0) + BIND_SETTLE_SECONDS)
+end
+
+local function EchoTomeInBags()
+    if type(GetContainerNumSlots) ~= "function"
+        or type(GetContainerItemLink) ~= "function" then
+        return false
+    end
+    for bag = 0, 4 do
+        local slots = tonumber(SafeCall(GetContainerNumSlots, bag)) or 0
+        for slot = 1, slots do
+            local link = SafeCall(GetContainerItemLink, bag, slot)
+            if type(link) == "string" then
+                local name = SafeCall(GetItemInfo, link)
+                    or link:match("%[(.-)%]")
+                if tostring(name or ""):lower():find(
+                    "tome of echo", 1, true) then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function VisibleBindConfirmation()
+    for i = 1, 4 do
+        local frame = _G["StaticPopup" .. i]
+        if frame and frame.IsShown and frame:IsShown() then
+            local popupText = frame.text and frame.text.GetText
+                and frame.text:GetText() or nil
+            if IsBindConfirmation(frame.which, popupText) then return true end
+        end
+    end
+    return false
+end
+
+function A.TomeMutationPaused()
+    if EchoTomeInBags() or VisibleBindConfirmation() then
+        HoldTomeMutations()
+    end
+    return (GetTime and GetTime() or 0) < tomeMutationPausedUntil
+end
 
 local function InstallHooks()
     if hooksInstalled then return end

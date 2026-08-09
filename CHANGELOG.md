@@ -1,5 +1,9 @@
 # Nexus 1.19.3
 
+- Forward-ported the proven queue-aware Echo policy, exact-quality targets, final-search handling, refusal recovery, equal-progress wishlist rotation, and truthful horizon/final diagnostics without changing the 1.19.3 version or UI architecture.
+- Added pre-click Tome of Echo bag detection and a 20-second mutation pause while leaving the stock bind confirmation fully owned by the client.
+- Hardened build and DPS sync against oversized/conflicting transfers, sender/author spoofing, unsigned deletion relays, evidence-free legacy DPS records, partial build edits, and stale derived identities.
+- Made locked-Echo migration and current-run owned-state synchronization generation-aware and idempotent across reloads and new runs.
 - Wishlist progress is now counted per exact Echo/quality everywhere, matching the rule the save gate already used. A forced Uncommon copy no longer counts as one of the Rare copies your wishlist asked for.
 - Fixes STILL NEEDED and the save message contradicting the save decision: a run that shed forced Uncommon copies while gaining a real Rare one reported "loadout cleaned up — shed Quick Hands" and showed Quick Hands going backwards, even though the run was genuinely closer to the wishlist.
 - Clearing a wrong-quality copy now counts as cleanup in the save gate instead of scoring nothing, so a run whose only achievement is removing them can still save.

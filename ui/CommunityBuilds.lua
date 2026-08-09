@@ -10,6 +10,8 @@ Nexus = Nexus or {}
 local M = {}
 Nexus.CommunityBuilds = M
 
+local RefreshBuildIdentity
+
 ------------------------------------------------------------------------
 -- Constants / lookup tables
 ------------------------------------------------------------------------
@@ -117,6 +119,16 @@ local CLASS_MASK = {
     DEATHKNIGHT=32, SHAMAN=64, MAGE=128, WARLOCK=256, DRUID=1024,
 }
 
+local VALID_CLASS = {}
+for class in pairs(CLASS_MASK) do VALID_CLASS[class] = true end
+
+local function NormalizeClass(class)
+    class = type(class) == "string" and class:upper() or nil
+    return class and VALID_CLASS[class] and class or nil
+end
+
+-- Infer only from Echoes restricted to one class. Shared Echoes are ignored:
+-- counting them makes the result depend on unordered table iteration.
 local function InferBuildClass(echoes)
     local scores = {}
     local cat = Adapter and Adapter.Catalog and Adapter.Catalog()
@@ -126,20 +138,45 @@ local function InferBuildClass(echoes)
             local row = rows[tonumber(e.spellId)]
             local mask = row and tonumber(row.classMask) or 0
             if mask > 0 then
+                local matched, onlyClass = 0, nil
                 for class, classMask in pairs(CLASS_MASK) do
                     if bit.band(mask, classMask) ~= 0 then
-                        scores[class] = (scores[class] or 0) + 1
+                        matched = matched + 1
+                        onlyClass = class
                     end
+                end
+                if matched == 1 and onlyClass then
+                    scores[onlyClass] = (scores[onlyClass] or 0) + 1
                 end
             end
         end
     end
-    local best, bestScore = nil, 0
+    local best, bestScore, tied = nil, 0, false
     for class, score in pairs(scores) do
-        if score > bestScore then best, bestScore = class, score end
+        if score > bestScore then
+            best, bestScore, tied = class, score, false
+        elseif score == bestScore and score > 0 then
+            tied = true
+        end
     end
-    if best then return best end
-    return (select(2, UnitClass and UnitClass("player"))) or nil
+    return (bestScore > 0 and not tied) and best or nil
+end
+
+local function CurrentRealm()
+    local realm = GetNormalizedRealmName and GetNormalizedRealmName()
+    if not realm or realm == "" then realm = GetRealmName and GetRealmName() end
+    return tostring(realm or "unknown"):lower():gsub("%s+", "")
+end
+
+local function OwnerKey(name, realm)
+    name = tostring(name or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    if name == "" then return nil end
+    realm = tostring(realm or CurrentRealm()):lower():gsub("%s+", "")
+    return name .. "@" .. realm
+end
+
+local function CurrentOwnerKey()
+    return OwnerKey(UnitName and UnitName("player"), CurrentRealm())
 end
 
 ------------------------------------------------------------------------
@@ -321,14 +358,22 @@ end
 
 IsOwnBuild = function(build)
     if not build then return false end
+    local mine = CurrentOwnerKey()
+    if not mine then return false end
+    if build.ownerKey then
+        return tostring(build.ownerKey):lower() == mine
+    end
+    -- Legacy builds predate ownerKey. They remain editable only when both
+    -- their local marker and author name match the current character.
     if not build.isMine then return false end
-    -- Double-check: the author field must also match the current player.
-    -- isMine can be stale (set on character A, then the DB was copied to
-    -- character B, or EnsureDpsBuildForEchoes set it based on a name
-    -- comparison that was true at the time but is now wrong).
-    local me = UnitName and UnitName("player") or ""
-    local author = tostring(build.author or "")
-    return author:lower() == tostring(me):lower()
+    local me = tostring((UnitName and UnitName("player")) or ""):lower()
+    return me ~= "" and tostring(build.author or ""):lower() == me
+end
+
+function M.IsOwnBuild(idOrBuild)
+    local build = type(idOrBuild) == "table" and idOrBuild
+        or Store()[idOrBuild]
+    return IsOwnBuild(build)
 end
 
 local function NormalizeTitle(text)
@@ -458,7 +503,7 @@ local function ImportCurrentSavedLoadouts(force)
             local signature = table.concat(signatureParts, "|")
             if not old or old._savedSignature ~= signature then
                 local stamp = NextStamp(old and old.lastModified or 0)
-                Store()[id] = {
+                local record = {
                     id=id, title=title,
                     serverTitle=serverTitle,
                     userTitle=old and old.userTitle or nil,
@@ -468,19 +513,23 @@ local function ImportCurrentSavedLoadouts(force)
                     userDescription=old and old.userDescription or nil,
                     publishedBuildId=old and old.publishedBuildId or nil,
                     lastPublishedAt=old and old.lastPublishedAt or nil,
-                    author=me, class=class, echoes=echoes,
+                    author=me, ownerKey=CurrentOwnerKey(), class=class, echoes=echoes,
                     postedAt=(old and old.postedAt) or stamp, lastModified=stamp,
                     isMine=true, importedSavedBuild=true, serverSlot=slot, recordBuildId=recordBuildId,
                     destinationWishlistName=destinationName, destinationWishlistSlot=linked and linked.slot or nil,
                     destinationProgress=progress, destinationTotal=destinationTotal,
                     activeServerBuild=(slots.activeSlot == slot), _savedSignature=signature,
                 }
-                changed = changed + 1
+                if RefreshBuildIdentity(record) then
+                    Store()[id] = record
+                    changed = changed + 1
+                end
             elseif old then
                 old.activeServerBuild = slots.activeSlot == slot
                 old.serverSlot = slot
                 old.serverTitle = serverTitle
                 old.class = class
+                old.ownerKey = old.ownerKey or CurrentOwnerKey()
                 old.recordBuildId = recordBuildId
                 if not old.userTitle or old.userTitle == "" then old.title = serverTitle end
                 old.importedSavedBuild = true
@@ -536,6 +585,80 @@ local function FingerprintHash(text)
     return string.format("%08x%08x", h1, h2)
 end
 
+local function CanonicalFingerprintHash(text)
+    if type(text) ~= "string" or text == "" then return nil end
+    local h = 5381
+    for i = 1, #text do
+        h = ((h * 33) + text:byte(i)) % 2147483648
+    end
+    return string.format("%x", h)
+end
+
+local function NormalizeDiscordBuildLink(value)
+    local link = tostring(value or ""):gsub("^%s+",""):gsub("%s+$","")
+    if link == "" then return nil end
+    link = link:gsub("^<",""):gsub(">$","")
+    link = link:gsub("^http://", "https://")
+    link = link:gsub("^https://www%.discord%.com/", "https://discord.com/")
+    link = link:gsub("^https://discordapp%.com/", "https://discord.com/")
+    local guildId, channelId, messageId =
+        link:match("^https://discord%.com/channels/(%d+)/(%d+)/(%d+)/?$")
+    if guildId then
+        return string.format("https://discord.com/channels/%s/%s/%s",
+            guildId, channelId, messageId)
+    end
+    guildId, channelId =
+        link:match("^https://discord%.com/channels/(%d+)/(%d+)/?$")
+    if guildId then
+        return string.format("https://discord.com/channels/%s/%s",
+            guildId, channelId)
+    end
+    return nil,
+        "Paste a Discord channel or message link from discord.com/channels/."
+end
+
+RefreshBuildIdentity = function(build)
+    if type(build) ~= "table" or type(build.echoes) ~= "table"
+        or #build.echoes == 0 then return false, "invalid Echo list" end
+    local D = Nexus.DpsCapture
+    local count = 0
+    for i = 1, #build.echoes do
+        local e = build.echoes[i]
+        local id = type(e) == "table" and tonumber(e.spellId or e.id) or nil
+        local stacks = type(e) == "table"
+            and tonumber(e.stacks or e.count) or nil
+        if not id or not stacks or stacks < 1 or stacks ~= math.floor(stacks) then
+            return false, "invalid Echo list"
+        end
+        count = count + stacks
+        if count > 120 then return false, "too many Echoes" end
+    end
+    local fingerprint = D and D.GetEchoKey and D.GetEchoKey(build.echoes) or nil
+    if type(fingerprint) ~= "string" or fingerprint == "" then
+        local counts, ids = {}, {}
+        for i = 1, #build.echoes do
+            local e = build.echoes[i]
+            local id = tonumber(e.spellId or e.id)
+            counts[id] = (counts[id] or 0) + tonumber(e.stacks or e.count)
+        end
+        for id in pairs(counts) do ids[#ids + 1] = id end
+        table.sort(ids)
+        local parts = {}
+        for i = 1, #ids do
+            parts[#parts + 1] = tostring(ids[i]) .. "x" .. tostring(counts[ids[i]])
+        end
+        fingerprint = table.concat(parts, ",")
+    end
+    build.fingerprint = fingerprint
+    build.fingerprintHash = D and D.GetEchoHash
+        and D.GetEchoHash(build.echoes)
+        or CanonicalFingerprintHash(fingerprint)
+    build.echoCount = count
+    build.loadoutAvailable = true
+    build.needsFullBuild = false
+    return true
+end
+
 -- Ensure a personal-best Echo snapshot has a copyable community build page.
 -- Existing manual or automatic builds with the exact fingerprint are reused;
 -- a new deterministic record-loadout page is created only when none exists.
@@ -544,14 +667,82 @@ function M.EnsureDpsBuildForEchoes(echoes, category, record)
     if not (D and D.GetEchoKey) then return nil end
     local key = D.GetEchoKey(echoes)
     if not key then return nil end
-    local fallbackId, fallbackBuild
-    for id, build in pairs(Store()) do
-        if D.GetEchoKey(build.echoes) == key then
-            if not build.autoDps then return id, build end
-            fallbackId, fallbackBuild = fallbackId or id, fallbackBuild or build
+    local explicitClass = NormalizeClass(record and (record.class or record.k))
+    local player = tostring(record and record.player
+        or (UnitName and UnitName("player")) or "Unknown")
+    local recordOwner = record and record.ownerKey
+    local explicitId = record and (record.buildId or record.b)
+    if type(explicitId) ~= "string" or explicitId == "" then explicitId = nil end
+
+    -- A protocol build ID is an identity, not a derived alias. Never attach
+    -- its record to a different loadout or owner merely because IDs collide.
+    local explicitExisting = explicitId and Store()[explicitId] or nil
+    if explicitExisting then
+        local existingKey = explicitExisting.fingerprint
+            or D.GetEchoKey(explicitExisting.echoes)
+        if existingKey and existingKey ~= key then return nil end
+        if recordOwner and explicitExisting.ownerKey
+            and tostring(recordOwner):lower()
+                ~= tostring(explicitExisting.ownerKey):lower() then
+            return nil
+        end
+        if type(explicitExisting.echoes) ~= "table"
+            or #explicitExisting.echoes == 0 then
+            local copied = {}
+            for _, e in ipairs(echoes or {}) do
+                copied[#copied + 1] = {
+                    spellId=e.spellId or e.id,
+                    stacks=e.count or e.stacks or 1,
+                }
+            end
+            local refreshed = { echoes=copied }
+            if not RefreshBuildIdentity(refreshed) then return nil end
+            explicitExisting.echoes = copied
+            explicitExisting.fingerprint = refreshed.fingerprint
+            explicitExisting.fingerprintHash = refreshed.fingerprintHash
+            explicitExisting.echoCount = refreshed.echoCount
+            explicitExisting.loadoutAvailable = #copied > 0
+            explicitExisting.needsFullBuild = false
+            explicitExisting.tombstoned = nil
+            explicitExisting.autoDps = true
+            explicitExisting.author = explicitExisting.author or player
+            explicitExisting.ownerKey = explicitExisting.ownerKey or recordOwner
+            explicitExisting.class = explicitClass or explicitExisting.class
+                or InferBuildClass(copied) or "UNKNOWN"
+            if explicitExisting.title == "Loadout pending" then
+                explicitExisting.title = (CLASS_LABEL[explicitExisting.class]
+                    or explicitExisting.class) .. " Record Loadout"
+            end
+            explicitExisting.description = "Automatically completed from a compatible DPS record. Exact Echo IDs and stack quantities are preserved for copying and comparison."
+            explicitExisting.lastModified = NextStamp(
+                explicitExisting.lastModified or explicitExisting.postedAt or 0)
+            BroadcastIfPossible(explicitExisting)
+        end
+        return explicitId, explicitExisting
+    end
+
+    local ownAutoId, ownAutoBuild
+    local manualId, manualBuild
+    if not explicitId then
+        for id, build in pairs(Store()) do
+            if D.GetEchoKey(build.echoes) == key then
+                if not build.autoDps then
+                    if IsOwnBuild(build) then return id, build end
+                    manualId, manualBuild = manualId or id, manualBuild or build
+                else
+                    local sameOwner = recordOwner and build.ownerKey
+                        and tostring(recordOwner):lower()
+                            == tostring(build.ownerKey):lower()
+                    local sameLegacyAuthor = not recordOwner
+                        and tostring(build.author or ""):lower() == player:lower()
+                    if sameOwner or sameLegacyAuthor then
+                        ownAutoId, ownAutoBuild = id, build
+                    end
+                end
+            end
         end
     end
-    if fallbackId then return fallbackId, fallbackBuild end
+    if manualId then return manualId, manualBuild end
 
     local copied, seen = {}, {}
     for _, e in ipairs(echoes or {}) do
@@ -574,17 +765,43 @@ function M.EnsureDpsBuildForEchoes(echoes, category, record)
             end
         end
     end
-    local class = InferBuildClass(copied) or (select(2, UnitClass and UnitClass("player"))) or "UNKNOWN"
-    local player = tostring(record and record.player or (UnitName and UnitName("player")) or "Unknown")
     local me = tostring((UnitName and UnitName("player")) or "")
+    local playerIsLocal = player:lower() == me:lower()
+    local localClass
+    if playerIsLocal and UnitClass then
+        local _, token = UnitClass("player")
+        localClass = NormalizeClass(token)
+    end
+    local class = explicitClass or InferBuildClass(copied)
+        or localClass or "UNKNOWN"
+
+    if ownAutoId then
+        if explicitClass and ownAutoBuild.class ~= explicitClass then
+            ownAutoBuild.class = explicitClass
+            ownAutoBuild.title = (CLASS_LABEL[explicitClass] or explicitClass)
+                .. " Record Loadout"
+            ownAutoBuild.lastModified = NextStamp(
+                ownAutoBuild.lastModified or ownAutoBuild.postedAt)
+            BroadcastIfPossible(ownAutoBuild)
+        end
+        return ownAutoId, ownAutoBuild
+    end
+
     local stamp = NextStamp(0)
-    local id = "dps-" .. FingerprintHash(key)
+    local ownerKey = recordOwner or (playerIsLocal and CurrentOwnerKey() or nil)
+    local identity = ownerKey or player:lower()
+    local id = explicitId or ("dps-" .. FingerprintHash(key) .. "-"
+        .. FingerprintHash(identity):sub(1, 8))
     local build = {
         id=id, title=(CLASS_LABEL[class] or class) .. " Record Loadout",
         description="Automatically created from a verified DPS record. Exact Echo IDs and stack quantities are preserved for copying and comparison.",
-        author=player, class=class, echoes=copied, postedAt=stamp,
-        lastModified=stamp, isMine=(player == me), autoDps=true, fingerprint=key,
+        author=player, ownerKey=ownerKey, class=class, echoes=copied,
+        postedAt=stamp, lastModified=stamp,
+        isMine=(ownerKey and ownerKey == CurrentOwnerKey()) or false,
+        autoDps=true, fingerprint=key, loadoutAvailable=true,
+        needsFullBuild=false,
     }
+    if not RefreshBuildIdentity(build) then return nil end
     Store()[id] = build
     BroadcastIfPossible(build)
     return id, build
@@ -622,6 +839,9 @@ function M.PostCurrentWishlist(title, description, selectedWishlist, selectedCla
     end
     title = (title or ""):gsub("^%s+",""):gsub("%s+$","")
     if title == "" then title = (wl.name ~= "" and wl.name) or "Untitled" end
+    description = tostring(description or "")
+    if #title > 80 then return false, "title is too long" end
+    if #description > 2000 then return false, "description is too long" end
     local echoes = {}
     for _, e in ipairs(sourceEchoes) do
         echoes[#echoes+1] = { spellId=e.spellId, quality=e.quality, stacks=e.stacks or 1 }
@@ -629,11 +849,15 @@ function M.PostCurrentWishlist(title, description, selectedWishlist, selectedCla
     local stamp = NextStamp(0)
     local id = string.format("mine-%d-%d", stamp, math.random(100000,999999))
     local record = {
-        id=id, title=title, description=description or "",
+        id=id, title=title, description=description,
         author=(UnitName and UnitName("player")) or "You",
-        class=(selectedClass and tostring(selectedClass):upper()) or InferBuildClass(echoes) or wl.class,
+        ownerKey=CurrentOwnerKey(),
+        class=NormalizeClass(selectedClass) or InferBuildClass(echoes)
+            or NormalizeClass(wl.class),
         echoes=echoes, postedAt=stamp, lastModified=stamp, isMine=true,
     }
+    local identityOk, identityErr = RefreshBuildIdentity(record)
+    if not identityOk then return false, identityErr end
     Store()[id] = record
     BroadcastIfPossible(record)
     local D = Nexus.DpsCapture
@@ -673,19 +897,23 @@ function M.PublishImportedBuild(id)
         echoes[#echoes + 1] = { spellId=e.spellId, quality=e.quality, stacks=e.stacks or e.count or 1,
             locked = e.locked and true or false }
     end
-    local record = old or {}
-    record.id = publishedId
-    record.title = source.title or "Saved Build"
-    record.description = source.userDescription or source.description or ""
-    record.author = (UnitName and UnitName("player")) or "You"
-    record.class = source.class
-    record.echoes = echoes
-    record.postedAt = old and old.postedAt or stamp
-    record.lastModified = stamp
-    record.isMine = true
-    record.importedSavedBuild = nil
-    record.sourceSavedBuildId = id
-    record.serverSlot = nil
+    -- Build and validate a complete replacement before changing either record.
+    local record = {
+        id=publishedId,
+        title=source.title or "Saved Build",
+        description=source.userDescription or source.description or "",
+        author=(UnitName and UnitName("player")) or "You",
+        ownerKey=CurrentOwnerKey(),
+        class=NormalizeClass(source.class) or InferBuildClass(echoes),
+        echoes=echoes,
+        postedAt=old and old.postedAt or stamp,
+        lastModified=stamp,
+        isMine=true,
+        sourceSavedBuildId=id,
+        link=old and old.link or nil,
+    }
+    local identityOk, identityErr = RefreshBuildIdentity(record)
+    if not identityOk then return false, identityErr end
     Store()[publishedId] = record
     source.publishedBuildId = publishedId
     source.lastPublishedAt = stamp
@@ -695,18 +923,37 @@ function M.PublishImportedBuild(id)
     return true, publishedId
 end
 
-function M.EditBuild(id, title, description)
+function M.EditBuild(id, title, description, discordLink)
     local b = Store()[id]
     if not b then return false, "not found" end
     if not IsOwnBuild(b) then return false, "not your build" end
-    title = (title or ""):gsub("^%s+",""):gsub("%s+$","")
-    if title ~= "" then
-        b.title = title
-        if b.importedSavedBuild then b.userTitle = title end
+
+    -- Validate every candidate field before mutating any part of the record.
+    local nextTitle = tostring(title or ""):gsub("^%s+",""):gsub("%s+$","")
+    local nextDescription = description ~= nil
+        and tostring(description) or tostring(b.description or "")
+    if nextTitle == "" then nextTitle = tostring(b.title or "Untitled") end
+    if #nextTitle > 80 then return false, "title is too long" end
+    if #nextDescription > 2000 then return false, "description is too long" end
+    local nextLink = b.link
+    if discordLink ~= nil then
+        local raw = tostring(discordLink or "")
+        local normalized, linkErr = NormalizeDiscordBuildLink(raw)
+        if raw:match("^%s*$") then
+            nextLink = nil
+        elseif not normalized then
+            return false, linkErr or "invalid Discord build link"
+        else
+            nextLink = normalized
+        end
     end
-    if description ~= nil then
-        b.description = description
-        if b.importedSavedBuild then b.userDescription = description end
+
+    b.title = nextTitle
+    b.description = nextDescription
+    b.link = nextLink
+    if b.importedSavedBuild then
+        b.userTitle = nextTitle
+        b.userDescription = nextDescription
     end
     b.lastModified = NextStamp(b.lastModified or b.postedAt)
     -- Editing a server Saved Build mirror is local-only. It reaches the
@@ -735,7 +982,15 @@ function M.UpdateFromWishlist(id)
     for _, e in ipairs(wl.entries) do
         echoes[#echoes+1] = { spellId=e.spellId, quality=e.quality, stacks=e.stacks or 1 }
     end
+    local candidate = { echoes = echoes }
+    local identityOk, identityErr = RefreshBuildIdentity(candidate)
+    if not identityOk then return false, identityErr end
     b.echoes = echoes
+    b.fingerprint = candidate.fingerprint
+    b.fingerprintHash = candidate.fingerprintHash
+    b.echoCount = candidate.echoCount
+    b.loadoutAvailable = candidate.loadoutAvailable
+    b.needsFullBuild = candidate.needsFullBuild
     b.lastModified = NextStamp(b.lastModified or b.postedAt)
     BroadcastIfPossible(b)
     local D = Nexus.DpsCapture
@@ -809,7 +1064,6 @@ end
 
 function M.IsLockInPending() return pendingLockIn ~= nil end
 
-StaticPopupDialogs = StaticPopupDialogs or {}
 StaticPopupDialogs["NEXUS_LOCKIN_BUILD"] = {
     text = "Lock in '%s'?\nThis overwrites your current active wishlist.",
     button1 = "Lock In", button2 = "Cancel",
@@ -920,7 +1174,7 @@ local function EnsureDetailPanel(parent)
     -- get a box they can copy out in one click. Field is hidden when empty.
     local linkLabel = p:CreateFontString(nil,"OVERLAY","GameFontDisableSmall")
     linkLabel:SetPoint("TOPLEFT",10,-108)
-    linkLabel:SetText("|cff888888LINK TO BUILD|r")
+    linkLabel:SetText("|cff888888DISCORD BUILD LINK|r")
     p.linkLabel = linkLabel
 
     local linkBox = CreateFrame("EditBox",nil,p,"InputBoxTemplate")
@@ -951,11 +1205,14 @@ local function EnsureDetailPanel(parent)
         local link = linkBox:GetText():gsub("^%s+",""):gsub("%s+$","")
         local build = selectedId and Store()[selectedId]
         if not build or not IsOwnBuild(build) then return end
-        build.link = (link ~= "") and link or nil
-        build.lastModified = NextStamp(build.lastModified or build.postedAt)
-        BroadcastIfPossible(build)
-        print("|cff4dff80Nexus:|r build link saved.")
-        M.Refresh()
+        local ok, err = M.EditBuild(
+            selectedId, build.title, build.description, link)
+        if ok then
+            print("|cff4dff80Nexus:|r Discord build link saved.")
+            M.Refresh()
+        else
+            print("|cffff6060Nexus:|r " .. tostring(err))
+        end
     end)
     linkSaveBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self,"ANCHOR_TOP")
@@ -1619,8 +1876,9 @@ local function EnsureFrame()
     -- Main browser window: list and detail panel live together in one surface.
     frame = CreateFrame("Frame","NexusCommunityBuildsFrame",UIParent)
     frame:SetClampedToScreen(true)
-    UISpecialFrames = UISpecialFrames or {}
-    table.insert(UISpecialFrames, "NexusCommunityBuildsFrame")
+    if type(UISpecialFrames) == "table" then
+        table.insert(UISpecialFrames, "NexusCommunityBuildsFrame")
+    end
     frame:SetSize(1040,640)
     frame:SetPoint("CENTER")
     frame:SetFrameStrata("DIALOG")
@@ -2651,6 +2909,13 @@ end
 function M.Init(adapter, model)
     Adapter, Model = adapter, model
     RemoveLegacyBuilds()  -- once at startup, not on every Store() access
+    -- Repair hashes written by the short-lived two-part hash implementation.
+    -- This is metadata-only: no timestamps or ownership fields are changed.
+    for _, build in pairs(Store()) do
+        if type(build.echoes) == "table" and #build.echoes > 0 then
+            RefreshBuildIdentity(build)
+        end
+    end
 end
 
 function M.Select(id)
@@ -2697,4 +2962,3 @@ function M.Toggle()
     if frame:IsShown() then frame:Hide()
     else M.Show() end
 end
-

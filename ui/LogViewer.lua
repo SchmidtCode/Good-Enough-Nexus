@@ -99,16 +99,16 @@ local function StartExport()
     StopExport()
     activeTab = "ai_export"
     for _, b in ipairs(tabButtons or {}) do b:UnlockHighlight() end
-    editBox:SetText("Preparing full AI diagnostic log...\n\nNexus is building this over multiple frames so gameplay stays responsive.")
+    editBox:SetText("Preparing full diagnostic log...\n\nNexus is building this over multiple frames so gameplay stays responsive.")
     statusFS:SetText("Preparing export...")
     local factory = Nexus and Nexus.NewAIExportCoroutine
     if type(factory) ~= "function" then
-        editBox:SetText("AI export builder is unavailable.")
+        editBox:SetText("Diagnostic export builder is unavailable.")
         return
     end
     local ok, job = pcall(factory)
     if not ok or type(job) ~= "thread" then
-        editBox:SetText("Could not start AI export: " .. tostring(job))
+        editBox:SetText("Could not start diagnostic export: " .. tostring(job))
         return
     end
     exportJob = job
@@ -128,7 +128,7 @@ local function StartExport()
             if not okResume then
                 exportJob = nil
                 self:SetScript("OnUpdate", nil); self:Hide()
-                editBox:SetText("AI export failed: " .. tostring(value))
+                editBox:SetText("Diagnostic export failed: " .. tostring(value))
                 statusFS:SetText("export failed")
                 return
             end
@@ -148,7 +148,7 @@ local function StartExport()
                 return
             end
             if updateElapsed >= 0.12 then
-                statusFS:SetText(tostring(value or "Building full AI log...") .. " -- you may keep playing")
+                statusFS:SetText(tostring(value or "Building full diagnostic log...") .. " -- you may keep playing")
                 updateElapsed = 0
             end
         end
@@ -159,8 +159,9 @@ local function EnsureFrame()
     if frame then return frame end
     frame = CreateFrame("Frame", "NexusLogViewer", UIParent)
     frame:SetClampedToScreen(true)
-    UISpecialFrames = UISpecialFrames or {}
-    table.insert(UISpecialFrames, "NexusLogViewer")
+    if type(UISpecialFrames) == "table" then
+        table.insert(UISpecialFrames, "NexusLogViewer")
+    end
     frame:SetSize(700, 440)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
     frame:SetMovable(true)
@@ -228,12 +229,12 @@ local function EnsureFrame()
     exportButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     exportButton:SetSize(148, 22)
     exportButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -12, 7)
-    exportButton:SetText("Copy Full AI Log")
+    exportButton:SetText("Copy Full Diagnostic Log")
     exportButton:SetScript("OnClick", StartExport)
     exportButton:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText("Copy every retained decision and mismatch")
-        GameTooltip:AddLine("Creates one compact AI-ready block and selects it for Ctrl-C. The normal tabs stay shortened to prevent freezes.", 1, 1, 1, true)
+        GameTooltip:AddLine("Creates one compact diagnostic block and selects it for Ctrl-C. The normal tabs stay shortened to prevent freezes.", 1, 1, 1, true)
         GameTooltip:Show()
     end)
     exportButton:SetScript("OnLeave", function() GameTooltip:Hide() end)

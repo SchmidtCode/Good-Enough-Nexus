@@ -48,9 +48,20 @@ local CODE_DELETE     = "WLRD"
 local CODE_DPS        = "WLDS" -- legacy build-id DPS
 local CODE_DPS2       = "WLD2" -- exact-set DPS chunks
 local CODE_PRESENCE   = "WLNP" -- lightweight Nexus peer/version presence
+local PEER_PROTOCOL_CODES = {
+    [CODE_BUILD]=true, [CODE_INDEX]=true, [CODE_LOADOUT_REQ]=true,
+    [CODE_LOADOUT_CLAIM]=true, [CODE_REQUEST]=true, [CODE_CLAIM]=true,
+    [CODE_BUCKET_CLAIM]=true, [CODE_DELETE]=true, [CODE_DPS]=true,
+    [CODE_DPS2]=true, [CODE_PRESENCE]=true,
+}
 local CHAT_LIMIT      = 255    -- WoW SendChatMessage hard cap
 local CHAT_SAFETY     = 8      -- conservative margin
 local MAX_BYTES       = 32768  -- refuse builds larger than this
+local MAX_CHUNKS      = 999
+local MAX_CHUNK_BYTES = CHAT_LIMIT
+local MAX_ENCODED_BYTES = math.ceil(MAX_BYTES * 4 / 3) + 32
+local MAX_INFLIGHT_GLOBAL = 24
+local MAX_INFLIGHT_PER_SENDER = 4
 local SEND_INTERVAL   = 1.10   -- conservative channel pacing; avoids server chat spam/mutes
 local RECEIVE_WINDOW  = 60     -- compatibility/status timer; receiving is always enabled
 local INFLIGHT_GRACE  = 30     -- seconds to finish an interrupted chunk transfer
@@ -107,11 +118,45 @@ local autoSyncElapsed = 0
 local autoConverge = { active=false, pass=0, stable=0, started=0, lastInbound=0, buildHash=nil, dpsHash=nil }
 local Now, MyName
 local knownPeers = {} -- normalized player name -> { name, version, lastSeen }
+local CleanExpiredInflight
 
 local function NormalizePeerName(name)
     name = tostring(name or ""):gsub("%s+", "")
     name = name:match("^([^%-]+)") or name
     return name:lower()
+end
+
+local function SamePeer(a, b)
+    local ak = NormalizePeerName(a)
+    local bk = NormalizePeerName(b)
+    return ak ~= "" and ak == bk
+end
+
+local function OwnerKeyMatchesAuthor(ownerKey, author)
+    if ownerKey == nil then return true end
+    if type(ownerKey) ~= "string" or #ownerKey > 160
+        or ownerKey:find("[%c|]") then return false end
+    local ownerName, realm = ownerKey:match("^([^@]+)@([^@]+)$")
+    return ownerName ~= nil and realm ~= nil and SamePeer(ownerName, author)
+end
+
+local function TransferCount(map, sender)
+    local total, perSender = 0, 0
+    local senderKey = NormalizePeerName(sender)
+    for _, entry in pairs(map) do
+        total = total + 1
+        if NormalizePeerName(entry.sender) == senderKey then
+            perSender = perSender + 1
+        end
+    end
+    return total, perSender
+end
+
+local function CanStartTransfer(map, sender)
+    local buildTotal, buildSender = TransferCount(inflight, sender)
+    local dpsTotal, dpsSender = TransferCount(dpsInflight, sender)
+    return (buildTotal + dpsTotal) < MAX_INFLIGHT_GLOBAL
+        and (buildSender + dpsSender) < MAX_INFLIGHT_PER_SENDER
 end
 
 local function MarkPeer(name, version)
@@ -142,6 +187,24 @@ local stats = {
     malformedRejected=0, ignoredOutsideWindow=0,
     oversizeDropped=0, updated=0, skippedUpToDate=0,
 }
+
+function Sync.WorkState()
+    local buildCount, buildBytes, dpsCount, dpsBytes = 0, 0, 0, 0
+    for _, entry in pairs(inflight) do
+        buildCount = buildCount + 1
+        buildBytes = buildBytes + (tonumber(entry.bytes) or 0)
+    end
+    for _, entry in pairs(dpsInflight) do
+        dpsCount = dpsCount + 1
+        dpsBytes = dpsBytes + (tonumber(entry.bytes) or 0)
+    end
+    return {
+        buildInflight=buildCount, buildBytes=buildBytes,
+        dpsInflight=dpsCount, dpsBytes=dpsBytes,
+        maxGlobal=MAX_INFLIGHT_GLOBAL, maxPerSender=MAX_INFLIGHT_PER_SENDER,
+        maxEncodedBytes=MAX_ENCODED_BYTES,
+    }
+end
 
 ------------------------------------------------------------------------
 -- Diagnostic log
@@ -184,6 +247,11 @@ local function EscapedLen(s)
     return #s + select(2, s:gsub("|", ""))
 end
 
+local function FiniteNumber(value)
+    return type(value) == "number" and value == value
+        and value < math.huge and value > -math.huge
+end
+
 -- djb2 hash of the caller's library so peers can skip sends when already
 -- up to date. Input: { [id] = { lastModified=N }, ... }
 local BUILD_BUCKETS = 8
@@ -208,6 +276,13 @@ end
 
 local function TombAuthor(value)
     return type(value) == "table" and tostring(value.author or "") or ""
+end
+
+local function BucketContainsTombstone(bucket)
+    for id in pairs(tombstones or {}) do
+        if BuildBucket(id) == bucket then return true end
+    end
+    return false
 end
 
 local function LibraryHash(builds)
@@ -248,6 +323,12 @@ local function CurrentDpsHash()
     return "0"
 end
 
+-- Read-only compatibility surface used by diagnostics and deterministic tests.
+-- It exposes the exact hashes placed on WLRQ without mutating sync state.
+function Sync.GetCompatibilityHashes()
+    return CurrentBuildHash(), CurrentDpsHash()
+end
+
 local function StableDelay(text)
     local h = 5381
     text = tostring(text or "")
@@ -275,6 +356,7 @@ local function CompactEncode(build)
         id = build.id,
         t  = build.title,
         a  = build.author,
+        o  = build.ownerKey,
         c  = build.class,
         m  = tonumber(build.lastModified) or tonumber(build.postedAt) or 0,
         d  = (type(build.description) == "string" and build.description ~= "")
@@ -292,10 +374,12 @@ local function CompactDecode(data)
     -- Support both compact (t/a/c/m/e) and legacy verbose (title/author/...)
     local title  = data.t or data.title
     local author = data.a or data.author
+    local ownerKey = data.o or data.ownerKey
     local class  = data.c or data.class
     local lastMod = tonumber(data.m or data.lastModified or data.postedAt) or 0
     local rawE   = data.e or data.echoes
     if not (data.id and title and type(rawE) == "table") then return nil end
+    if not OwnerKeyMatchesAuthor(ownerKey, author) then return nil end
     local echoes = {}
     for _, e in ipairs(rawE) do
         local spellId, quality, stacks, locked
@@ -323,6 +407,7 @@ local function CompactDecode(data)
         id          = tostring(data.id),
         title       = tostring(title):sub(1, 120),
         author      = type(author) == "string" and author:sub(1, 80) or "Unknown",
+        ownerKey    = type(ownerKey) == "string" and ownerKey:lower() or nil,
         class       = type(class) == "string" and class or nil,
         description = type(data.d or data.description) == "string"
                       and (data.d or data.description):sub(1, 4000) or "",
@@ -536,9 +621,11 @@ end
 
 local function SummaryEncode(build)
     return {
-        id=build.id, t=build.title, a=build.author, c=build.class,
+        id=build.id, t=build.title, a=build.author, o=build.ownerKey,
+        c=build.class,
         m=tonumber(build.lastModified) or tonumber(build.postedAt) or 0,
         h=build.fingerprintHash or HashText(BuildFingerprint(build)),
+        lh=HashText(build.link),
         n=(function()
             if type(build.echoes)=="table" then
                 local t=0; for _,e in ipairs(build.echoes) do t=t+(tonumber(e.stacks or e.count) or 1) end; return t
@@ -563,11 +650,18 @@ Sync.BroadcastBuildSummary = BroadcastSummary
 
 local QueueLegacyRecovery
 
-local function StoreSummary(data)
+local function StoreSummary(data, transportSender)
     if type(data)~="table" or not data.id or not data.t or not data.h then return false end
+    if not SamePeer(data.a, transportSender)
+        or not OwnerKeyMatchesAuthor(data.o or data.ownerKey, data.a) then
+        return false
+    end
     NexusDB.communityBuilds = NexusDB.communityBuilds or {}
     local id = tostring(data.id)
     local old = NexusDB.communityBuilds[id]
+    if old and old.isMine then return false end
+    if old and old.ownerVerified ~= false
+        and not SamePeer(old.author, data.a) then return false end
     local stamp = tonumber(data.m) or 0
     local tomb = tombstones[id]
     if tomb and stamp <= TombStamp(tomb) then
@@ -583,21 +677,27 @@ local function StoreSummary(data)
         stats.duplicatesSkipped = stats.duplicatesSkipped + 1
         if old and (type(old.echoes) ~= "table" or #old.echoes == 0) then
             QueueLegacyRecovery(id)
-            LogEvent("RX","legacy summary '%s' matched metadata; queued missing full loadout", tostring(data.t))
+            LogEvent("RX","DUPLICATE legacy summary '%s'; queued missing full loadout", tostring(data.t))
         else
             LogEvent("RX","skip summary '%s': DUPLICATE", tostring(data.t))
         end
         return false
     end
     local newHash = tostring(data.h)
+    local newLinkHash = type(data.lh) == "string" and data.lh or nil
+    local oldLinkHash = old and (old.linkHash or HashText(old.link)) or nil
+    local linkChanged = old ~= nil and newLinkHash ~= oldLinkHash
     local keepEchoes = old and old.fingerprintHash == newHash and old.echoes or nil
     NexusDB.communityBuilds[id] = {
         id=id, title=tostring(data.t):sub(1,120), author=tostring(data.a or "Unknown"):sub(1,80),
+        ownerKey=type(data.o)=="string" and data.o:lower() or nil,
         class=data.c, description=old and old.description or "",
         lastModified=stamp, postedAt=old and old.postedAt or stamp, isMine=old and old.isMine or false,
         autoDps=data.x==1, fingerprint=keepEchoes and old.fingerprint or nil,
         fingerprintHash=newHash, echoCount=tonumber(data.n) or 0,
         echoes=keepEchoes, loadoutAvailable=type(keepEchoes)=="table" and #keepEchoes>0,
+        linkHash=newLinkHash, needsFullBuild=linkChanged or nil,
+        ownerVerified=true,
     }
     seenRemoteIds[id] = stamp
     stats.received = stats.received + 1
@@ -610,7 +710,7 @@ local function StoreSummary(data)
         LogEvent("RX","STORED legacy summary '%s' by %s (%d Echo entries pending full sync)",
             tostring(data.t), tostring(data.a or "Unknown"), tonumber(data.n) or 0)
     end
-    if not keepEchoes then QueueLegacyRecovery(id) end
+    if not keepEchoes or linkChanged then QueueLegacyRecovery(id) end
     return true
 end
 
@@ -751,7 +851,8 @@ local function BroadcastMineFiltered(peerHash, onlyBucket)
     local n = 0
     for id, b in pairs(myMine) do
         local bucket = BuildBucket(id)
-        if (not onlyBucket or bucket == onlyBucket) and (legacyPeer or tostring(peerBuckets[bucket] or "") ~= tostring(myBuckets[bucket] or "")) then
+        if (not onlyBucket or bucket == onlyBucket)
+            and (legacyPeer or tostring(peerBuckets[bucket] or "") ~= tostring(myBuckets[bucket] or "")) then
             -- Send the complete build during reconciliation so receivers never
             -- need to click a menu item to fetch its Echo list. Summary is only
             -- a compatibility fallback for legacy/incomplete local rows.
@@ -766,7 +867,9 @@ local function BroadcastMineFiltered(peerHash, onlyBucket)
     end
     for id, tomb in pairs(tombstones or {}) do
         local bucket = BuildBucket(id)
-        if (not onlyBucket or bucket == onlyBucket) and (legacyPeer or tostring(peerBuckets[bucket] or "") ~= tostring(myBuckets[bucket] or "")) then
+        if SamePeer(TombAuthor(tomb), MyName())
+            and (not onlyBucket or bucket == onlyBucket)
+            and (legacyPeer or tostring(peerBuckets[bucket] or "") ~= tostring(myBuckets[bucket] or "")) then
             Enqueue(string.format("%s|%s|%s|%s|%s", CODE_DELETE, MyName(), id,
                 tostring(TombStamp(tomb)), TombAuthor(tomb)))
             n=n+1
@@ -812,19 +915,51 @@ end
 -- chunked using the same 255-byte-safe discipline as build sync.
 function Sync.BroadcastDpsRecord(record)
     if type(record) ~= "table" or type(record.fingerprint) ~= "string"
-        or not tonumber(record.dps) then return false end
-    local loadoutHash = record.loadoutHash
-    if not loadoutHash then
-        local fp = tostring(record.fingerprint)
-        loadoutHash = fp:sub(1,1) == "@" and fp:sub(2) or HashText(fp)
+        or type(record.echoes) ~= "table" then return false end
+    local dps = tonumber(record.dps)
+    local duration = tonumber(record.duration)
+    local stamp = tonumber(record.ts)
+    local level = tonumber(record.level)
+    local player = tostring(record.player or "")
+    local playerClass = type(record.class) == "string"
+        and record.class:upper() or nil
+    local validClass = playerClass == "WARRIOR" or playerClass == "PALADIN"
+        or playerClass == "HUNTER" or playerClass == "ROGUE"
+        or playerClass == "PRIEST" or playerClass == "DEATHKNIGHT"
+        or playerClass == "SHAMAN" or playerClass == "MAGE"
+        or playerClass == "WARLOCK" or playerClass == "DRUID"
+    local D = Nexus.DpsCapture
+    local computed = D and D.GetEchoKey and D.GetEchoKey(record.echoes) or nil
+    if not FiniteNumber(dps) or dps <= 0 or dps > 500000000
+        or not FiniteNumber(duration) or duration < 30
+        or not FiniteNumber(stamp) or stamp <= 0
+        or not FiniteNumber(level) or level < 1 or level > 80
+        or level ~= math.floor(level) or not validClass
+        or player == "" or #player > 64 or player:find("[%c|]")
+        or (record.category ~= "dummy" and record.category ~= "lk")
+        or not SamePeer(player, MyName())
+        or not OwnerKeyMatchesAuthor(record.ownerKey, player)
+        or not computed or computed ~= record.fingerprint then
+        return false
     end
-    if not loadoutHash then return false end
+    local loadoutHash = record.loadoutHash
+    if not loadoutHash and D and D.GetEchoHash then
+        loadoutHash = D.GetEchoHash(record.echoes)
+    end
+    local computedHash = D and D.GetEchoHash and D.GetEchoHash(record.echoes)
+        or nil
+    if not loadoutHash or (computedHash and loadoutHash ~= computedHash) then
+        return false
+    end
     local payload = {
         v = tonumber(record.protocolVersion) or 5,
         h = loadoutHash,
-        c = record.category, d = math.floor(tonumber(record.dps) or 0),
-        u = tonumber(record.duration) or 0, t = tonumber(record.ts) or 0,
-        p = tostring(record.player or "?"), l = tonumber(record.level) or 0,
+        f = record.fingerprint,
+        e = record.echoes,
+        c = record.category, d = math.floor(dps),
+        u = duration, t = stamp,
+        p = player, l = level,
+        k = record.class, o = record.ownerKey, r = record.realm,
         b = record.buildId,
         lk = (type(record.lockedEchoes)=="table" and #record.lockedEchoes>0)
              and record.lockedEchoes or nil,
@@ -858,19 +993,10 @@ function Sync.BroadcastDps(buildId, player, dps, level, category)
 end
 
 local function HandleDps(parts)
-    local sender = parts[2] or ""
-    local buildId, player = parts[3], parts[4]
-    local dps, level = tonumber(parts[5]), tonumber(parts[6]) or 0
-    local category = parts[7] or "dummy"
-    -- Direct submission: player field must match the wire sender
-    if player and player ~= "" and player:lower() ~= sender:lower() then
-        LogEvent("RX","DROP direct DPS: player='%s' != sender='%s'", tostring(player), tostring(sender))
-        return
-    end
-    if Nexus.DpsCapture and Nexus.DpsCapture.ReceiveSubmission then
-        pcall(Nexus.DpsCapture.ReceiveSubmission,
-            buildId, player, dps, level, category)
-    end
+    -- The legacy format has no duration, timestamp, or exact Echo evidence.
+    -- Keep the code recognized so old traffic fails cleanly, but never admit
+    -- it to a verified leaderboard.
+    LogEvent("RX", "DROP legacy DPS submission without required evidence")
 end
 
 local function HandleDps2(parts)
@@ -879,22 +1005,44 @@ local function HandleDps2(parts)
     if not (sender and transferId and spec and data) then return end
     local idx, total = spec:match("^(%d+)/(%d+)$")
     idx, total = tonumber(idx), tonumber(total)
-    if not (idx and total and idx >= 1 and idx <= total and total <= 999) then return end
+    if not (idx and total and idx >= 1 and idx <= total
+        and total >= 1 and total <= MAX_CHUNKS
+        and #data <= MAX_CHUNK_BYTES) then return end
     local key = sender .. ":" .. transferId
     local e = dpsInflight[key]
     if not e then
-        e = { chunks = {}, total = total, t0 = Now() }
+        CleanExpiredInflight()
+        if not CanStartTransfer(dpsInflight, sender) then return end
+        e = { chunks = {}, total = total, t0 = Now(), lastSeen = Now(),
+            sender = sender, bytes = 0, received = 0 }
         dpsInflight[key] = e
     end
     if e.total ~= total then dpsInflight[key] = nil; return end
+    e.lastSeen = Now()
+    local prior = e.chunks[idx]
+    if prior ~= nil then
+        if prior ~= data then dpsInflight[key] = nil end
+        return
+    end
+    if e.bytes + #data > MAX_ENCODED_BYTES then
+        dpsInflight[key] = nil
+        return
+    end
     e.chunks[idx] = data
-    for i = 1, total do if not e.chunks[i] then return end end
+    e.bytes = e.bytes + #data
+    e.received = e.received + 1
+    if e.received ~= total then return end
     dpsInflight[key] = nil
     local raw = Codec.Base64Decode(table.concat(e.chunks, "", 1, total))
     local record = raw and Codec.JSONDecode(raw)
     if type(record) ~= "table" then return end
     if Nexus.DpsCapture and Nexus.DpsCapture.ReceiveRecord then
-        local ok, accepted = pcall(Nexus.DpsCapture.ReceiveRecord, record)
+        if not SamePeer(record.p or record.player, sender) then
+            LogEvent("RX", "DROP DPS owner mismatch from %s", tostring(sender))
+            return
+        end
+        local ok, accepted = pcall(
+            Nexus.DpsCapture.ReceiveRecord, record, sender)
         if ok and accepted then
             -- Mesh redistribution: relay the record so peers learn about it.
             Sync.BroadcastDpsRecord(record)
@@ -914,6 +1062,7 @@ function Sync.BroadcastDelete(build)
     if not build or not build.id then return false end
     local stamp = tostring((time and time()) or 0)
     local author = tostring(build.author or MyName())
+    if not SamePeer(author, MyName()) then return false end
     tombstones[build.id] = { stamp=tonumber(stamp) or 0, author=author }
     Enqueue(string.format("%s|%s|%s|%s|%s",
         CODE_DELETE, MyName(), build.id, stamp, author))
@@ -925,10 +1074,17 @@ end
 -- Incoming
 ------------------------------------------------------------------------
 
-local function CleanExpiredInflight()
+CleanExpiredInflight = function()
     local now = Now()
     for key, v in pairs(inflight) do
-        if now - (v.t0 or now) > INFLIGHT_GRACE then inflight[key] = nil end
+        if now - (v.lastSeen or v.t0 or now) > INFLIGHT_GRACE then
+            inflight[key] = nil
+        end
+    end
+    for key, v in pairs(dpsInflight) do
+        if now - (v.lastSeen or v.t0 or now) > INFLIGHT_GRACE then
+            dpsInflight[key] = nil
+        end
     end
 end
 
@@ -948,14 +1104,15 @@ local function ShouldStore(id, lastMod)
         seenRemoteIds[id] = known
     end
     if known == nil then return true, "new" end
-    if existing and (type(existing.echoes) ~= "table" or #existing.echoes == 0) then
+    if existing and (existing.needsFullBuild
+        or type(existing.echoes) ~= "table" or #existing.echoes == 0) then
         return true, "loadout"
     end
     if (tonumber(lastMod) or 0) > known then return true, "updated" end
     return false, "duplicate"
 end
 
-local function StoreReceivedBuild(payload)
+local function StoreReceivedBuild(payload, ownerVerified, relaySender)
     NexusDB.communityBuilds = NexusDB.communityBuilds or {}
     local existing = NexusDB.communityBuilds[payload.id]
     local mine = (existing and existing.isMine) or false
@@ -963,12 +1120,17 @@ local function StoreReceivedBuild(payload)
     local link = payload.link or (existing and existing.link) or nil
     NexusDB.communityBuilds[payload.id] = {
         id=payload.id, title=payload.title, description=payload.description,
-        author=payload.author, class=payload.class, echoes=payload.echoes,
+        author=payload.author,
+        ownerKey=ownerVerified and payload.ownerKey or nil,
+        class=payload.class, echoes=payload.echoes,
         postedAt=payload.postedAt, lastModified=payload.lastModified, isMine=mine,
         autoDps=payload.autoDps, fingerprint=BuildFingerprint(payload), fingerprintHash=HashText(BuildFingerprint(payload)),
         echoCount=(function() local t=0; for _,e in ipairs(payload.echoes) do t=t+(tonumber(e.stacks or e.count) or 1) end; return t end)(),
         loadoutAvailable=true,
         link=link,
+        linkHash=HashText(link), needsFullBuild=nil,
+        ownerVerified=ownerVerified and true or false,
+        relaySender=ownerVerified and nil or relaySender,
     }
     seenRemoteIds[payload.id] = payload.lastModified
     requestedLoadouts[payload.id] = nil
@@ -976,7 +1138,7 @@ local function StoreReceivedBuild(payload)
     lastSyncNewCount = lastSyncNewCount + 1
 end
 
-local function HandleComplete(buildId, lastMod, fullData)
+local function HandleComplete(buildId, lastMod, fullData, transportSender)
     local json = Codec.Base64Decode(fullData)
     if not json then
         stats.malformedRejected = stats.malformedRejected + 1
@@ -1003,7 +1165,17 @@ local function HandleComplete(buildId, lastMod, fullData)
         LogEvent("RX","REJECT id mismatch: envelope='%s' payload='%s'",
             tostring(buildId), tostring(payload.id)); return
     end
-    local allowed, why = ShouldStore(payload.id, payload.lastModified)
+    local directOwner = SamePeer(payload.author, transportSender)
+    local existing = NexusDB and NexusDB.communityBuilds
+        and NexusDB.communityBuilds[payload.id]
+    local replacingUnverified = existing and existing.ownerVerified == false
+        and directOwner
+    local allowed, why
+    if replacingUnverified then
+        allowed, why = true, "owner-verified"
+    else
+        allowed, why = ShouldStore(payload.id, payload.lastModified)
+    end
     if not allowed then
         if why == "deleted" then
             LogEvent("RX","skip '%s': tombstoned", tostring(payload.title))
@@ -1012,6 +1184,21 @@ local function HandleComplete(buildId, lastMod, fullData)
             LogEvent("RX","skip '%s': DUPLICATE (have stamp %s)",
                 tostring(payload.title), tostring(seenRemoteIds[payload.id]))
         end
+        return
+    end
+    if existing and not directOwner then
+        LogEvent("RX", "REJECT relayed overwrite of '%s' from %s",
+            tostring(payload.id), tostring(transportSender))
+        return
+    end
+    if existing and existing.isMine then
+        LogEvent("RX", "REJECT remote overwrite of local build '%s'",
+            tostring(payload.id))
+        return
+    end
+    if existing and existing.ownerVerified ~= false
+        and not SamePeer(existing.author, payload.author) then
+        LogEvent("RX", "REJECT owner change for '%s'", tostring(payload.id))
         return
     end
     if why == "updated" then
@@ -1026,7 +1213,7 @@ local function HandleComplete(buildId, lastMod, fullData)
         LogEvent("RX","STORED (new) '%s' by %s (%d echoes)",
             tostring(payload.title), tostring(payload.author), #payload.echoes)
     end
-    StoreReceivedBuild(payload)
+    StoreReceivedBuild(payload, directOwner, transportSender)
     if Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then
         pcall(Nexus.CommunityBuilds.Refresh)
     end
@@ -1062,10 +1249,16 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
     local entry={key=key,requester=requester,requestId=requestId,peerBuildHash=peerBuildHash,peerDpsHash=peerDpsHash,buckets={}}
     for i=1,BUILD_BUCKETS do
         if tostring(peerB[i] or "") ~= tostring(myB[i] or "") then
-            entry.buckets["B"..i]={kind="B",bucket=i,hash=tostring(myB[i] or "0"),phase="wait",remaining=BucketDelay(key,"B",i)}
+            entry.buckets["B"..i]={kind="B",bucket=i,hash=tostring(myB[i] or "0"),
+                claimable=not BucketContainsTombstone(i),phase="wait",
+                remaining=BucketDelay(key,"B",i)}
         end
         if tostring(peerD[i] or "") ~= tostring(myD[i] or "") then
-            entry.buckets["D"..i]={kind="D",bucket=i,hash=tostring(myD[i] or "0"),phase="wait",remaining=BucketDelay(key,"D",i)}
+            -- Exact DPS evidence is owner-only. A peer that merely holds the
+            -- same row cannot retransmit it, so DPS buckets are never elected
+            -- through suppressible claims.
+            entry.buckets["D"..i]={kind="D",bucket=i,hash=tostring(myD[i] or "0"),
+                claimable=false,phase="wait",remaining=BucketDelay(key,"D",i)}
         end
     end
     if next(entry.buckets) then pendingResponses[key]=entry end
@@ -1074,10 +1267,13 @@ end
 
 local function HandleClaim(responder, requester, requestId, buildHash, dpsHash)
     local key=tostring(requester)..":"..tostring(requestId)
-    local pending=pendingResponses[key]
-    if pending and responder~=MyName() and tostring(buildHash)==tostring(CurrentBuildHash()) and tostring(dpsHash)==tostring(CurrentDpsHash()) then
-        pendingResponses[key]=nil
-        LogEvent("RX","suppressed duplicate legacy whole-state response; %s claimed",tostring(responder))
+    if pendingResponses[key] and responder~=MyName() then
+        -- Legacy whole-state claims cannot prove that the claimant owns every
+        -- DPS row or tombstone represented by the hashes. Keep the packet
+        -- readable for older peers, but never let it suppress an authoritative
+        -- owner response.
+        LogEvent("RX","ignored legacy whole-state claim from %s for owner-only safety",
+            tostring(responder))
     end
 end
 
@@ -1087,7 +1283,8 @@ local function HandleBucketClaim(responder, requester, requestId, kind, bucket, 
     local entry=pendingResponses[key]; if not entry then return end
     local id=tostring(kind)..tostring(tonumber(bucket) or 0)
     local b=entry.buckets and entry.buckets[id]
-    if b and tostring(b.hash)==tostring(bucketHash) then
+    if b and b.claimable ~= false
+        and tostring(b.hash)==tostring(bucketHash) then
         entry.buckets[id]=nil
         LogEvent("RX","mesh bucket %s claimed by %s for %s",id,tostring(responder),tostring(requester))
         if not next(entry.buckets) then pendingResponses[key]=nil end
@@ -1101,7 +1298,7 @@ local function ProcessPendingResponses(elapsed)
         for id,b in pairs(entry.buckets or {}) do
             b.remaining=(tonumber(b.remaining) or 0)-elapsed
             if b.remaining<=0 then
-                if b.phase=="wait" then
+                if b.phase=="wait" and b.claimable ~= false then
                     EnqueueControl(string.format("%s|%s|%s|%s|%s|%d|%s",CODE_BUCKET_CLAIM,MyName(),entry.requester,entry.requestId,b.kind,b.bucket,b.hash))
                     b.phase="settle"; b.remaining=BUCKET_SETTLE
                 else
@@ -1136,19 +1333,24 @@ local function HandleDelete(sender, buildId, stamp, originAuthor)
     local existing = db and db[buildId]
     -- originAuthor is an optional 5th field; treat empty string same as nil
     local author = tostring((originAuthor and originAuthor ~= "") and originAuthor or sender or "")
+    if not SamePeer(sender, author) then
+        LogEvent("RX", "REJECT relayed delete for '%s' from %s",
+            tostring(buildId), tostring(sender))
+        return
+    end
     local tomb = { stamp=tonumber(stamp) or 0, author=author }
     local prior = tombstones[buildId]
     if prior and TombStamp(prior) >= tomb.stamp then return end
     if not existing then
-        tombstones[buildId] = tomb
-        LogEvent("RX","delete for '%s' relayed by %s (origin %s; tombstoned)",
-            tostring(buildId), tostring(sender), author); return
+        LogEvent("RX", "REJECT unprovable tombstone for unknown build '%s'",
+            tostring(buildId))
+        return
     end
     if existing.isMine then
         LogEvent("RX","ignoring delete for MY build '%s' relayed by %s",
             tostring(existing.title), tostring(sender)); return
     end
-    if tostring(existing.author) ~= author then
+    if not SamePeer(existing.author, sender) then
         LogEvent("RX","REJECT delete of '%s': origin %s is not the author (%s)",
             tostring(existing.title), author, tostring(existing.author)); return
     end
@@ -1175,7 +1377,16 @@ function Sync.HandleIncoming(text, sender)
     end
     local code = parts[1]
     local protocolSender = parts[2] or sender
-    if code and code ~= "" and protocolSender and protocolSender ~= "" then
+    local actualSender = sender or protocolSender
+    if protocolSender and actualSender
+        and not SamePeer(protocolSender, actualSender) then
+        LogEvent("RX", "DROP sender mismatch: wire=%s transport=%s",
+            tostring(protocolSender), tostring(actualSender))
+        return
+    end
+    if actualSender and parts[2] then parts[2] = actualSender end
+    protocolSender = actualSender
+    if PEER_PROTOCOL_CODES[code] and protocolSender and protocolSender ~= "" then
         MarkPeer(protocolSender, code == CODE_REQUEST and parts[6] or nil)
     end
 
@@ -1203,7 +1414,8 @@ function Sync.HandleIncoming(text, sender)
         autoConverge.lastInbound = Now()
         local raw = parts[3] and Codec.Base64Decode(parts[3])
         local data = raw and Codec.JSONDecode(raw)
-        if StoreSummary(data) and Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then
+        if StoreSummary(data, protocolSender)
+            and Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then
             pcall(Nexus.CommunityBuilds.Refresh)
         end
         return
@@ -1249,7 +1461,8 @@ function Sync.HandleIncoming(text, sender)
     if not (msgSender and buildId and lastMod and chunkSpec and data) then return end
     local idx, total = chunkSpec:match("^(%d+)/(%d+)$")
     idx, total = tonumber(idx), tonumber(total)
-    if not (idx and total and idx >= 1 and total >= 1 and idx <= total) then return end
+    if not (idx and total and idx >= 1 and total >= 1 and idx <= total
+        and total <= MAX_CHUNKS and #data <= MAX_CHUNK_BYTES) then return end
 
     autoConverge.lastInbound = Now()
     local key   = msgSender..":"..buildId
@@ -1260,27 +1473,43 @@ function Sync.HandleIncoming(text, sender)
         -- caused permanently incomplete rows and menu-triggered request spam.
         autoConverge.lastInbound = Now()
         if total == 1 then
+            if #data > MAX_ENCODED_BYTES then return end
             LogEvent("RX","single-chunk build '%s' from %s", tostring(buildId), tostring(msgSender))
-            HandleComplete(buildId, lastMod, data)
+            HandleComplete(buildId, lastMod, data, msgSender)
             return
         end
         CleanExpiredInflight()
+        if not CanStartTransfer(inflight, msgSender) then return end
         LogEvent("RX","starting %d-chunk build '%s' from %s",
             total, tostring(buildId), tostring(msgSender))
-        entry = { chunks={}, total=total, t0=Now(), lastMod=lastMod }
+        entry = { chunks={}, total=total, t0=Now(), lastSeen=Now(),
+            lastMod=lastMod, sender=msgSender, bytes=0, received=0 }
         inflight[key] = entry
     end
 
-    if total ~= entry.total then return end  -- inconsistent chunk spec
+    if total ~= entry.total or tostring(lastMod) ~= tostring(entry.lastMod) then
+        inflight[key] = nil
+        return
+    end
+    entry.lastSeen = Now()
+    local prior = entry.chunks[idx]
+    if prior ~= nil then
+        if prior ~= data then inflight[key] = nil end
+        return
+    end
+    if entry.bytes + #data > MAX_ENCODED_BYTES then
+        inflight[key] = nil
+        return
+    end
     entry.chunks[idx] = data
-    local have = 0
-    for i = 1, entry.total do if entry.chunks[i] then have=have+1 end end
-    if have == entry.total then
+    entry.bytes = entry.bytes + #data
+    entry.received = entry.received + 1
+    if entry.received == entry.total then
         local full = table.concat(entry.chunks, "", 1, entry.total)
         inflight[key] = nil
         LogEvent("RX","transfer '%s' complete (%d/%d chunks, %d bytes)",
-            tostring(buildId), have, entry.total, #full)
-        HandleComplete(buildId, entry.lastMod, full)
+            tostring(buildId), entry.received, entry.total, #full)
+        HandleComplete(buildId, entry.lastMod, full, msgSender)
     end
 end
 
@@ -1424,6 +1653,7 @@ function Sync.TombstoneCount()
 end
 
 function Sync.OnUpdate(elapsed)
+    CleanExpiredInflight()
     ProcessPendingResponses(elapsed)
     PumpLegacyRecovery(elapsed)
     PumpQueue(elapsed)
@@ -1526,6 +1756,20 @@ end
 
 function Sync.Init(codec, adapter)
     Codec, Adapter = codec, adapter
+    sendQueue, sendQueueHead = {}, 1
+    controlQueue, controlQueueHead = {}, 1
+    inflight, dpsInflight = {}, {}
+    ticker = 0
+    throttlePauseUntil, throttleSlowUntil = 0, 0
+    lastTransportAttempt = -math.huge
+    joinRetryTicker, joinAttempts = 0, 0
+    receiveWindowUntil = 0
+    lastRequestAt, lastAnsweredAt = -math.huge, -math.huge
+    lastSyncNewCount = 0
+    for key in pairs(stats) do stats[key] = 0 end
+    stats.sent, stats.received, stats.duplicatesSkipped = 0, 0, 0
+    stats.malformedRejected, stats.ignoredOutsideWindow = 0, 0
+    stats.oversizeDropped, stats.updated, stats.skippedUpToDate = 0, 0, 0
     hotBuilds    = {}  -- clear on init
     pendingResponses = {}
     pendingLoadouts = {}

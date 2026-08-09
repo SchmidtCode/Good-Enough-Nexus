@@ -301,7 +301,7 @@ end
 
 local function EnsureFrame()
     if frame then return frame end
-    frame=CreateFrame("Frame","NexusLeaderboardFrame",UIParent); frame:SetClampedToScreen(true); UISpecialFrames=UISpecialFrames or {}; table.insert(UISpecialFrames,"NexusLeaderboardFrame")
+    frame=CreateFrame("Frame","NexusLeaderboardFrame",UIParent); frame:SetClampedToScreen(true); if type(UISpecialFrames)=="table" then table.insert(UISpecialFrames,"NexusLeaderboardFrame") end
     frame:SetSize(980,640); frame:SetPoint("CENTER"); frame:SetFrameStrata("DIALOG"); frame:SetFrameLevel(55); frame:EnableMouse(true); frame:SetMovable(true); frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart",function(self) self:StartMoving() end); frame:SetScript("OnDragStop",function(self) self:StopMovingOrSizing() end); frame:Hide()
     pcall(function() frame:SetBackdrop({bgFile="Interface\\DialogFrame\\UI-DialogBox-Background",edgeFile="Interface\\DialogFrame\\UI-DialogBox-Border",tile=true,tileSize=32,edgeSize=32,insets={left=11,right=12,top=12,bottom=11}}) end)

@@ -18,7 +18,21 @@ local SAMPLE_INTERVAL  = 5
 local MIN_LK_SESSION_SECS = 20
 local MIN_DUMMY_SESSION_SECS = 30
 local MAX_LB_ENTRIES   = 1
-local PROTOCOL_VERSION = 6
+local PROTOCOL_VERSION = 7
+local VALID_CLASS = {
+    WARRIOR=true, PALADIN=true, HUNTER=true, ROGUE=true, PRIEST=true,
+    DEATHKNIGHT=true, SHAMAN=true, MAGE=true, WARLOCK=true, DRUID=true,
+}
+local CLASS_LABEL = {
+    WARRIOR="Warrior", PALADIN="Paladin", HUNTER="Hunter", ROGUE="Rogue",
+    PRIEST="Priest", DEATHKNIGHT="Death Knight", SHAMAN="Shaman", MAGE="Mage",
+    WARLOCK="Warlock", DRUID="Druid",
+}
+
+local function NormalizeClass(class)
+    class = type(class) == "string" and class:upper() or nil
+    return class and VALID_CLASS[class] and class or nil
+end
 
 local Adapter, Sync
 local inCombat         = false
@@ -98,6 +112,79 @@ end
 
 local function PlayerKey(name)
     return tostring(name or "?"):lower()
+end
+
+local function CurrentRealm()
+    local realm = GetNormalizedRealmName and GetNormalizedRealmName()
+    if not realm or realm == "" then realm = GetRealmName and GetRealmName() end
+    return tostring(realm or "unknown"):lower():gsub("%s+", "")
+end
+
+local function OwnerKey(name, realm)
+    name = tostring(name or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    if name == "" then return nil end
+    realm = tostring(realm or CurrentRealm()):lower():gsub("%s+", "")
+    return name .. "@" .. realm
+end
+
+-- Repair legacy class metadata only for the exact character currently logged
+-- in. SavedVariables are account-wide, so no other player's row is inferred.
+local function RepairCurrentCharacterClass()
+    if not (UnitName and UnitClass) then return false end
+    local me = tostring(UnitName("player") or "")
+    local _, token = UnitClass("player")
+    local class = NormalizeClass(token)
+    if me == "" or not class then return false end
+
+    local realm = CurrentRealm()
+    local localOwner = OwnerKey(me, realm)
+    if not localOwner then return false end
+    local changed = false
+    local builds = NexusDB and NexusDB.communityBuilds or {}
+    local character = CharacterBestStore()
+    local personal = PersonalBestStore()
+
+    for _, category in ipairs({ "dummy", "lk" }) do
+        for _, row in pairs(character[category] or {}) do
+            local rowOwner = tostring(row and row.ownerKey or ""):lower()
+            local derivedOwner = row and OwnerKey(row.player,
+                row.realm and row.realm ~= "" and row.realm or realm)
+            if row and (rowOwner == localOwner or derivedOwner == localOwner) then
+                if row.class ~= class then row.class = class; changed = true end
+                local prow = row.fingerprint and personal[row.fingerprint]
+                    and personal[row.fingerprint][category]
+                if prow then
+                    if prow.class ~= class then prow.class = class; changed = true end
+                    prow.ownerKey = prow.ownerKey or localOwner
+                    prow.realm = prow.realm or realm
+                end
+
+                local build = row.buildId and builds[row.buildId]
+                if build and build.autoDps then
+                    local buildOwner = tostring(build.ownerKey or ""):lower()
+                    local legacyOwned = buildOwner == ""
+                        and tostring(build.author or ""):lower() == me:lower()
+                    if buildOwner == localOwner or legacyOwned then
+                        local buildChanged = false
+                        if build.class ~= class then build.class = class; buildChanged = true end
+                        local title = tostring(build.title or "")
+                        if title:match("^[%a%s]+ Record Loadout$") then
+                            local corrected = (CLASS_LABEL[class] or class) .. " Record Loadout"
+                            if title ~= corrected then build.title = corrected; buildChanged = true end
+                        end
+                        if not build.ownerKey then build.ownerKey = localOwner; buildChanged = true end
+                        if buildChanged then
+                            local now = (time and time()) or 0
+                            local old = tonumber(build.lastModified or build.postedAt) or 0
+                            build.lastModified = now > old and now or old + 1
+                            changed = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return changed
 end
 
 local legacyMigrated = false
@@ -329,10 +416,9 @@ local function BackfillLocalLockedRows()
 end
 
 local migratedLockedBaseline = false
-local function CorrectLockedRows(store)
-    if not (Adapter and Adapter.LockedOwned) then return end
-    local locked = Adapter.LockedOwned()
-    local lockedBySpell = locked and locked.bySpell or {}
+local LOCKED_MIGRATION_VERSION = 1
+local function CorrectLockedRows(store, lockedBySpell)
+    lockedBySpell = type(lockedBySpell) == "table" and lockedBySpell or {}
     -- If no locked echoes are known yet, abort. Subtracting zero from
     -- everything would produce identical keys (no-op), but if the locked
     -- data simply hasn't loaded yet we must not run at all -- a partially
@@ -373,44 +459,88 @@ local function CorrectLockedRows(store)
         -- Only clear the old slot after successfully writing the new one
         if store[m.newKey][m.category] then
             store[m.oldKey][m.category] = nil
+            if next(store[m.oldKey]) == nil then store[m.oldKey] = nil end
         end
     end
 end
 
+local function DeepCopy(value, seen)
+    if type(value) ~= "table" then return value end
+    seen = seen or {}
+    if seen[value] then return seen[value] end
+    local copy = {}
+    seen[value] = copy
+    for key, child in pairs(value) do
+        copy[DeepCopy(key, seen)] = DeepCopy(child, seen)
+    end
+    return copy
+end
+
 local function MigrateLocalLockedBaseline()
     if migratedLockedBaseline then return end
-    migratedLockedBaseline = true
-    MigrateLegacyLeaderboard()
-    CorrectLockedRows(PersonalBestStore())
-    CorrectLockedRows(BuildBestStore())
-    local character = CharacterBestStore()
+    local db = DB()
+    if (tonumber(db.lockedMigrationVersion) or 0)
+        >= LOCKED_MIGRATION_VERSION then
+        migratedLockedBaseline = true
+        return
+    end
     local locked = Adapter and Adapter.LockedOwned and Adapter.LockedOwned()
+    if not (locked and locked.synced == true) then
+        return
+    end
+    MigrateLegacyLeaderboard()
     local lockedBySpell = locked and locked.bySpell or {}
-    -- Only correct the character store if we actually have locked echo data.
-    -- If not loaded yet, skip -- the migration runs once so we must not
-    -- corrupt fingerprints with a partial locked set.
-    local anyLocked = false
-    for _ in pairs(lockedBySpell) do anyLocked = true; break end
-    if not anyLocked then return end
-    for _, category in ipairs({ "dummy", "lk" }) do
-        for _, row in pairs(character[category] or {}) do
-            local oldEchoes = row and NormalizeEchoes(row.echoes)
-            if oldEchoes then
-                local corrected = {}
-                for _, e in ipairs(oldEchoes) do
-                    local n = math.max(0, (tonumber(e.count) or 0) - (tonumber(lockedBySpell[e.spellId]) or 0))
-                    if n > 0 then corrected[#corrected + 1] = { spellId=e.spellId, count=n } end
-                end
-                corrected = NormalizeEchoes(corrected)
-                local newKey = EchoKey(corrected)
-                -- Only update if corrected is valid and different
-                if newKey and newKey ~= row.fingerprint then
-                    row.echoes, row.fingerprint = corrected, newKey
-                    row.loadoutHash = EchoHashFromKey(newKey)
+
+    -- Preserve an immutable source before any subtraction. An interrupted
+    -- pass restores this snapshot and recomputes instead of subtracting twice.
+    if type(db.lockedMigrationSource) ~= "table" then
+        db.lockedMigrationSource = {
+            personalBest=DeepCopy(PersonalBestStore()),
+            buildBest=DeepCopy(BuildBestStore()),
+            characterBest=DeepCopy(CharacterBestStore()),
+        }
+    else
+        db.personalBest = DeepCopy(db.lockedMigrationSource.personalBest or {})
+        db.buildBest = DeepCopy(db.lockedMigrationSource.buildBest or {})
+        db.characterBest = DeepCopy(db.lockedMigrationSource.characterBest
+            or { dummy={}, lk={} })
+    end
+
+    local ok = pcall(function()
+        CorrectLockedRows(PersonalBestStore(), lockedBySpell)
+        CorrectLockedRows(BuildBestStore(), lockedBySpell)
+        local character = CharacterBestStore()
+        local anyLocked = false
+        for _ in pairs(lockedBySpell) do anyLocked = true; break end
+        if anyLocked then
+            for _, category in ipairs({ "dummy", "lk" }) do
+                for _, row in pairs(character[category] or {}) do
+                    local oldEchoes = row and NormalizeEchoes(row.echoes)
+                    if oldEchoes then
+                        local corrected = {}
+                        for _, e in ipairs(oldEchoes) do
+                            local n = math.max(0, (tonumber(e.count) or 0)
+                                - (tonumber(lockedBySpell[e.spellId]) or 0))
+                            if n > 0 then
+                                corrected[#corrected + 1] = {
+                                    spellId=e.spellId, count=n }
+                            end
+                        end
+                        corrected = NormalizeEchoes(corrected)
+                        local newKey = EchoKey(corrected)
+                        if newKey and newKey ~= row.fingerprint then
+                            row.echoes, row.fingerprint = corrected, newKey
+                            row.loadoutHash = EchoHashFromKey(newKey)
+                        end
+                    end
                 end
             end
         end
-    end
+    end)
+    if not ok then return end
+    db.lockedMigrationSource = nil
+    db.lockedMigrationVersion = LOCKED_MIGRATION_VERSION
+    migratedLockedBaseline = true
 end
 
 local function BuildSnapshot(build)
@@ -564,9 +694,13 @@ end
 
 local function RowMatchesBuild(row, buildId, key, hash)
     if type(row) ~= "table" then return false end
-    if buildId and row.buildId == buildId then return true end
     local rowKey = row.fingerprint
     local rowHash = row.loadoutHash or (rowKey and EchoHashFromKey(rowKey))
+    if buildId and row.buildId == buildId then
+        if key and rowKey and rowKey ~= key then return false end
+        if hash and rowHash and rowHash ~= hash then return false end
+        return true
+    end
     return (key and rowKey == key) or (hash and rowHash == hash)
 end
 
@@ -623,6 +757,26 @@ end
 function DPS.GetLeaderboard(buildId, category)
     local key = BuildKey(buildId)
     return key and SortedEntries(GlobalForBuild(buildId, key, category)) or {}
+end
+
+-- A build is Details-verified only when a valid public record exists for its
+-- exact loadout and the capture met the shared 30-second evidence floor.
+function DPS.GetBuildVerification(buildId)
+    local key = BuildKey(buildId)
+    if not key then return nil end
+    local best
+    for _, category in ipairs({ "dummy", "lk" }) do
+        local row = GlobalForKey(key, category)
+        if row and (tonumber(row.duration) or 0) >= MIN_DUMMY_SESSION_SECS then
+            if not best or (tonumber(row.dps) or 0) > (tonumber(best.dps) or 0) then
+                best = {
+                    category=category, dps=tonumber(row.dps) or 0,
+                    duration=tonumber(row.duration) or 0, player=row.player,
+                }
+            end
+        end
+    end
+    return best
 end
 
 function DPS.GetPersonalBest(buildId, category)
@@ -699,6 +853,8 @@ function DPS.BroadcastBestForBuild(buildId)
                     category = category, dps = math.floor(tonumber(row.dps) or 0),
                     duration = tonumber(row.duration) or 0, ts = tonumber(row.ts) or 0,
                     player = row.player or "?", level = tonumber(row.level) or 0, buildId = buildId,
+                    class = row.class, ownerKey = row.ownerKey, realm = row.realm,
+                    echoes = row.echoes or BuildSnapshot(build),
                     lockedEchoes = row.lockedEchoes,
                 }
                 local ok, result = pcall(Sync.BroadcastDpsRecord, record)
@@ -728,6 +884,8 @@ function DPS.BroadcastAllBuildBests(peerHash, onlyBucket)
                     category=category, dps=math.floor(tonumber(row.dps) or 0),
                     duration=tonumber(row.duration) or 0, ts=tonumber(row.ts) or 0,
                     player=row.player or "?", level=tonumber(row.level) or 0, buildId=row.buildId,
+                    class=row.class, ownerKey=row.ownerKey, realm=row.realm,
+                    echoes=row.echoes,
                     lockedEchoes=row.lockedEchoes,
                 }
                 local ok, result=pcall(Sync.BroadcastDpsRecord,record)
@@ -753,6 +911,7 @@ function DPS.GetDpsBoard(category)
     if category ~= "dummy" and category ~= "lk" then return {} end
     MigrateLocalLockedBaseline()
     MigrateLegacyLeaderboard()
+    RepairCurrentCharacterClass()
     BackfillLocalLockedRows()
     local out = {}
     local seenPlayer = {}   -- dedup by lowercase player name
@@ -767,6 +926,7 @@ function DPS.GetDpsBoard(category)
                 local pkey = PlayerKey(row.player or "?")
                 local entry = {
                     player = row.player or "?", dps = math.floor(tonumber(row.dps) or 0),
+                    class = row.class, ownerKey = row.ownerKey, realm = row.realm,
                     level = tonumber(row.level) or 0, ts = tonumber(row.ts) or 0,
                     duration = tonumber(row.duration) or 0, category = category,
                     fingerprint = row.fingerprint, echoes = NormalizeEchoes(row.echoes) or BuildSnapshot(build),
@@ -986,6 +1146,7 @@ local function CommitSession(category)
             buildId = buildId, echoes = snap, fingerprint = key,
             lockedEchoes = lockedSnap,
             class = localClass,
+            ownerKey = OwnerKey(player), realm = CurrentRealm(),
             protocolVersion = PROTOCOL_VERSION,
         }
         SetStoreRow(PersonalBestStore(), key, category, personalRow)
@@ -1041,6 +1202,8 @@ local function CommitSession(category)
                 echoes = snap, category = category, dps = dpsFloor,
                 duration = elapsed, ts = stamp, player = player,
                 level = level, buildId = buildId, lockedEchoes = lockedSnap,
+                class = localClass, ownerKey = personalRow.ownerKey,
+                realm = personalRow.realm,
             })
         end
     end
@@ -1065,7 +1228,42 @@ local function IsBetterPublicRecord(candidate, existing)
     return BetterRow(candidate, existing)
 end
 
-function DPS.ReceiveRecord(record)
+local function FiniteNumber(value)
+    return type(value) == "number" and value == value
+        and value < math.huge and value > -math.huge
+end
+
+local function ShortIdentity(value)
+    local name = tostring(value or ""):gsub("%s+", "")
+    name = name:match("^([^-]+)") or name
+    return name:lower()
+end
+
+local function ValidWireEchoList(source)
+    if type(source) ~= "table" then return false end
+    local entries, maxIndex, total = 0, 0, 0
+    for index, echo in pairs(source) do
+        if type(index) ~= "number" or index < 1
+            or index ~= math.floor(index) or type(echo) ~= "table" then
+            return false
+        end
+        local spellId = tonumber(echo.spellId or echo.id)
+        local count = tonumber(echo.count or echo.stacks or echo.stack) or 1
+        if not FiniteNumber(spellId) or spellId < 1
+            or spellId ~= math.floor(spellId) or spellId > 2147483647
+            or not FiniteNumber(count) or count < 1
+            or count ~= math.floor(count) or count > 120 then
+            return false
+        end
+        entries = entries + 1
+        if index > maxIndex then maxIndex = index end
+        total = total + count
+        if entries > 120 or total > 120 then return false end
+    end
+    return entries > 0 and entries == maxIndex
+end
+
+function DPS.ReceiveRecord(record, transportSender)
     if type(record) ~= "table" then return false end
     local version = tonumber(record.v or record.protocolVersion)
     local category = record.c or record.category
@@ -1074,26 +1272,61 @@ function DPS.ReceiveRecord(record)
     local ts = tonumber(record.t or record.ts) or 0
     local player = tostring(record.p or record.player or "")
     local level = tonumber(record.l or record.level) or 0
-    local echoes = NormalizeEchoes(record.e or record.echoes)
+    local playerClass = record.k or record.class
+    local ownerKey = record.o or record.ownerKey
+    local realm = record.r or record.realm
+    local rawEchoes = record.e or record.echoes
+    if not ValidWireEchoList(rawEchoes) then return false end
+    local echoes = NormalizeEchoes(rawEchoes)
     local computed = EchoKey(echoes)
     local claimed = record.f or record.fingerprint
     local hash = record.h or record.loadoutHash
     local fingerprint = computed or (type(claimed)=="string" and claimed or nil) or (type(hash)=="string" and ("@"..hash) or nil)
+    local ownerName, ownerRealm
+    if ownerKey ~= nil then
+        if type(ownerKey) ~= "string" or #ownerKey > 160
+            or ownerKey:find("[%c|]") then return false end
+        ownerName, ownerRealm = ownerKey:match("^([^@]+)@([^@]+)$")
+        if not ownerName or not ownerRealm
+            or ShortIdentity(ownerName) ~= ShortIdentity(player) then
+            return false
+        end
+    end
+    if realm ~= nil and (type(realm) ~= "string" or #realm > 96
+        or realm:find("[%c|]")) then return false end
+    if ownerRealm and realm
+        and ownerRealm:gsub("%s+", ""):lower()
+            ~= tostring(realm):gsub("%s+", ""):lower() then
+        return false
+    end
 
     -- Schema validation
-    if (version ~= 2 and version ~= 3 and version ~= 4 and version ~= 5 and version ~= PROTOCOL_VERSION)
+    if (version ~= 2 and version ~= 3 and version ~= 4 and version ~= 5
+            and version ~= 6 and version ~= PROTOCOL_VERSION)
         or (category ~= "dummy" and category ~= "lk")
-        or not dps or dps <= 0 or dps > 1000000000
-        or duration < 0 or ts < 0 or player == "" or not fingerprint
+        or not FiniteNumber(dps) or dps <= 0 or dps > 500000000
+        or not FiniteNumber(duration) or duration < 30
+        or not FiniteNumber(ts) or ts <= 0
+        or player == "" or #player > 64 or player:find("[%c|]")
+        or not FiniteNumber(level) or level < 1 or level > 80
+        or level ~= math.floor(level)
+        or type(playerClass) ~= "string"
+        or not VALID_CLASS[playerClass:upper()]
+        or not echoes or #echoes < 1 or #echoes > 120
+        or not computed or not fingerprint
         or (computed and claimed and claimed ~= computed)
-        or (computed and hash and EchoHashFromKey(computed) ~= hash) then return false end
+        or (computed and hash and EchoHashFromKey(computed) ~= hash)
+        or (transportSender ~= nil
+            and ShortIdentity(player) ~= ShortIdentity(transportSender)) then
+        return false
+    end
 
     -- Integrity checks (deliberately silent -- legitimate clients never trip these)
     -- DPS floor: no real build produces under 1k active-time DPS
     if dps < 1000 then return false end
     -- Session duration floor must match local capture: dummy 30s, LK 20s.
-    local minDur = (category == "dummy") and MIN_DUMMY_SESSION_SECS or MIN_LK_SESSION_SECS
-    if duration > 0 and duration < minDur then return false end
+    local minDur = 30
+    if duration < minDur then return false end
     -- Hard DPS ceiling: set high to accommodate extreme builds while
     -- still blocking obviously fabricated absurd values.
     if dps > 500000000 then return false end
@@ -1101,15 +1334,21 @@ function DPS.ReceiveRecord(record)
     local nowTs = (time and time()) or 0
     if nowTs > 1000000000 and ts > 0 and ts > nowTs + 300 then return false end
     -- Echo count sanity
-    if echoes and (#echoes < 1 or #echoes > 120) then return false end
+    if #echoes < 1 or #echoes > 120 then return false end
 
     MigrateLegacyLeaderboard()
     local bucket = CharacterBestStore()[category]
     local existing = bucket[PlayerKey(player)]
-    local incomingLocked = NormalizeEchoes(record.lk or record.lockedEchoes)
+    local rawLocked = record.lk or record.lockedEchoes
+    if rawLocked ~= nil and not ValidWireEchoList(rawLocked) then return false end
+    local incomingLocked = NormalizeEchoes(rawLocked)
     local row = {
         dps = math.floor(dps), level = level, ts = ts, duration = duration,
-        player = player, buildId = record.b or record.buildId,
+        player = player,
+        class = playerClass and tostring(playerClass):upper() or nil,
+        ownerKey = ownerKey and tostring(ownerKey):lower() or nil,
+        realm = realm and tostring(realm):lower() or ownerRealm,
+        buildId = record.b or record.buildId,
         echoes = echoes, fingerprint = fingerprint, loadoutHash = hash or EchoHashFromKey(fingerprint),
         lockedEchoes = incomingLocked,
         protocolVersion = PROTOCOL_VERSION,
@@ -1122,9 +1361,26 @@ function DPS.ReceiveRecord(record)
             and math.floor(tonumber(existing.dps) or 0) == math.floor(dps)
             and tonumber(existing.ts or 0) == tonumber(ts or 0)
             and tostring(existing.fingerprint or "") == tostring(fingerprint or "")
-        if sameRecord and incomingLocked and not NormalizeEchoes(existing.lockedEchoes) then
-            existing.lockedEchoes = incomingLocked
-            return true
+        if sameRecord then
+            local enriched = false
+            local normalizedClass = NormalizeClass(playerClass)
+            if normalizedClass and existing.class ~= normalizedClass then
+                existing.class = normalizedClass
+                enriched = true
+            end
+            if ownerKey and not existing.ownerKey then
+                existing.ownerKey = tostring(ownerKey):lower()
+                enriched = true
+            end
+            if realm and not existing.realm then
+                existing.realm = tostring(realm):lower()
+                enriched = true
+            end
+            if incomingLocked and not NormalizeEchoes(existing.lockedEchoes) then
+                existing.lockedEchoes = incomingLocked
+                enriched = true
+            end
+            if enriched then return true end
         end
         return false
     end
@@ -1133,7 +1389,17 @@ function DPS.ReceiveRecord(record)
     local C = Nexus.CommunityBuilds
     if echoes and C and C.EnsureDpsBuildForEchoes then
         local ok, ensuredId = pcall(C.EnsureDpsBuildForEchoes, echoes, category, row)
-        if ok and ensuredId then row.buildId = ensuredId end
+        if ok and ensuredId then
+            row.buildId = ensuredId
+        elseif row.buildId then
+            -- The claimed opaque ID collided with a different loadout or
+            -- owner. Retry without it so the exact evidence receives a safe,
+            -- deterministic record page instead of attaching to that build.
+            row.buildId = nil
+            local safeOk, safeId = pcall(
+                C.EnsureDpsBuildForEchoes, echoes, category, row)
+            if safeOk and safeId then row.buildId = safeId end
+        end
     end
     bucket[PlayerKey(player)] = row
     if Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then
@@ -1187,8 +1453,9 @@ end
 
 function DPS.Init(adapter, sync)
     Adapter, Sync = adapter, sync
-    migratedLockedBaseline = false
     MigrateLocalLockedBaseline()
+    MigrateLegacyLeaderboard()
+    RepairCurrentCharacterClass()
     Debug("initialized; current tracked key=" .. tostring(DPS.GetCurrentEchoKey()))
 end
 

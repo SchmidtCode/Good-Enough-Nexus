@@ -5,6 +5,7 @@
 Thumbs.db
 
 # Local development and test output
+.tools/
 coverage/
 dist/
 build/

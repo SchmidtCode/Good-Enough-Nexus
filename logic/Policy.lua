@@ -109,6 +109,204 @@ local function Annotation(card, delta, plan, owned)
     return "junk"
 end
 
+local function IsFrozen(card)
+    return card.isFrozen or card.isCarried or card.justFrozen
+end
+
+local function IsWanted(model, card, delta, plan, owned, catalog)
+    if not (delta and delta > 0 and Wished(plan, card.family)) then
+        return false
+    end
+    if type(model.FamilyMultiQuality) == "function"
+        and model.FamilyMultiQuality(catalog, card.family) then
+        if type(model.QualityOfferNeeded) == "function" then
+            return model.QualityOfferNeeded(
+                plan, catalog, card.family,
+                tonumber(card.quality) or 0, owned)
+        end
+        local bySpell = type(owned) == "table" and owned.bySpell or nil
+        local required = type(model.EffectiveWishedQuality) == "function"
+            and model.EffectiveWishedQuality(
+                plan, catalog, card.family, OwnedFam(owned, card.family), bySpell)
+            or WishedQuality(plan, card.family)
+        return (tonumber(card.quality) or 0) >= (tonumber(required) or 0)
+    end
+    return true
+end
+
+local function IsOneShot(model, card, plan, owned, catalog)
+    local have = OwnedFam(owned, card.family)
+    if type(model.TargetProgress) == "function" then
+        have = model.TargetProgress(plan, catalog, card.family, owned)
+    end
+    return have <= 0 and type(model.FamilyMultiQuality) == "function"
+        and model.FamilyMultiQuality(catalog, card.family)
+        and (type(model.QualityOfferNeeded) ~= "function"
+            or model.QualityOfferNeeded(
+                plan, catalog, card.family,
+                tonumber(card.quality) or 0, owned))
+end
+
+local function WantedTier(model, card, plan, owned, catalog)
+    if type(model.StackWishBelowTarget) == "function"
+        and model.StackWishBelowTarget(
+            plan, owned, card.family, catalog) then
+        return 1
+    end
+    if IsOneShot(model, card, plan, owned, catalog) then return 2 end
+    return 3
+end
+
+local function BetterWanted(model, cards, deltas, plan, owned, catalog,
+    candidate, incumbent)
+    if incumbent == nil then return true end
+    local ct = WantedTier(model, cards[candidate], plan, owned, catalog)
+    local it = WantedTier(model, cards[incumbent], plan, owned, catalog)
+    if ct ~= it then return ct < it end
+    if deltas[candidate] ~= deltas[incumbent] then
+        return deltas[candidate] > deltas[incumbent]
+    end
+    return candidate < incumbent
+end
+
+local function QueueCanDeliverWanted(model, state, card, plan, owned, catalog)
+    local queue = type(state.queue) == "table" and state.queue.entries or nil
+    if type(queue) ~= "table" or card.family == nil then return false end
+    for i = 1, #queue do
+        local entry = queue[i]
+        if type(entry) == "table" and entry.wanted == true
+            and entry.family == card.family then
+            if type(model.FamilyMultiQuality) ~= "function"
+                or not model.FamilyMultiQuality(catalog, card.family) then
+                return true
+            end
+            local rows = type(catalog) == "table" and catalog.rows or nil
+            local row = type(rows) == "table"
+                and rows[tonumber(entry.spellId)] or nil
+            local quality = type(row) == "table"
+                and tonumber(row.quality) or tonumber(entry.quality)
+            if quality and type(model.QualityOfferNeeded) == "function"
+                and model.QualityOfferNeeded(
+                    plan, catalog, card.family, quality, owned) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function FreezeWorthy(model, state, card, plan, owned, catalog)
+    if type(model.StackWishBelowTarget) == "function"
+        and model.StackWishBelowTarget(
+            plan, owned, card.family, catalog) then
+        return true
+    end
+    return not QueueCanDeliverWanted(
+        model, state, card, plan, owned, catalog)
+end
+
+local function TakeAction(cards, annotations, deltas, index, reason)
+    return {
+        type = "take", index = index, spellId = cards[index].spellId,
+        reason = reason, annotations = annotations, deltas = deltas,
+    }
+end
+
+local function Endgame(action)
+    action.endgame = true
+    return action
+end
+
+local function SafeBanishCandidate(cards, deltas, plan, gIndex)
+    local worst, worstDelta = nil, nil
+    for i = 1, #cards do
+        local card = cards[i]
+        if i ~= gIndex
+            and not (card.isGuaranteed or card.isFrozen or card.isCarried
+                or card.justFrozen)
+            and not Wished(plan, card.family)
+            and (worst == nil or deltas[i] < worstDelta
+                or (deltas[i] == worstDelta and i < worst)) then
+            worst, worstDelta = i, deltas[i]
+        end
+    end
+    return worst
+end
+
+local function LeastHarmfulSide(cards, annotations, deltas, gIndex)
+    local anyNonDuplicate = false
+    for i = 1, #cards do
+        if i ~= gIndex and not cards[i].isGuaranteed
+            and not cards[i].justFrozen
+            and annotations[i] ~= "duplicate" then
+            anyNonDuplicate = true
+            break
+        end
+    end
+    local pick = nil
+    for i = 1, #cards do
+        local eligible = i ~= gIndex and not cards[i].isGuaranteed
+            and not cards[i].justFrozen
+            and ((not anyNonDuplicate) or annotations[i] ~= "duplicate")
+        if eligible and (pick == nil
+            or deltas[i] > deltas[pick]
+            or (deltas[i] == deltas[pick]
+                and annotations[pick] == "filler"
+                and annotations[i] ~= "filler")
+            or (deltas[i] == deltas[pick]
+                and (annotations[i] == "filler")
+                    == (annotations[pick] == "filler")
+                and (tonumber(cards[i].quality) or 0)
+                    < (tonumber(cards[pick].quality) or 0))
+            or (deltas[i] == deltas[pick]
+                and (tonumber(cards[i].quality) or 0)
+                    == (tonumber(cards[pick].quality) or 0)
+                and i < pick)) then
+            pick = i
+        end
+    end
+    return pick
+end
+
+local function MissingAfterFallback(plan, owned, fallbackCard, catalog)
+    local simulated = { byFamily = {}, bySpell = {} }
+    for family, count in pairs(type(owned) == "table" and owned.byFamily or {}) do
+        simulated.byFamily[family] = tonumber(count) or 0
+    end
+    for spellId, count in pairs(type(owned) == "table" and owned.bySpell or {}) do
+        simulated.bySpell[spellId] = tonumber(count) or 0
+    end
+    if type(fallbackCard) == "table" then
+        local family = fallbackCard.family
+            or (type(catalog) == "table"
+                and type(catalog.familyOf) == "table"
+                and catalog.familyOf[tonumber(fallbackCard.spellId)])
+        local count = tonumber(fallbackCard.stacks or fallbackCard.count) or 1
+        if family ~= nil then
+            simulated.byFamily[family] =
+                (tonumber(simulated.byFamily[family]) or 0) + count
+        end
+        local spellId = tonumber(fallbackCard.spellId)
+        if spellId then
+            simulated.bySpell[spellId] =
+                (tonumber(simulated.bySpell[spellId]) or 0) + count
+        end
+    end
+    for family in pairs(type(plan) == "table" and plan.wishedFamilies or {}) do
+        local have, want
+        local model = GetModel()
+        if type(model.TargetProgress) == "function" then
+            have, want = model.TargetProgress(plan, catalog, family, simulated)
+        else
+            local target = type(plan.targets) == "table" and plan.targets[family]
+            want = type(target) == "table" and tonumber(target.targetStacks) or 1
+            have = tonumber(simulated.byFamily[family]) or 0
+        end
+        if have < math.max(1, tonumber(want) or 1) then return true end
+    end
+    return false
+end
+
 -- state = { board, owned, charges, plan, queue, flags, level, horizon,
 --           support, params, canFreeze, rerollBudget [, catalog] }
 -- Returns { type = "take"|"freeze"|"reroll"|"banish"|"wait", spellId=?,
@@ -205,8 +403,8 @@ function Policy.Decide(state)
         local total = 0
         local activeEchoes = state.activeEchoes
         if type(activeEchoes) == "table" then
-            for ai = 1, #activeEchoes do
-                local ae = activeEchoes[ai]
+            for activeIndex = 1, #activeEchoes do
+                local ae = activeEchoes[activeIndex]
                 if type(ae) == "table"
                     and tonumber(ae.spellId) == tonumber(spellId) then
                     total = total
@@ -222,7 +420,7 @@ function Policy.Decide(state)
         return tonumber(ownedSafe.bySpell[spellId]) or 0
     end
 
-    local deltas, eff = {}, {}
+    local deltas, eff, wanted = {}, {}, {}
     local precious = {}   -- [i]=true: one-shot quality catch (see loop)
     local deferFactor = tonumber(params.deferFactor) or 0.35
     local bankedWantedOnBoard = false
@@ -231,6 +429,7 @@ function Policy.Decide(state)
         local d = Model.Delta(plan, ownedSafe, card.spellId, catalog, params)
         d = tonumber(d) or 0
         deltas[i] = d
+        wanted[i] = IsWanted(Model, card, d, plan, ownedSafe, catalog)
         annotations[i] = Annotation(card, d, plan, ownedSafe)
         eff[i] = d
 
@@ -248,7 +447,7 @@ function Policy.Decide(state)
                 >= Model.EffectiveWishedQuality(plan, catalog, fam) then
             precious[i] = true
         end
-        if frozenish and d > 0 then
+        if frozenish and wanted[i] then
             -- Banked: already secured with a freeze. Rule C only ever
             -- freezes a family whose own guarantee was already exhausted
             -- (see header), so holding it costs that family nothing
@@ -258,7 +457,7 @@ function Policy.Decide(state)
             -- no eff[] suppression is needed here.
             annotations[i] = "banked"
             bankedWantedOnBoard = true
-        elseif i ~= gIndex and not frozenish and d > 0
+        elseif i ~= gIndex and not frozenish and wanted[i]
             and Wished(plan, fam) and OwnedFam(ownedSafe, fam) <= 0
             and pendingFam[fam] then
             -- Pending guarantee: it comes back. Unless this roll is a
@@ -287,14 +486,414 @@ function Policy.Decide(state)
     end
 
     local gDelta = gIndex and deltas[gIndex] or nil
-    local gWanted = false
-    if gIndex and gDelta and gDelta > 0 then
-        gWanted = Wished(plan, cards[gIndex].family)
-    end
+    local gWanted = gIndex ~= nil and wanted[gIndex] == true
     -- The quality gate makes a wrong-quality guaranteed head score
     -- negative, so gWanted is false for it and every "Taking guaranteed echo"
     -- path below is naturally skipped -- exactly the gray-Armor-Pen case.
 
+    -- The end of a pending-roll batch is not the end of the run until level
+    -- 80.  At that point the last selectable Echo needs a separate search
+    -- policy so a safe frozen fallback survives Banish/Reroll attempts.
+    local finalSelection = (level or 0) >= 80
+        and type(state.horizon) == "number"
+        and state.horizon == 1
+    local unusableGuarantee = gIndex ~= nil and not gWanted
+
+    -- Reject an off-wishlist guarantee during ordinary leveling. Prefer a
+    -- useful side offer, otherwise spend only trustworthy search actions and
+    -- never loop an action the adapter already reported as refused.
+    if unusableGuarantee and not finalSelection then
+        local bestWantedSide, wantedFreezeResolving = nil, false
+        for i = 1, n do
+            if i ~= gIndex and wanted[i] then
+                if not FreezeWorthy(
+                    Model, state, cards[i], plan, ownedSafe, catalog) then
+                    annotations[i] = "returns later"
+                elseif cards[i].justFrozen then
+                    wantedFreezeResolving = true
+                elseif BetterWanted(
+                    Model, cards, deltas, plan, ownedSafe, catalog,
+                    i, bestWantedSide) then
+                    bestWantedSide = i
+                end
+            end
+        end
+        if bestWantedSide then
+            return TakeAction(cards, annotations, deltas, bestWantedSide,
+                "Reject off-wishlist guarantee; take missing wishlist side Echo")
+        end
+        if wantedFreezeResolving then
+            return {
+                type = "wait",
+                reason = "Wanted side Freeze is resolving before rejecting "
+                    .. "off-wishlist guarantee",
+                annotations = annotations,
+                deltas = deltas,
+            }
+        end
+
+        local refused = type(state.searchRefused) == "table"
+            and state.searchRefused or {}
+        if state.allowBanish ~= false and not refused.banish
+            and (tonumber(charges.banish) or 0) > 0
+            and charges.trustworthy == true
+            and not charges.banishSpentThisPush then
+            local worst = SafeBanishCandidate(cards, deltas, plan, gIndex)
+            if worst then
+                return {
+                    type = "banish",
+                    index = worst,
+                    spellId = cards[worst].spellId,
+                    reason = "Replace off-wishlist guarantee: Banish safe "
+                        .. "side to search for a missing wishlist Echo",
+                    annotations = annotations,
+                    deltas = deltas,
+                }
+            end
+        end
+        if not refused.reroll and (tonumber(charges.reroll) or 0) > 0
+            and charges.trustworthy == true then
+            return {
+                type = "reroll",
+                reason = "Replace off-wishlist guarantee: Reroll side choices "
+                    .. "for a missing wishlist Echo",
+                annotations = annotations,
+                deltas = deltas,
+            }
+        end
+
+        local side = LeastHarmfulSide(cards, annotations, deltas, gIndex)
+        if side then
+            return TakeAction(cards, annotations, deltas, side,
+                "Reject off-wishlist guarantee; take least-harmful side")
+        end
+        return {
+            type = "wait",
+            reason = "Off-wishlist guarantee has no selectable side",
+            annotations = annotations,
+            deltas = deltas,
+        }
+    end
+
+    -- Below level 80, spend at most one safe Banish per fresh run-data push.
+    -- Never pre-empt a wanted side offer that still needs protection.
+    if level and level < 80 then
+        local hasWantedSide, hasUnbankedWantedSide = false, false
+        for i = 1, n do
+            if i ~= gIndex and wanted[i] then
+                hasWantedSide = true
+                if not IsFrozen(cards[i]) then
+                    hasUnbankedWantedSide = true
+                    break
+                end
+            end
+        end
+        local wantedSideBlocksBanish
+        if gIndex then
+            wantedSideBlocksBanish = hasUnbankedWantedSide
+        else
+            wantedSideBlocksBanish = hasWantedSide
+        end
+        local refused = type(state.searchRefused) == "table"
+            and state.searchRefused or {}
+        if not wantedSideBlocksBanish and state.allowBanish ~= false
+            and not refused.banish
+            and (tonumber(charges.banish) or 0) > 0
+            and charges.trustworthy == true
+            and not charges.banishSpentThisPush then
+            local worst = SafeBanishCandidate(cards, deltas, plan, gIndex)
+            if worst then
+                return {
+                    type = "banish",
+                    index = worst,
+                    spellId = cards[worst].spellId,
+                    reason = "Early search: Banish safe off-wishlist side "
+                        .. "before normal roll sequencing",
+                    annotations = annotations,
+                    deltas = deltas,
+                }
+            end
+        end
+    end
+
+    if finalSelection then
+        local bestFrozen, bestVisible = nil, nil
+        for i = 1, n do
+            local card = cards[i]
+            if wanted[i] and not card.justFrozen then
+                if card.isFrozen or card.isCarried then
+                    if BetterWanted(
+                        Model, cards, deltas, plan, ownedSafe, catalog,
+                        i, bestFrozen) then
+                        bestFrozen = i
+                    end
+                elseif i ~= gIndex and not card.isGuaranteed
+                    and BetterWanted(
+                        Model, cards, deltas, plan, ownedSafe, catalog,
+                        i, bestVisible) then
+                    bestVisible = i
+                end
+            end
+        end
+
+        if bestVisible and (not bestFrozen
+            or BetterWanted(
+                Model, cards, deltas, plan, ownedSafe, catalog,
+                bestVisible, bestFrozen)) then
+            return Endgame(TakeAction(
+                cards, annotations, deltas, bestVisible,
+                bestFrozen
+                    and ("Final selection: better remaining wishlist Echo "
+                        .. "replaces frozen target")
+                    or "Final selection: take wanted side Echo before search"))
+        end
+
+        local protectedIndex = bestFrozen or gIndex
+        local protectedWanted = bestFrozen ~= nil
+            or (gIndex ~= nil and wanted[gIndex] == true)
+        local fallbackCard = protectedWanted and cards[protectedIndex] or nil
+        local searchPending = protectedIndex ~= nil
+            and MissingAfterFallback(plan, ownedSafe, fallbackCard, catalog)
+        if searchPending then
+            local refused = type(state.searchRefused) == "table"
+                and state.searchRefused or {}
+            if state.allowBanish ~= false and not refused.banish
+                and (tonumber(charges.banish) or 0) > 0
+                and charges.trustworthy == true
+                and not charges.banishSpentThisPush then
+                local worst = SafeBanishCandidate(cards, deltas, plan, gIndex)
+                if worst then
+                    return Endgame({
+                        type = "banish",
+                        index = worst,
+                        spellId = cards[worst].spellId,
+                        reason = "Final selection: safe Banish searches for "
+                            .. "another missing wanted Echo",
+                        annotations = annotations,
+                        deltas = deltas,
+                    })
+                end
+            end
+
+            local rerollSafe = bestFrozen ~= nil
+                or gIndex == nil
+                or wanted[gIndex] ~= true
+                or flags.REROLL_HOLDS_GUARANTEED == true
+            if not refused.reroll
+                and (tonumber(charges.reroll) or 0) > 0
+                and charges.trustworthy == true
+                and rerollSafe then
+                local reason
+                if bestFrozen then
+                    reason = "Final selection: Reroll searches while "
+                        .. "the frozen wanted Echo remains protected"
+                elseif gIndex and wanted[gIndex] then
+                    reason = "Final selection: Reroll searches while "
+                        .. "the guaranteed wanted Echo is held"
+                else
+                    reason = "Final selection: Reroll searches past "
+                        .. "a non-wanted guaranteed Echo"
+                end
+                return Endgame({
+                    type = "reroll",
+                    reason = reason,
+                    annotations = annotations,
+                    deltas = deltas,
+                })
+            end
+        end
+
+        if bestFrozen then
+            local reason = "Final selection: search exhausted or unavailable; "
+                .. "take frozen wanted Echo"
+            local refused = type(state.searchRefused) == "table"
+                and state.searchRefused or {}
+            if refused.banish or refused.reroll then
+                reason = "Final selection: search action refused; "
+                    .. "take frozen wanted Echo"
+            end
+            return Endgame(TakeAction(
+                cards, annotations, deltas, bestFrozen, reason))
+        end
+    end
+
+    if finalSelection and unusableGuarantee then
+        local side = LeastHarmfulSide(cards, annotations, deltas, gIndex)
+        if side then
+            return Endgame(TakeAction(cards, annotations, deltas, side,
+                "Final selection: reject off-wishlist guarantee"))
+        end
+        return Endgame({
+            type = "wait",
+            reason = "Final off-wishlist guarantee has no selectable side",
+            annotations = annotations,
+            deltas = deltas,
+        })
+    end
+
+    -- Phase A: protect one useful side offer, then drain the guaranteed queue.
+    if gIndex then
+        local bestUnbanked, hasBankedWanted = nil, false
+        for i = 1, n do
+            if i ~= gIndex and wanted[i] then
+                if IsFrozen(cards[i]) then
+                    hasBankedWanted = true
+                elseif FreezeWorthy(
+                    Model, state, cards[i], plan, ownedSafe, catalog) then
+                    if BetterWanted(
+                        Model, cards, deltas, plan, ownedSafe, catalog,
+                        i, bestUnbanked) then
+                        bestUnbanked = i
+                    end
+                else
+                    annotations[i] = "returns later"
+                end
+            end
+        end
+
+        if hasBankedWanted then
+            return TakeAction(cards, annotations, deltas, gIndex,
+                "Take guaranteed; wanted side Echo is safely frozen")
+        end
+
+        if bestUnbanked then
+            local freezeAvailable = (tonumber(charges.freeze) or 0) > 0
+                and charges.trustworthy == true
+                and state.canFreeze ~= false
+                and not cards[bestUnbanked].isGuaranteed
+            if freezeAvailable then
+                return {
+                    type = "freeze",
+                    index = bestUnbanked,
+                    spellId = cards[bestUnbanked].spellId,
+                    reason = "Freeze wanted side Echo; take guaranteed after it resolves",
+                    steps = {
+                        { type = "freeze", index = bestUnbanked,
+                          spellId = cards[bestUnbanked].spellId },
+                        { type = "take", index = gIndex,
+                          spellId = cards[gIndex].spellId },
+                    },
+                    annotations = annotations,
+                    deltas = deltas,
+                }
+            end
+
+            local why
+            if (tonumber(charges.freeze) or 0) <= 0 then
+                why = "Freeze unavailable"
+            elseif charges.trustworthy ~= true then
+                why = "Freeze count untrusted"
+            else
+                why = "Freeze unavailable or refused on this board"
+            end
+            return TakeAction(cards, annotations, deltas, bestUnbanked,
+                why .. ": taking wanted side Echo to prevent its loss")
+        end
+
+        return TakeAction(cards, annotations, deltas, gIndex,
+            "Drain guaranteed queue")
+    end
+
+    -- Phase B: consume the bank first, then any other wanted offer.
+    local bestFrozen, bestWanted = nil, nil
+    local protectedWanted = false
+    for i = 1, n do
+        if wanted[i] then
+            if cards[i].justFrozen then
+                protectedWanted = true
+            elseif cards[i].isFrozen or cards[i].isCarried then
+                if BetterWanted(
+                    Model, cards, deltas, plan, ownedSafe, catalog,
+                    i, bestFrozen) then
+                    bestFrozen = i
+                end
+            elseif BetterWanted(
+                Model, cards, deltas, plan, ownedSafe, catalog,
+                i, bestWanted) then
+                bestWanted = i
+            end
+        end
+    end
+    if bestFrozen then
+        return TakeAction(cards, annotations, deltas, bestFrozen,
+            "Take frozen wanted Echo before searching")
+    end
+    if bestWanted then
+        return TakeAction(cards, annotations, deltas, bestWanted,
+            "Take wanted Echo")
+    end
+
+    local refused = type(state.searchRefused) == "table"
+        and state.searchRefused or {}
+    if not protectedWanted and state.allowBanish ~= false
+        and not refused.banish
+        and (tonumber(charges.banish) or 0) > 0
+        and charges.trustworthy == true
+        and not charges.banishSpentThisPush then
+        local worst = SafeBanishCandidate(cards, deltas, plan, gIndex)
+        if worst then
+            local action = {
+                type = "banish", index = worst, spellId = cards[worst].spellId,
+                reason = "No wanted Echo: banish worst safe off-wishlist card",
+                annotations = annotations, deltas = deltas,
+            }
+            return finalSelection and Endgame(action) or action
+        end
+    end
+
+    if not protectedWanted and not refused.reroll
+        and (tonumber(charges.reroll) or 0) > 0
+        and charges.trustworthy == true then
+        local action = {
+            type = "reroll",
+            reason = "No wanted Echo or useful safe Banish: reroll",
+            annotations = annotations,
+            deltas = deltas,
+        }
+        return finalSelection and Endgame(action) or action
+    end
+
+    local anyNonDuplicate, anySelectable = false, false
+    for i = 1, n do
+        if annotations[i] ~= "duplicate" then anyNonDuplicate = true end
+        if not cards[i].justFrozen then anySelectable = true end
+    end
+    local convergencePick = nil
+    for i = 1, n do
+        local eligible = ((not anyNonDuplicate)
+                or annotations[i] ~= "duplicate")
+            and ((not anySelectable) or not cards[i].justFrozen)
+        if eligible and (convergencePick == nil
+            or deltas[i] > deltas[convergencePick]
+            or (deltas[i] == deltas[convergencePick]
+                and annotations[convergencePick] == "filler"
+                and annotations[i] ~= "filler")
+            or (deltas[i] == deltas[convergencePick]
+                and (annotations[i] == "filler")
+                    == (annotations[convergencePick] == "filler")
+                and (tonumber(cards[i].quality) or 0)
+                    < (tonumber(cards[convergencePick].quality) or 0))
+            or (deltas[i] == deltas[convergencePick]
+                and (tonumber(cards[i].quality) or 0)
+                    == (tonumber(cards[convergencePick].quality) or 0)
+                and i < convergencePick)) then
+            convergencePick = i
+        end
+    end
+    convergencePick = convergencePick or 1
+    local convergenceAction = TakeAction(
+        cards, annotations, deltas, convergencePick,
+        annotations[convergencePick] == "duplicate"
+            and "Forced take: every selectable Echo is already owned"
+            or "Forced least-harmful selection")
+    -- Every executable search path has already returned. This selection is
+    -- mandatory, so preserve that fact for the save gate's pollution model.
+    convergenceAction.forced = true
+    return finalSelection and Endgame(convergenceAction) or convergenceAction
+end
+
+--[[ Legacy 1.19.3 heuristic retained as design history. The convergence
+decision above is exhaustive for every well-formed board and replaces it.
     -- Presumptive take: best effective value among selectable cards
     -- (justFrozen excluded -- the client refuses same-board select of a
     -- just-frozen card). Ties go to the guaranteed head (one-shot).
@@ -862,3 +1461,4 @@ function Policy.Decide(state)
         forced = true,
         annotations = annotations, deltas = deltas }
 end
+--]]

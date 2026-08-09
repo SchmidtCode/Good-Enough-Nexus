@@ -55,6 +55,7 @@ local function EnsureFrame()
     subtitle:SetText("Choose the path that matches where your character is now.")
 
     local body = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.body = body
     body:SetPoint("TOPLEFT", 24, -62)
     body:SetSize(372, 58)
     body:SetJustifyH("LEFT")
