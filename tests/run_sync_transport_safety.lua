@@ -121,12 +121,26 @@ assert(rejectedResponse.control == 0,
     "loadout claim was queued without an admitted build payload")
 assert(rejectedResponse.pendingLoadouts == 1,
     "backpressured loadout response was not retained for retry")
+for _ = 1, 40 do
+    clock = clock + 1
+    Sync.OnUpdate(1)
+end
+assert(Sync.WorkState().pendingLoadouts == 1,
+    "active backpressured loadout response expired at the inactivity TTL")
 JoinTemporaryChannel, JoinChannelByName = oldTemporary2, oldNamed2
+H.joinedChannels[Sync.ChannelName()] = 5
+for _ = 1, 10 do
+    clock = clock + 1.2
+    Sync.OnUpdate(1.2)
+    if Sync.WorkState().pendingLoadouts == 0 then break end
+end
+assert(Sync.WorkState().pendingLoadouts == 0,
+    "retained loadout response did not complete after backpressure cleared")
 
 -- Bucket election has the same invariant: WLBC may only be published after
--- every WLRB packet in that bucket has been admitted atomically. Leave room
--- for one packet while scheduling two one-packet builds in the same bucket;
--- the partial admission must be rolled back along with the claim.
+-- every WLRB packet in that bucket has been admitted. Leave room for one
+-- packet while scheduling two one-packet builds in the same bucket: retain
+-- the admitted first payload, then resume with the second without duplication.
 Sync.Init(Nexus.Codec, {})
 local function TestBuildBucket(id)
     local hash = 5381
@@ -175,9 +189,60 @@ assert(rejectedBucket.control == 0,
     "bucket claim was queued without a complete admitted payload")
 assert(rejectedBucket.pendingResponses == 1,
     "backpressured bucket response was not retained for retry")
-assert(rejectedBucket.sending == limits.maxOutboundQueue - 1,
-    "failed bucket admission partially mutated the bulk queue")
+assert(rejectedBucket.sending == limits.maxOutboundQueue,
+    "successfully admitted bucket progress was rolled back")
 JoinTemporaryChannel, JoinChannelByName = oldTemporary3, oldNamed3
+H.joinedChannels[Sync.ChannelName()] = 6
+for _ = 1, 10 do
+    clock = clock + 1.2
+    Sync.OnUpdate(1.2)
+    if Sync.WorkState().pendingResponses == 0 then break end
+end
+assert(Sync.WorkState().pendingResponses == 0,
+    "bucket retry did not resume after its admitted build")
+assert(Sync.WorkState().sending == limits.maxOutboundQueue,
+    "bucket retry duplicated prior work or failed to use the released slot")
+
+-- A permanently invalid legacy row must not roll back or indefinitely block
+-- a valid build in the same bucket. Because the row was skipped, do not claim
+-- the bucket; another peer may still hold a sendable copy.
+Sync.Init(Nexus.Codec, {})
+local validId = "sendable-bucket-build"
+local invalidKey
+for i = 1, 100 do
+    local candidate = "unsendable-bucket-" .. i
+    if TestBuildBucket(candidate) == TestBuildBucket(validId) then
+        invalidKey = candidate
+        break
+    end
+end
+assert(invalidKey, "test setup could not colocate an unsendable row")
+NexusDB.communityBuilds = {
+    [validId] = {
+        id=validId, title="Sendable", author="Alice", class="MAGE",
+        lastModified=21, postedAt=21,
+        echoes={{spellId=200201, quality=3, stacks=1}},
+    },
+    [invalidKey] = {
+        id="invalid|wire-id", title="Unsendable", author="Alice",
+        class="MAGE", lastModified=22, postedAt=22,
+        fingerprintHash="1",
+    },
+}
+local oldTemporary4, oldNamed4 = JoinTemporaryChannel, JoinChannelByName
+H.joinedChannels = {}
+JoinTemporaryChannel = function() end
+JoinChannelByName = function() end
+assert(Sync.HandleIncoming("WLRQ|Requester|" .. emptyBuckets
+    .. "|0|req-unsendable", "Requester"),
+    "mixed sendable/unsendable bucket request was rejected")
+Sync.OnUpdate(6)
+local mixedBucket = Sync.WorkState()
+assert(mixedBucket.pendingResponses == 0 and mixedBucket.sending == 1,
+    "unsendable row blocked the valid build sharing its bucket")
+assert(mixedBucket.control == 0,
+    "responder claimed a bucket after skipping an unsendable row")
+JoinTemporaryChannel, JoinChannelByName = oldTemporary4, oldNamed4
 
 -- DPS bucket broadcasters report partial queue admission separately from the
 -- number of records queued. A partial result must retain the pending bucket

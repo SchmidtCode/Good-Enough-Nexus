@@ -93,7 +93,8 @@ local AUTO_SYNC_DELAY      = 6
 local AUTO_SYNC_MIN_PASS    = 60  -- allow throttled peers time to begin/drain large responses
 local AUTO_SYNC_QUIET       = 15  -- require a real quiet period before judging a pass stable
 local AUTO_SYNC_MAX_PASSES  = 0   -- retained for diagnostics; convergence now ends only when stable
-local PENDING_TTL           = 30
+local PENDING_TTL           = 30  -- inactivity cap for pending response work
+local PENDING_MAX_AGE       = 300 -- absolute cap even while backpressured
 
 ------------------------------------------------------------------------
 -- Module state
@@ -857,12 +858,19 @@ end
 
 local function BroadcastSummary(build)
     local payload = SummaryEncode(build)
-    if not ValidIdentifier(payload.id, MAX_BUILD_ID_BYTES)
-        or not ValidHash(tostring(payload.h or "")) then return false end
+    if not ValidIdentifier(payload.id, MAX_BUILD_ID_BYTES) then
+        return false, "invalid build id"
+    end
+    if not ValidHash(tostring(payload.h or "")) then
+        return false, "invalid build hash"
+    end
     local data = Codec.Base64Encode(Codec.JSONEncode(payload))
     local msg = string.format("%s|%s|%s", CODE_INDEX, MyName(), data)
-    if EscapedLen(msg) > CHAT_LIMIT - CHAT_SAFETY then return false end
-    if not Enqueue(msg) then return false end
+    if EscapedLen(msg) > CHAT_LIMIT - CHAT_SAFETY then
+        return false, "summary too large"
+    end
+    local queued, queueWhy = Enqueue(msg)
+    if not queued then return false, queueWhy end
     LogEvent("TX","queuing summary '%s' (%d chars, no Echo list)", tostring(build.title), EscapedLen(msg))
     return true
 end
@@ -1078,96 +1086,95 @@ end
 -- Only send builds the requester doesn't already have.
 -- peerHash: djb2 hash of peer's library (from their WLRQ).
 -- If hash matches ours, peer is fully up to date → send nothing.
-local function BroadcastMineFiltered(peerHash, onlyBucket)
+local function BroadcastMineFiltered(peerHash, onlyBucket, progress)
     local myDB = NexusDB and NexusDB.communityBuilds or {}
     local myMine = {}
+    progress = type(progress) == "table" and progress or {}
     for id, b in pairs(myDB) do myMine[id] = b end
     for id, h in pairs(hotBuilds) do
         if not myMine[id] and (Now()-h.t) <= HOT_WINDOW then myMine[id] = h.build end
     end
     if not next(myMine) and not next(tombstones or {}) then
         LogEvent("TX","nothing to share")
-        return 0, true
+        return 0, true, true
     end
     local myHash = LibraryHash(myMine)
     if peerHash and tostring(peerHash) == tostring(myHash) then
         LogEvent("TX","peer build buckets match -- sending nothing")
         stats.skippedUpToDate = (stats.skippedUpToDate or 0) + 1
-        return 0, true
+        return 0, true, true
     end
     local peerBuckets = SplitHashes(peerHash)
     local myBuckets = SplitHashes(myHash)
     local legacyPeer = #peerBuckets ~= BUILD_BUCKETS
-    local n = 0
-    local queueTailBefore = sendQueueTail
-    local recentBefore, hotBefore = {}, {}
-    local function SnapshotBuildState(build)
-        local buildKey = tostring(build.id or build.fingerprintHash
-            or build.fingerprint or "")
-        if buildKey ~= "" and recentBefore[buildKey] == nil then
-            recentBefore[buildKey] = {
-                present = recentBuildBroadcast[buildKey] ~= nil,
-                value = recentBuildBroadcast[buildKey],
-            }
-        end
-        local id = build.id
-        if id ~= nil and hotBefore[id] == nil then
-            hotBefore[id] = {
-                present = hotBuilds[id] ~= nil,
-                value = hotBuilds[id],
-            }
-        end
-    end
-    local function RollBackBucketQueue()
-        for i = queueTailBefore + 1, sendQueueTail do sendQueue[i] = nil end
-        sendQueueTail = queueTailBefore
-        for key, prior in pairs(recentBefore) do
-            recentBuildBroadcast[key] = prior.present and prior.value or nil
-        end
-        for id, prior in pairs(hotBefore) do
-            hotBuilds[id] = prior.present and prior.value or nil
-        end
-    end
-    local complete = true
+    local n, claimSafe = 0, true
+    local candidates = {}
     for id, b in pairs(myMine) do
         local bucket = BuildBucket(id)
         if (not onlyBucket or bucket == onlyBucket)
             and (legacyPeer or tostring(peerBuckets[bucket] or "") ~= tostring(myBuckets[bucket] or "")) then
-            -- Send the complete build during reconciliation so receivers never
-            -- need to click a menu item to fetch its Echo list. Summary is only
-            -- a compatibility fallback for legacy/incomplete local rows.
-            local ok, why = false, nil
-            if type(b.echoes) == "table" and #b.echoes > 0 then
-                SnapshotBuildState(b)
-                ok, why = Sync.BroadcastBuild(b)
-            else
-                ok = BroadcastSummary(b)
-            end
-            if not ok or why == "duplicate suppressed" then
-                complete = false
-                break
-            end
-            n=n+1
+            local complete = (type(b.echoes) == "table" and #b.echoes > 0)
+                and "F" or "S"
+            local token = table.concat({ "B", tostring(id),
+                tostring(b.lastModified or b.postedAt or 0), complete,
+                tostring(b.fingerprintHash or b.fingerprint or "0") }, ":")
+            candidates[#candidates + 1] = {
+                kind="build", id=id, build=b, token=token,
+            }
         end
     end
-    for id, tomb in pairs(complete and (tombstones or {}) or {}) do
+    for id, tomb in pairs(tombstones or {}) do
         local bucket = BuildBucket(id)
         if SamePeer(TombAuthor(tomb), MyName())
             and (not onlyBucket or bucket == onlyBucket)
             and (legacyPeer or tostring(peerBuckets[bucket] or "") ~= tostring(myBuckets[bucket] or "")) then
-            if not Enqueue(string.format("%s|%s|%s|%s|%s", CODE_DELETE,
-                MyName(), id, tostring(TombStamp(tomb)), TombAuthor(tomb))) then
-                complete = false
-                break
-            end
-            n=n+1
+            candidates[#candidates + 1] = {
+                kind="tomb", id=id, tomb=tomb,
+                token=table.concat({ "T", tostring(id),
+                    tostring(TombStamp(tomb)), TombAuthor(tomb) }, ":"),
+            }
         end
     end
-    if not complete then
-        RollBackBucketQueue()
-        return 0, false
+    table.sort(candidates, function(a, b)
+        return tostring(a.token) < tostring(b.token)
+    end)
+    for _, item in ipairs(candidates) do
+        if not progress[item.token] then
+            local ok, why
+            if item.kind == "build" then
+                -- Full builds are preferred; summaries are compatibility
+                -- fallbacks for incomplete legacy rows.
+                if type(item.build.echoes) == "table"
+                    and #item.build.echoes > 0 then
+                    ok, why = Sync.BroadcastBuild(item.build)
+                else
+                    ok, why = BroadcastSummary(item.build)
+                end
+            else
+                ok, why = Enqueue(string.format("%s|%s|%s|%s|%s",
+                    CODE_DELETE, MyName(), item.id,
+                    tostring(TombStamp(item.tomb)), TombAuthor(item.tomb)))
+            end
+            if ok and why ~= "duplicate suppressed" then
+                progress[item.token] = "admitted"
+                n = n + 1
+            elseif why == "sync queue full"
+                or why == "duplicate suppressed" then
+                -- Preserve admitted progress. The next attempt resumes with
+                -- this item instead of re-enqueueing earlier payloads.
+                return n, false, claimSafe
+            else
+                -- Permanent serialization/validation failures must not block
+                -- unrelated valid rows. Do not claim the bucket, so another
+                -- peer with a sendable copy remains free to answer.
+                progress[item.token] = "skipped"
+                claimSafe = false
+                LogEvent("TX", "skipping unsendable %s '%s': %s",
+                    item.kind, tostring(item.id), tostring(why or "invalid"))
+            end
+        end
     end
-    return n, true
+    return n, true, claimSafe
 end
 
 local function BucketDelay(key, kind, bucket)
@@ -1538,22 +1545,26 @@ local function HandleComplete(buildId, lastMod, fullData, transportSender)
     return true
 end
 
-local function SendBucketResponse(entry, kind, bucket)
-    local n, dpsN, complete = 0, 0, true
+local function SendBucketResponse(entry, kind, bucket, bucketState)
+    local n, dpsN, complete, claimSafe = 0, 0, true, true
+    bucketState.progress = bucketState.progress or {}
     if kind == "B" then
-        n, complete = BroadcastMineFiltered(entry.peerBuildHash, bucket)
+        n, complete, claimSafe = BroadcastMineFiltered(
+            entry.peerBuildHash, bucket, bucketState.progress)
+        if claimSafe == false then bucketState.claimSafe = false end
     else
         local D = Nexus.DpsCapture
         if D and D.BroadcastAllBuildBests then
             local ok, result, allAdmitted = pcall(
-                D.BroadcastAllBuildBests, entry.peerDpsHash, bucket)
+                D.BroadcastAllBuildBests, entry.peerDpsHash, bucket,
+                bucketState.progress)
             if ok then dpsN = tonumber(result) or 0 end
             complete = ok and allAdmitted == true
         end
     end
     LogEvent("RX", "mesh bucket %s%d for %s: %d build(s), %d record(s)",
         kind, bucket, tostring(entry.requester), n, dpsN)
-    return complete
+    return complete, bucketState.claimSafe ~= false
 end
 
 local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
@@ -1589,7 +1600,7 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
     local peerBuildBuckets = #peerB == BUILD_BUCKETS
     local entry={key=key,requester=requester,requestId=requestId,
         peerBuildHash=peerBuildHash,peerDpsHash=peerDpsHash,buckets={},
-        createdAt=Now()}
+        createdAt=Now(),lastActiveAt=Now()}
     for i=1,BUILD_BUCKETS do
         if tostring(peerB[i] or "") ~= tostring(myB[i] or "") then
             entry.buckets["B"..i]={kind="B",bucket=i,hash=tostring(myB[i] or "0"),
@@ -1637,11 +1648,19 @@ local function HandleBucketClaim(responder, requester, requestId, kind, bucket, 
     return true
 end
 
+local function PendingExpired(entry)
+    local now = Now()
+    local createdAt = tonumber(entry and entry.createdAt) or now
+    local lastActiveAt = tonumber(entry and entry.lastActiveAt) or createdAt
+    return now - createdAt > PENDING_MAX_AGE
+        or now - lastActiveAt > PENDING_TTL
+end
+
 local function ProcessPendingResponses(elapsed)
     elapsed=tonumber(elapsed) or 0
     local sends={}
     for key,entry in pairs(pendingResponses) do
-        if Now() - (tonumber(entry.createdAt) or Now()) > PENDING_TTL then
+        if PendingExpired(entry) then
             pendingResponses[key] = nil
         else
             for id,b in pairs(entry.buckets or {}) do
@@ -1655,8 +1674,10 @@ local function ProcessPendingResponses(elapsed)
     end
     table.sort(sends,function(a,b) return (a.kind..a.bucket)<(b.kind..b.bucket) end)
     for _,x in ipairs(sends) do
-        if SendBucketResponse(x.entry,x.kind,x.bucket) then
-            if x.bucketState.claimable ~= false then
+        local complete, claimSafe = SendBucketResponse(
+            x.entry,x.kind,x.bucket,x.bucketState)
+        if complete then
+            if claimSafe and x.bucketState.claimable ~= false then
                 local claimed, claimWhy = EnqueueControl(string.format(
                     "%s|%s|%s|%s|%s|%d|%s",CODE_BUCKET_CLAIM,
                     MyName(),x.entry.requester,x.entry.requestId,x.kind,
@@ -1672,11 +1693,12 @@ local function ProcessPendingResponses(elapsed)
             if not next(x.entry.buckets) then pendingResponses[x.key]=nil end
         else
             x.bucketState.remaining=1
+            x.entry.lastActiveAt=Now()
         end
     end
     local loadoutReady={}
     for key,entry in pairs(pendingLoadouts) do
-        if Now() - (tonumber(entry.createdAt) or Now()) > PENDING_TTL then
+        if PendingExpired(entry) then
             pendingLoadouts[key] = nil
         else
             entry.remaining=(tonumber(entry.remaining) or 0)-elapsed
@@ -1704,8 +1726,16 @@ local function ProcessPendingResponses(elapsed)
                 LogEvent("TX","answered on-demand loadout '%s' for %s",
                     tostring(entry.buildId),tostring(entry.requester))
             else
-                entry.remaining = 1
-                pendingLoadouts[entry.key] = entry
+                if sendWhy == "sync queue full"
+                    or sendWhy == "duplicate suppressed" then
+                    entry.remaining = 1
+                    entry.lastActiveAt = Now()
+                    pendingLoadouts[entry.key] = entry
+                else
+                    LogEvent("TX", "dropping unsendable loadout '%s': %s",
+                        tostring(entry.buildId),
+                        tostring(sendWhy or "invalid build"))
+                end
             end
         end
     end
@@ -1903,7 +1933,7 @@ function Sync.HandleIncoming(text, sender)
                         return false
                     end
                     pendingLoadouts[key] = { key=key, requester=requester,
-                        buildId=buildId, createdAt=Now(),
+                        buildId=buildId, createdAt=Now(), lastActiveAt=Now(),
                         remaining=StableDelay(key..":"..MyName()) }
                 end
             end
