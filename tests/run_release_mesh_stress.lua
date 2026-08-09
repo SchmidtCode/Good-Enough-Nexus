@@ -31,4 +31,13 @@ local parts={}; for p in fullHash:gmatch("([^,]+)") do parts[#parts+1]=p end; pa
 broadcasts={}
 local n=DPS.BroadcastAllBuildBests(table.concat(parts,","))
 assert(n>0 and n<40,"one changed bucket should send a bounded subset, got "..tostring(n))
+local attempts=0
+DPS.Init({}, {BroadcastDpsRecord=function()
+ attempts=attempts+1
+ if attempts==1 then return true end
+ return false,"sync queue full"
+end})
+local admitted,complete=DPS.BroadcastAllBuildBests("0")
+assert(admitted==1 and complete==false and attempts>1,
+ "partial DPS bucket admission was incorrectly reported as complete")
 print("100-entry leaderboard and bucket-delta sync stress -- OK")

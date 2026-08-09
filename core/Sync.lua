@@ -317,11 +317,16 @@ local function FiniteNumber(value)
         and value < math.huge and value > -math.huge
 end
 
-local function ValidField(value, maxBytes, allowEmpty)
+local function ValidText(value, maxBytes, allowEmpty)
     return type(value) == "string"
         and (allowEmpty or value ~= "")
         and #value <= maxBytes
-        and not value:find("[%c|]")
+        and not value:find("[%c]")
+end
+
+local function ValidField(value, maxBytes, allowEmpty)
+    return ValidText(value, maxBytes, allowEmpty)
+        and not value:find("|", 1, true)
 end
 
 local function ValidIdentifier(value, maxBytes)
@@ -868,7 +873,7 @@ local QueueLegacyRecovery
 local function StoreSummary(data, transportSender)
     if type(data) ~= "table" or not Codec.IsSafeTree(data, 4, 80)
         or not ValidIdentifier(data.id, MAX_BUILD_ID_BYTES)
-        or not ValidField(data.t, 120, false)
+        or not ValidText(data.t, 120, false)
         or not ValidPeerName(data.a)
         or not ValidHash(tostring(data.h or ""))
         or (data.lh ~= nil and not ValidHash(tostring(data.lh)))
@@ -1273,7 +1278,8 @@ function Sync.BroadcastDpsRecord(record)
         messages[#messages + 1] = string.format("%s|%s|%s|%d/%d|%s",
             CODE_DPS2, MyName(), transferId, i, total, data)
     end
-    if not EnqueueBatch(messages) then return false end
+    local queued, queueWhy = EnqueueBatch(messages)
+    if not queued then return false, queueWhy end
     LogEvent("TX","DPS2 [%s] %.0f by %s (%d chunks)",
         tostring(payload.c), payload.d, payload.p, total)
     return true
@@ -1539,9 +1545,10 @@ local function SendBucketResponse(entry, kind, bucket)
     else
         local D = Nexus.DpsCapture
         if D and D.BroadcastAllBuildBests then
-            local ok, result = pcall(D.BroadcastAllBuildBests, entry.peerDpsHash, bucket)
+            local ok, result, allAdmitted = pcall(
+                D.BroadcastAllBuildBests, entry.peerDpsHash, bucket)
             if ok then dpsN = tonumber(result) or 0 end
-            if not ok then complete = false end
+            complete = ok and allAdmitted == true
         end
     end
     LogEvent("RX", "mesh bucket %s%d for %s: %d build(s), %d record(s)",

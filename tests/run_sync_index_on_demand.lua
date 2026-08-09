@@ -7,7 +7,7 @@ local clock=1000; GetTime=function() return clock end; time=function() return 50
 local function Pump(steps) for _=1,steps do clock=clock+0.2; Sync.OnUpdate(0.2) end end
 local who='Source'; UnitName=function() return who end
 local echoes={}; for i=1,79 do echoes[i]={spellId=200000+i,stacks=(i%3)+1,quality=3} end
-local build={id='build-79',title='Full Record Build',description=string.rep('description ',50),
+local build={id='build-79',title='AoE | ST',description=string.rep('description ',50),
     author='Source',ownerKey='source@ebonhold',class='MAGE',echoes=echoes,
     postedAt=10,lastModified=10,isMine=true}
 NexusDB={communityBuilds={[build.id]=build},syncTombstones={},dpsCapture={}}
@@ -41,6 +41,8 @@ for _,m in ipairs(summaries) do Sync.HandleIncoming(m.text,'Source') end
 local placeholder=NexusDB.communityBuilds['build-79']
 assert(placeholder and not placeholder.loadoutAvailable and not placeholder.echoes,
     'legacy summary was incorrectly treated as exact evidence')
+assert(placeholder.title=='AoE | ST',
+    'Base64-encoded summary title containing a wire delimiter was rejected')
 local immediate,why=Sync.RequestLoadout('build-79')
 assert(not immediate and why,'legacy recovery request did not remain background-only')
 

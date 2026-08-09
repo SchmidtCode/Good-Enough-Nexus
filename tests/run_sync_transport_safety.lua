@@ -179,4 +179,26 @@ assert(rejectedBucket.sending == limits.maxOutboundQueue - 1,
     "failed bucket admission partially mutated the bulk queue")
 JoinTemporaryChannel, JoinChannelByName = oldTemporary3, oldNamed3
 
+-- DPS bucket broadcasters report partial queue admission separately from the
+-- number of records queued. A partial result must retain the pending bucket
+-- for retry instead of treating it as complete.
+Sync.Init(Nexus.Codec, {})
+NexusDB.communityBuilds = {}
+local partialCalls = 0
+Nexus.DpsCapture = {
+    GetSyncHash = function() return "abc,0,0,0,0,0,0,0" end,
+    BroadcastAllBuildBests = function()
+        partialCalls = partialCalls + 1
+        return 1, false
+    end,
+}
+local localBuildHash = Sync.GetCompatibilityHashes()
+assert(Sync.HandleIncoming("WLRQ|Requester|" .. localBuildHash .. "|"
+    .. emptyBuckets .. "|req-dps-partial", "Requester"),
+    "valid DPS reconciliation request was rejected")
+Sync.OnUpdate(6)
+assert(partialCalls >= 1, "DPS bucket broadcaster was not invoked")
+assert(Sync.WorkState().pendingResponses == 1,
+    "partially admitted DPS bucket was not retained for retry")
+
 print("sync validation, retry retention, overflow, and claim safety -- OK")

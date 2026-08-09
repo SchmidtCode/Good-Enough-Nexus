@@ -866,12 +866,14 @@ function DPS.BroadcastBestForBuild(buildId)
 end
 
 function DPS.BroadcastAllBuildBests(peerHash, onlyBucket)
-    if peerHash and tostring(peerHash) == tostring(DPS.GetSyncHash()) then return 0 end
+    if peerHash and tostring(peerHash) == tostring(DPS.GetSyncHash()) then
+        return 0, true
+    end
     MigrateLegacyLeaderboard()
     local peerBuckets = SplitBucketHash(peerHash)
     local myBuckets = SplitBucketHash(DPS.GetSyncHash())
     local legacyPeer = #peerBuckets ~= DPS_BUCKETS
-    local n = 0
+    local n, complete = 0, true
     local store = CharacterBestStore()
     for _, category in ipairs({ "dummy", "lk" }) do
         for playerKey, row in pairs(store[category] or {}) do
@@ -888,7 +890,7 @@ function DPS.BroadcastAllBuildBests(peerHash, onlyBucket)
                     echoes=row.echoes,
                     lockedEchoes=row.lockedEchoes,
                 }
-                local ok, result=pcall(Sync.BroadcastDpsRecord,record)
+                local ok, result, why=pcall(Sync.BroadcastDpsRecord,record)
                 if ok and result~=false then
                     n=n+1
                     -- Also broadcast the build's echo list so peers can view
@@ -898,11 +900,15 @@ function DPS.BroadcastAllBuildBests(peerHash, onlyBucket)
                     if build and type(build.echoes)=="table" and #build.echoes>0 and Sync.BroadcastBuild then
                         pcall(Sync.BroadcastBuild, build)
                     end
+                elseif not ok or why == "sync queue full" then
+                    -- Queue backpressure is temporary. Tell the mesh responder
+                    -- to retain this bucket so every owner record gets retried.
+                    complete=false
                 end
             end
         end
     end
-    return n
+    return n, complete
 end
 
 -- Public board: one row per character for the selected encounter. The row is
