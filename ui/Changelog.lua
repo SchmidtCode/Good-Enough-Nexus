@@ -4,8 +4,8 @@ Nexus = Nexus or {}
 local M = {}
 Nexus.Changelog = M
 
-local VERSION = "1.19.3"
-local RELEASE_KEY = "1.19.3"
+local VERSION = "1.19.4"
+local RELEASE_KEY = "1.19.4"
 local frame
 local shownThisSession = false
 
@@ -43,7 +43,7 @@ local function Create()
 
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -20)
-    title:SetText("Nexus 1.19.3")
+    title:SetText("Nexus 1.19.4")
 
     local body = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     body:SetPoint("TOPLEFT", 28, -52)
