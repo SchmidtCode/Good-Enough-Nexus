@@ -1149,7 +1149,7 @@ local function ShowWishlistPicker(anchor, wishes, linked, active, loadoutName, A
             row:SetHeight(20)
             row.text = row:CreateFontString(nil,"OVERLAY","GameFontDisableSmall")
             row.text:SetPoint("LEFT",6,0); row.text:SetText("Clear association")
-            row:SetHighlightTexture("Interface\QuestFrame\UI-QuestTitleHighlight", "ADD")
+            row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
             wishlistPicker.clearRow = row
         end
         row:ClearAllPoints(); row:SetPoint("TOPLEFT",6,-24-#wishes*rowH); row:SetPoint("RIGHT",-6,0)

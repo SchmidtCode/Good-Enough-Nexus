@@ -51,6 +51,8 @@ local fillerFishState = {
 -- Reset at the same run boundary as fillerFishState (level == 1, below).
 local forcedTakesBySpell = {}
 local frozeThisBoard = nil       -- board signature we already spent a freeze on
+local refusedFinalBanishSig = nil
+local refusedFinalRerollSig = nil
 local externalPauseUntil = 0
 
 -- SAVE state
@@ -109,7 +111,7 @@ Nexus.AppendAudit = AppendAudit
 -- TryAutoLock) is rebuilt every poll tick and only ever holds the MOST
 -- RECENT tick's reasoning -- fine for "why isn't this firing right now",
 -- useless for reconstructing what happened over an entire test run, since
--- whatever a "Full AI Log" export captures is only whatever the last tick
+-- whatever a full diagnostic export captures is only whatever the last tick
 -- before the export happened to look like. This keeps every actual write
 -- attempt (not the far more frequent no-op ticks) so a full run's lock/
 -- unlock sequence survives to be reviewed after the fact.
@@ -813,6 +815,8 @@ local function StepArm(level, plan, owned, slots, disabledLevers)
     -- (b) disable off-wishlist conformant tome levers (one send per 0.5s)
     if settings.autoDisable and plan and not plan.advisorOnly
         and Adapter.DiscoverySynced()
+        and not (Adapter.TomeMutationPaused
+            and Adapter.TomeMutationPaused())
         and (GetTime() - lastLeverSendAt) > 0.5 then
         local optOut = settings.leverOptOut or {}
         for _, lever in ipairs(plan.leverPlan.disable) do
@@ -1243,7 +1247,7 @@ local function LogText_AutoLock()
     out[#out + 1] = ""
 
     -- lastAutoLockTrace above is a single-tick snapshot, overwritten every
-    -- poll -- by the time a "Full AI Log" export is taken, it only reflects
+    -- poll -- by the time a full diagnostic export is taken, it only reflects
     -- whatever the last tick looked like. This is the durable history: every
     -- actual LockPerk/UnlockPerk attempt this session, oldest first.
     out[#out + 1] = "LOCK/UNLOCK EVENT HISTORY (actual write attempts only, oldest first):"
@@ -1279,6 +1283,13 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
         return
     end
 
+    if refusedFinalBanishSig and refusedFinalBanishSig ~= board.signature then
+        refusedFinalBanishSig = nil
+    end
+    if refusedFinalRerollSig and refusedFinalRerollSig ~= board.signature then
+        refusedFinalRerollSig = nil
+    end
+
     if armTargetSlot and not armedConfirmed then
         boardsSinceArm = boardsSinceArm + 1
         if board.guaranteedIndex then
@@ -1312,14 +1323,22 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
         owned, plan, flags, disabledLevers, catalog)
     local charges = Adapter.Charges()
     local locked = Adapter.LockedOwned and Adapter.LockedOwned() or nil
+    local horizon = Adapter.Horizon()
     local state = {
         board = board, owned = owned, locked = locked, charges = charges, plan = plan,
         activeEchoes = activeRow and activeRow.echoes or {},
         queue = queue, flags = flags, level = level, catalog = catalog,
-        horizon = Adapter.Horizon(),
-        canFreeze = (level < 80) and (frozeThisBoard ~= board.signature),
+        horizon = horizon,
+        canFreeze = (level < 80
+            or (type(horizon) == "number" and horizon > 1))
+            and (frozeThisBoard ~= board.signature),
         support = Model.Support(catalog, owned, level, disabledLevers, plan, DefaultProfile.params),
         params = DefaultProfile.params,
+        allowBanish = settings.autoBanish ~= false,
+        searchRefused = {
+            banish = refusedFinalBanishSig == board.signature,
+            reroll = refusedFinalRerollSig == board.signature,
+        },
         rerollBudget = {
             consecutive = fillerFishState.consecutive,
             -- Bracket 1 (RerollBracket above) spans levels 1-34 and the
@@ -1365,11 +1384,13 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
             local entry = {
                 t = date and date("%H:%M:%S") or "",
                 level = level,
+                horizon = horizon,
                 gIndex = board.guaranteedIndex,
                 charges = { b = charges.banish, r = charges.reroll,
                             f = charges.freeze, ok = charges.trustworthy },
                 proposal = { type = action.type, spellId = action.spellId,
-                             index = action.index, reason = action.reason },
+                             index = action.index, reason = action.reason,
+                             endgame = action.endgame },
                 cards = {},
                 pending = (function()
                     local out = {}
@@ -1524,6 +1545,10 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
         local ok, err = Adapter.Banish(action.index - 1)
         if ok then
             SetStatus(string.format("|cffff6666Banished|r echo #%d", action.index))
+        elseif action.endgame then
+            refusedFinalBanishSig = board.signature
+            lastDecidedSig = nil
+            SetStatus("final-search Banish refused -- re-evaluating")
         end
     elseif action.type == "freeze" then
         fillerFishState.consecutive = 0
@@ -1538,14 +1563,20 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
             frozeThisBoard = board.signature   -- refused: do not retry this board
         end
     elseif action.type == "reroll" then
-        lastBoardForRerollWatch = board
-        if action.reason == "bracket fishing: reroll filler guarantee" then
-            fillerFishState.consecutive = fillerFishState.consecutive + 1
-            fillerFishState.bracketSpent = fillerFishState.bracketSpent + 1
-        else
-            fillerFishState.consecutive = 0
+        local ok = Adapter.Reroll()
+        if ok then
+            lastBoardForRerollWatch = board
+            if action.reason == "bracket fishing: reroll filler guarantee" then
+                fillerFishState.consecutive = fillerFishState.consecutive + 1
+                fillerFishState.bracketSpent = fillerFishState.bracketSpent + 1
+            else
+                fillerFishState.consecutive = 0
+            end
+        elseif action.endgame then
+            refusedFinalRerollSig = board.signature
+            lastDecidedSig = nil
+            SetStatus("final-search Reroll refused -- taking held Echo")
         end
-        Adapter.Reroll()
     end
 end
 
@@ -1648,7 +1679,7 @@ local function StepSave(level, plan, slots, owned)
             -- Translate the raw Ratchet detail into something readable
             local readableDetail
             if tostring(detail):find("no net gain") then
-                readableDetail = "no new wishlist Echoes this run — bad RNG, not a bug"
+                readableDetail = "wishlist coverage unchanged this run"
             elseif tostring(detail):find("progress regressed")
                 or tostring(detail):find("coverage lost") then
                 readableDetail = "this run finished farther from the wishlist than your saved snapshot"
@@ -1760,7 +1791,12 @@ end
 
 local function Step()
     local level = Adapter.Level()
-    if lastLevelSeen ~= level then
+    local levelChanged = lastLevelSeen ~= level
+    if levelChanged then
+        -- A short user-action pause belongs to the board/level where it was
+        -- observed. Never let it suppress the first actionable board after a
+        -- genuine progression transition.
+        externalPauseUntil = 0
         if level == 1 then
             if seedVerify and saveVerifySlot then
                 Print("|cffff9040Nexus:|r the first-run Saved Build write was not confirmed before the reset. "
@@ -1782,12 +1818,17 @@ local function Step()
             fillerFishState.bracket = nil
             fillerFishState.bracketSpent = 0
             forcedTakesBySpell = {}
+            lastDecidedSig, lastDecision, decidedAt = nil, nil, nil
+            lastLoggedSig = nil
+            lastBoardForRerollWatch = nil
+            frozeThisBoard = nil
+            refusedFinalBanishSig, refusedFinalRerollSig = nil, nil
             Adapter.RunBoundaryReset()   -- void the dead run's picks/trust
         end
         if level ~= 80 then savedThisVisit = false end
         lastLevelSeen = level
     end
-    if Adapter.ExternalActionSeen() then
+    if Adapter.ExternalActionSeen() and not levelChanged then
         externalPauseUntil = GetTime() + 3
     end
 
@@ -2038,8 +2079,10 @@ local function LogText_Boards()
     end
     for i = first, #log do
         local e = log[i]
-        out[#out + 1] = string.format("== #%d [%s] L%s  charges B:%s R:%s F:%s%s",
+        out[#out + 1] = string.format("== #%d [%s] L%s H:%s%s  charges B:%s R:%s F:%s%s",
             i, tostring(e.t), tostring(e.level),
+            tostring(e.horizon),
+            (e.proposal and e.proposal.endgame) and " [FINAL]" or "",
             tostring(e.charges and e.charges.b),
             tostring(e.charges and e.charges.r),
             tostring(e.charges and e.charges.f),
@@ -2090,7 +2133,7 @@ local function UserMatchesProposal(u, p)
     return false
 end
 
--- Complete, compact export for AI review.  The normal Boards/Mismatch tabs stay
+-- Complete, compact diagnostic export. The normal Boards/Mismatch tabs stay
 -- bounded so opening /nexus log is cheap; this export includes every decision
 -- still retained in SavedVariables (currently up to 200) in one copy operation.
 -- Strings are dictionary-encoded to keep the single EditBox comfortably below
@@ -2135,10 +2178,10 @@ local function NewAIExportCoroutine()
         end
 
         local out = {
-            "NEXUS_AI_DIAGNOSTIC_LOG_3",
+            "NEXUS_DIAGNOSTIC_LOG_4",
             "version=" .. Esc(Nexus.VERSION) .. "|boards=" .. #log .. "|audits=" .. #audits .. "|probes=" .. #probes,
             "B=board|C=card|U=user action|Q=predicted guarantee queue head|A=run/save audit|D=dictionary",
-            "B|i|time|level|guaranteedIndex|banish|reroll|freeze|trusted|actionRef|spellId|cardIndex|reasonRef|pendingRef|mismatch|activeSlot|run|queueN",
+            "B|i|time|level|horizon|endgame|guaranteedIndex|banish|reroll|freeze|trusted|actionRef|spellId|cardIndex|reasonRef|pendingRef|mismatch|activeSlot|run|queueN",
             "C|board|card|spellId|familyRef|cardQ|catalogQ|wishQ|maxStack|owned|delta|annotationRef|flags(G,F,W)",
             "Q|board|position|spellId|familyRef|wished",
             "A|kindRef|time|run|level|activeSlot|targetSlot|resultRef|reasonRef|incumbentCounts|candidateCounts|summaryRef|exactRef|exactGained|exactLost|excessForced|excessAvoidable|excessShed|wrongQForced|wrongQAvoidable|wrongQShed|wrongQDetailRef|pollutionScoreRef",
@@ -2148,7 +2191,7 @@ local function NewAIExportCoroutine()
         }
         for i, e in ipairs(log) do
             local p = e.proposal or {}; local ch = e.charges or {}
-            out[#out + 1] = table.concat({"B",i,Esc(e.t),V(e.level),V(e.gIndex),V(ch.b),V(ch.r),V(ch.f),B(ch.ok),Ref(p.type),V(p.spellId),V(p.index),Ref(p.reason),Ref(e.pending),Mismatch(e),N(e.activeSlot),N(e.run),N(e.queueN)}, "|")
+            out[#out + 1] = table.concat({"B",i,Esc(e.t),V(e.level),V(e.horizon),B(p.endgame),V(e.gIndex),V(ch.b),V(ch.r),V(ch.f),B(ch.ok),Ref(p.type),V(p.spellId),V(p.index),Ref(p.reason),Ref(e.pending),Mismatch(e),N(e.activeSlot),N(e.run),N(e.queueN)}, "|")
             for ci, c in ipairs(e.cards or {}) do
                 local flags = (c.g and "G" or "-") .. (c.frozen and "F" or "-") .. (c.wished and "W" or "-")
                 out[#out + 1] = table.concat({"C",i,ci,V(c.id),Ref(c.fam),V(c.cardQ),V(c.catQ),V(c.wishQ),V(c.maxStack),V(c.owned),V(c.delta),Ref(c.ann),flags}, "|")
@@ -2173,7 +2216,7 @@ local function NewAIExportCoroutine()
             out[#out + 1] = table.concat({"P",Esc(p.t),Ref(p.event),Ref(p.detail)}, "|")
             if i % 10 == 0 then coroutine.yield("Encoding UI probes " .. i .. "/" .. #probes) end
         end
-        -- Include every human-readable /nexus log page in the same AI export.
+        -- Include every human-readable /nexus log page in the same export.
         -- This makes the export self-contained: compact event rows plus the exact
         -- State/Wishlist/Sync/DPS pages the player can see in the log window.
         local pageKeys = {"state", "wishlist", "boards", "mismatch", "sync", "dps", "autolock"}
@@ -2208,7 +2251,7 @@ function Nexus.NewAIExportCoroutine()
 end
 
 local function LogText_AIExport()
-    return "Press Copy Full AI Log. Nexus builds the complete export gradually to avoid a frame hitch."
+    return "Press Copy Full Diagnostic Log. Nexus builds the complete export gradually to avoid a frame hitch."
 end
 
 local function LogText_Mismatch()
@@ -2575,7 +2618,7 @@ local function LogViewerProvider(tabKey)
     return "unknown tab: " .. tostring(tabKey)
 end
 
--- Public read-only provider used by the comprehensive AI export. It returns
+-- Public read-only provider used by the comprehensive diagnostic export. It returns
 -- exactly the same text shown on each /nexus log page.
 function Nexus.GetDiagnosticPageText(tabKey)
     return LogViewerProvider(tabKey)

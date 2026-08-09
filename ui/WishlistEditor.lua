@@ -815,7 +815,6 @@ end
 -- string import) both used it. This is destructive (it overwrites
 -- whatever's currently in that slot), so it goes through a confirmation
 -- popup rather than firing on click.
-StaticPopupDialogs = StaticPopupDialogs or {}
 local APPLY_FRIENDLY = {
     spacing = "the server is busy with another build operation -- try again in a moment",
     refused = "the server refused the change (are you in a state that allows editing your build?)",
@@ -1558,8 +1557,9 @@ local function EnsureFrame()
     if frame then return frame end
     frame = CreateFrame("Frame", "NexusEditorFrame", UIParent)
     frame:SetClampedToScreen(true)
-    UISpecialFrames = UISpecialFrames or {}
-    table.insert(UISpecialFrames, "NexusEditorFrame")
+    if type(UISpecialFrames) == "table" then
+        table.insert(UISpecialFrames, "NexusEditorFrame")
+    end
     frame:SetSize(1040, 680)
     frame:SetPoint("CENTER")
     frame:SetFrameStrata("DIALOG")

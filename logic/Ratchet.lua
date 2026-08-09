@@ -33,6 +33,41 @@ local function FamName(catalog, fam)
     return (names and names[fam]) or tostring(fam)
 end
 
+local function OwnedFromEchoes(echoes, catalog)
+    local owned = { byFamily = {}, bySpell = {} }
+    for i = 1, #(echoes or {}) do
+        local entry = echoes[i]
+        local family = FamOf(entry, catalog)
+        local spellId = type(entry) == "table" and tonumber(entry.spellId) or nil
+        local count = type(entry) == "table"
+            and (tonumber(entry.stacks or entry.count) or 1) or 0
+        if family ~= nil and count > 0 then
+            owned.byFamily[family] =
+                (tonumber(owned.byFamily[family]) or 0) + count
+        end
+        if spellId and count > 0 then
+            owned.bySpell[spellId] =
+                (tonumber(owned.bySpell[spellId]) or 0) + count
+        end
+    end
+    return owned
+end
+
+local function TargetProgress(plan, catalog, family, owned)
+    local Model = Nexus.Model
+    if type(Model) == "table" and type(Model.TargetProgress) == "function" then
+        return Model.TargetProgress(plan, catalog, family, owned)
+    end
+    local target = type(plan) == "table"
+        and type(plan.targets) == "table" and plan.targets[family] or nil
+    local want = type(target) == "table"
+        and tonumber(target.targetStacks) or 1
+    if want < 1 then want = 1 end
+    local byFamily = type(owned) == "table" and owned.byFamily or nil
+    local have = tonumber(byFamily and byFamily[family]) or 0
+    return math.min(have, want), want
+end
+
 -- Distinct coverage/filler family sets of a slot-echoes array.
 local function EchoFamilySets(echoes, wished, catalog)
     local cov, fill = {}, {}
@@ -69,6 +104,13 @@ function M.PredictQueue(activeEchoes, owned, plan, flags, disabledLevers, catalo
     local byFamily = (type(owned) == "table" and owned.byFamily) or {}
     local bySpell = (type(owned) == "table" and owned.bySpell) or {}
     local wished = (type(plan) == "table" and plan.wishedFamilies) or {}
+    local queueOwned = { byFamily = {}, bySpell = {} }
+    for family, count in pairs(byFamily) do
+        queueOwned.byFamily[family] = tonumber(count) or 0
+    end
+    for id, count in pairs(bySpell) do
+        queueOwned.bySpell[id] = tonumber(count) or 0
+    end
     local suppress = type(flags) == "table"
         and flags.DISABLE_SUPPRESSES_GUARANTEE == true
     local rows = catalog and catalog.rows
@@ -110,11 +152,29 @@ function M.PredictQueue(activeEchoes, owned, plan, flags, disabledLevers, catalo
                     consumedFamily[fam] = famConsumed + consume
                 end
                 for _ = 1, count - consume do
+                    local row = rows and rows[spellId]
+                    local quality = type(row) == "table"
+                        and tonumber(row.quality) or tonumber(e.quality)
+                    local wanted = not not wished[fam]
+                    local model = Nexus.Model
+                    if wanted and type(model) == "table"
+                        and type(model.QualityOfferNeeded) == "function"
+                        and quality ~= nil then
+                        wanted = model.QualityOfferNeeded(
+                            plan, catalog, fam, quality, queueOwned)
+                    end
                     out.entries[#out.entries + 1] = {
                         spellId = spellId,
                         family = fam,
-                        wanted = not not wished[fam],
+                        quality = quality,
+                        wanted = wanted,
                     }
+                    if wanted then
+                        queueOwned.byFamily[fam] =
+                            (tonumber(queueOwned.byFamily[fam]) or 0) + 1
+                        queueOwned.bySpell[spellId] =
+                            (tonumber(queueOwned.bySpell[spellId]) or 0) + 1
+                    end
                 end
             end
         end
@@ -412,6 +472,16 @@ function M.Dominates(candidateOwned, incumbentEchoes, plan, catalog, forcedBySpe
             or wrongQForced > 0 or wrongQAvoidable > 0 then
             return false, "cleanup-only save added new excess/wrong-quality pollution", diag
         end
+        -- A clean one-for-one wishlist rotation advances convergence even
+        -- though aggregate exact progress is unchanged: the next run can
+        -- guarantee the newly acquired target and search for the rotated-out
+        -- target. New filler or persistence pollution still blocks the save.
+        if gainedStacks > 0 and lostStacks > 0
+            and fillerDelta <= 0 and unrelatedFillerDelta <= 0 then
+            return true, string.format(
+                "wishlist rotation (gained %d, shed %d wished stacks, filler %+d)",
+                gainedStacks, lostStacks, fillerDelta), diag
+        end
         if hadExactExcess and excessDecrease <= 0 and wrongQShed <= 0 then
             return false, "filler improved but existing exact excess was not reduced", diag
         end
@@ -435,9 +505,9 @@ end
 function M.ScoreSlot(slotEchoes, plan, catalog)
     local wished  = (type(plan) == "table" and plan.wishedFamilies) or {}
     local targets = (type(plan) == "table" and plan.targets) or {}
-    local cov, fill = EchoFamilySets(slotEchoes, wished, catalog)
+    local _, fill = EchoFamilySets(slotEchoes, wished, catalog)
+    local owned = OwnedFromEchoes(slotEchoes, catalog)
     local nc, nf = 0, 0
-    for _ in pairs(cov) do nc = nc + 1 end
     for _ in pairs(fill) do nf = nf + 1 end
 
     -- Stack bonus: for each wished stacking family, add fractional credit
@@ -446,21 +516,15 @@ function M.ScoreSlot(slotEchoes, plan, catalog)
     -- calls for 67×Rend.  Weight < 1 so a stack bonus never outweighs a
     -- genuinely new echo family.
     local stackBonus = 0
-    if type(slotEchoes) == "table" then
-        local stacksByFam = {}
-        for _, e in ipairs(slotEchoes) do
-            local fam = FamOf(e, catalog)
-            if fam and wished[fam] then
-                stacksByFam[fam] = (stacksByFam[fam] or 0)
-                    + (tonumber(e.stacks or e.count) or 1)
-            end
+    for family in pairs(wished) do
+        local have, want = TargetProgress(plan, catalog, family, owned)
+        if have > 0 then nc = nc + 1 end
+        if have <= 0
+            and (tonumber(owned.byFamily[family]) or 0) > 0 then
+            nf = nf + 1
         end
-        for fam, count in pairs(stacksByFam) do
-            local t = targets[fam]
-            local target = (type(t) == "table" and tonumber(t.targetStacks)) or 1
-            if target > 1 then
-                stackBonus = stackBonus + 0.9 * math.min(count, target) / target
-            end
+        if want > 1 then
+            stackBonus = stackBonus + 0.9 * math.min(have, want) / want
         end
     end
 
@@ -498,15 +562,15 @@ end
 -- count: unknown stays true and the text reports only what is known.
 ------------------------------------------------------------------------
 
-function M.RunsEstimate(plan, owned, queue, support)
+function M.RunsEstimate(plan, owned, queue, support, catalog)
     local wished = type(plan) == "table" and plan.wishedFamilies or nil
     if not wished or not next(wished) then
         return { text = "no wishlist target - advisor mode", unknown = true }
     end
-    local byFamily = (type(owned) == "table" and owned.byFamily) or {}
     local pending = 0
     for fam in pairs(wished) do
-        if not Pos(byFamily[fam]) then pending = pending + 1 end
+        local have, want = TargetProgress(plan, catalog, fam, owned)
+        if have < want then pending = pending + 1 end
     end
     local queued, seen = 0, {}
     local entries = type(queue) == "table" and queue.entries or nil
