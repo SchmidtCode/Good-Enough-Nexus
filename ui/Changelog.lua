@@ -4,8 +4,8 @@ Nexus = Nexus or {}
 local M = {}
 Nexus.Changelog = M
 
-local VERSION = "1.19.4"
-local RELEASE_KEY = "1.19.4"
+local VERSION = "1.19.5"
+local RELEASE_KEY = "1.19.5"
 local frame
 local shownThisSession = false
 
@@ -43,22 +43,22 @@ local function Create()
 
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -20)
-    title:SetText("Nexus 1.19.4")
+    title:SetText("Nexus 1.19.5")
 
     local body = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     body:SetPoint("TOPLEFT", 28, -52)
     body:SetPoint("RIGHT", -28, 0)
     body:SetJustifyH("LEFT")
     body:SetJustifyV("TOP")
-    body:SetText([[|cffffd200Progress accuracy|r
+    body:SetText([[|cffffd200Wishlist editor|r
 
-• Wishlist progress is now counted per exact Echo/quality everywhere. A forced Uncommon copy no longer counts as one of the Rare copies your wishlist asked for.
-• Fixes STILL NEEDED and save messages contradicting each other on the same run.
+- Wishlist now opens reliably for active Saved Builds that do not yet have an associated wishlist.
+- The Create New Wishlist editor starts clean and automatically targets the active Saved Build.
 
-|cffffd200Wrong-quality cleanup|r
+|cffffd200Sync reliability|r
 
-• Clearing a wrong-quality copy now counts as cleanup instead of scoring nothing.
-• Save messages now say how many wrong-quality copies were cleared, so a family's count dropping is explained.]])
+- Community builds, loadouts, deletions, and DPS records now survive full queues, reconnects, and delayed retries without losing pending work.
+- Stricter ownership and packet validation reject malformed or spoofed sync traffic.]])
 
     local close = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     close:SetSize(92, 24)

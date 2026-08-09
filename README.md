@@ -10,7 +10,7 @@ compatibility with existing installations and user data.
 ## Project status
 
 - Repository visibility: private during development.
-- Current release: Nexus 1.19.4.
+- Current release: Nexus 1.19.5.
 - Client target: World of Warcraft 3.3.5a / Project Ebonhold.
 - Language target: Lua 5.1.
 - Upstream author attribution is preserved in `Nexus.toc` and

@@ -1,3 +1,11 @@
+# Nexus 1.19.5
+
+- Fixed the Wishlist button for active Saved Builds without an association; it now opens a persistent Create New Wishlist editor instead of hiding the Nexus menu.
+- Reset all draft selections and locked-slot designs when opening an unassociated build, preventing stale editor state from carrying into the new wishlist.
+- Made queued Sync traffic follow the named channel across reconnects and channel renumbering, with explicit queue limits and retained retries under backpressure.
+- Hardened build, loadout, deletion, and DPS synchronization against malformed or spoofed traffic while preserving supported legacy/current peers.
+- Prevented incomplete loadout, bucket, DPS, and deletion responses from being claimed or discarded before their payloads are safely queued.
+
 # Nexus 1.19.4
 
 - Forward-ported the proven queue-aware Echo policy, exact-quality targets, final-search handling, refusal recovery, equal-progress wishlist rotation, and truthful horizon/final diagnostics while preserving the current UI architecture.
