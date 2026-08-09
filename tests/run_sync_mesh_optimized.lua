@@ -25,7 +25,6 @@ local function buildHash(builds)
 end
 local bh=buildHash(NexusDB.communityBuilds)
 local dh=DPS.GetSyncHash()
-local emptyBuckets="0,0,0,0,0,0,0,0"
 -- Fully current requester receives nothing.
 H.sentChatMessages={}
 Sync.HandleIncoming("WLRQ|Current|"..bh.."|"..dh.."|req-current","Current")
@@ -34,7 +33,7 @@ assert(#H.sentChatMessages==0,"current requester should receive no duplicate tra
 -- A matching per-build bucket claim suppresses only that safely relayable
 -- build bucket. Legacy whole-state claims cannot suppress owner-only state.
 H.sentChatMessages={}
-Sync.HandleIncoming("WLRQ|NewPeer|"..emptyBuckets.."|"..emptyBuckets.."|req-claim","NewPeer")
+Sync.HandleIncoming("WLRQ|NewPeer|0|0|req-claim","NewPeer")
 local buildParts={}; for p in bh:gmatch("([^,]+)") do buildParts[#buildParts+1]=p end
 local buildBucket,buildBucketHash
 for i,value in ipairs(buildParts) do if value~="0" then buildBucket,buildBucketHash=i,value break end end
@@ -48,7 +47,7 @@ end
 assert(not duplicateBuild,"matching build-bucket claim did not suppress duplicate build reply")
 -- A claim advertising different state must not suppress our useful contribution.
 H.sentChatMessages={}
-Sync.HandleIncoming("WLRQ|OtherPeer|"..emptyBuckets.."|"..emptyBuckets.."|req-different","OtherPeer")
+Sync.HandleIncoming("WLRQ|OtherPeer|0|0|req-different","OtherPeer")
 Sync.HandleIncoming("WLRC|PartialPeer|OtherPeer|req-different|different|different","PartialPeer")
 Pump(100)
 local claim,buildMsg,dpsMsg=false,false,false

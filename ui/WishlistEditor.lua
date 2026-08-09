@@ -1421,18 +1421,6 @@ local function HideLoadoutSwitchMenu()
     if loadoutSwitchMenu then loadoutSwitchMenu:Hide() end
 end
 
-local function ResetNewWishlistDraft()
-    editingContext = nil
-    createTargetContext = nil
-    pending = {}
-    pendingLock = {}
-    M._fulfilledDraftTargets = {}
-    scrollOffset, pickOffset = 0, 0
-    pendingLoadoutOpen = nil
-    pendingSeeded = true
-    currentLockKey = 0
-end
-
 local function LoadEditorForLoadout(slot)
     slot = tonumber(slot)
     if not slot then return end
@@ -1448,14 +1436,12 @@ local function LoadEditorForLoadout(slot)
         return
     end
 
-    ResetNewWishlistDraft()
+    editingContext = nil
     createTargetContext = { loadoutSlot = slot, loadoutName = name }
+    pending = {}
+    currentLockKey = 0
+    pendingSeeded = true
     if wishlistNameBox then wishlistNameBox:SetText("") end
-    -- M.Show delegates here whenever a real Saved Build is active. An
-    -- unassociated build is a valid new-wishlist destination, so this branch
-    -- must show the editor just like OpenForWishlist does for linked builds.
-    -- Without this, the Panel remains menu-suppressed while no editor appears.
-    frame:Show()
     M.Refresh()
 end
 
@@ -2935,23 +2921,6 @@ function M.DebugPendingCount()
     return n
 end
 
-function M.DebugDraftState()
-    local pendingCount, pendingLockCount, fulfilledCount = 0, 0, 0
-    for _ in pairs(pending) do pendingCount = pendingCount + 1 end
-    for _ in pairs(pendingLock) do pendingLockCount = pendingLockCount + 1 end
-    for _ in pairs(M._fulfilledDraftTargets or {}) do
-        fulfilledCount = fulfilledCount + 1
-    end
-    return {
-        pending = pendingCount,
-        pendingLock = pendingLockCount,
-        fulfilled = fulfilledCount,
-        scrollOffset = scrollOffset,
-        pickOffset = pickOffset,
-        pendingLoadoutOpen = pendingLoadoutOpen,
-    }
-end
-
 
 function M.OpenForCandidate(candidate)
     editingContext = nil
@@ -3002,7 +2971,8 @@ end
 
 function M.NewWishlist()
     HideServerEchoUI()
-    ResetNewWishlistDraft()
+    editingContext = nil
+    createTargetContext = nil
     local slots = Adapter and Adapter.Slots and Adapter.Slots()
     local active = slots and tonumber(slots.activeSlot) or 0
     local maxSlots = slots and (tonumber(slots.maxSlots) or 5) or 5
@@ -3013,9 +2983,16 @@ function M.NewWishlist()
         if loadoutName == "" then loadoutName = "Saved Build " .. tostring(active) end
         createTargetContext = { loadoutSlot = active, loadoutName = loadoutName }
     end
+    pending = {}
+    pendingLock = {}
+    M._fulfilledDraftTargets = {}
+    scrollOffset, pickOffset = 0, 0
+    pendingLoadoutOpen = nil
+    pendingSeeded = true
     -- Doesn't call LoadPendingEchoes (nothing to load yet), so reset the
     -- lock-design key directly -- a brand new, still-empty wishlist has no
     -- content yet, so no fingerprint (bucket 0), matching WishlistKey(nil).
+    currentLockKey = 0
     EnsureFrame()
     if Nexus.Panel and Nexus.Panel.AttachMenuFrame then Nexus.Panel.AttachMenuFrame(frame) end
     if Nexus.Theme and Nexus.Theme.StyleWindow then Nexus.Theme.StyleWindow(frame, 0.96) end
@@ -3053,7 +3030,13 @@ function M.Show()
         M.OpenForWishlist(firstRun, nil)
         return
     end
-    ResetNewWishlistDraft()
+    editingContext = nil
+    createTargetContext = nil
+    pending = {}
+    pendingLock = {}
+    M._fulfilledDraftTargets = {}
+    currentLockKey = 0
+    pendingSeeded = true
     frame:Show()
     M.Refresh()
 end
