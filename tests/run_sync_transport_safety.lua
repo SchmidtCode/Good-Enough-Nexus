@@ -123,4 +123,60 @@ assert(rejectedResponse.pendingLoadouts == 1,
     "backpressured loadout response was not retained for retry")
 JoinTemporaryChannel, JoinChannelByName = oldTemporary2, oldNamed2
 
-print("sync channel validation, retry retention, overflow, and claim safety -- OK")
+-- Bucket election has the same invariant: WLBC may only be published after
+-- every WLRB packet in that bucket has been admitted atomically. Leave room
+-- for one packet while scheduling two one-packet builds in the same bucket;
+-- the partial admission must be rolled back along with the claim.
+Sync.Init(Nexus.Codec, {})
+local function TestBuildBucket(id)
+    local hash = 5381
+    for i = 1, #id do hash = ((hash * 33) + id:byte(i)) % 2147483648 end
+    return (hash % 8) + 1
+end
+local firstBucketId = "bucket-build-a"
+local secondBucketId
+for i = 1, 100 do
+    local candidate = "bucket-build-" .. i
+    if TestBuildBucket(candidate) == TestBuildBucket(firstBucketId) then
+        secondBucketId = candidate
+        break
+    end
+end
+assert(secondBucketId, "test setup could not find two ids in one build bucket")
+NexusDB.communityBuilds = {
+    [firstBucketId] = {
+        id=firstBucketId, title="Bucket Build A", author="Alice", class="MAGE",
+        lastModified=11, postedAt=11,
+        echoes={{spellId=200101, quality=3, stacks=1}},
+    },
+    [secondBucketId] = {
+        id=secondBucketId, title="Bucket Build B", author="Alice", class="MAGE",
+        lastModified=12, postedAt=12,
+        echoes={{spellId=200102, quality=3, stacks=1}},
+    },
+}
+limits = Sync.WorkState()
+for i = 1, limits.maxOutboundQueue - 1 do
+    assert(Sync.BroadcastDps("bucket-fill-" .. i, "Alice", 4000 + i,
+        80, "dummy"), "failed to fill bucket backpressure queue")
+end
+local emptyBuckets = "0,0,0,0,0,0,0,0"
+assert(Sync.HandleIncoming("WLRQ|Requester|" .. emptyBuckets .. "|0|req-bucket",
+    "Requester"), "valid bucket reconciliation request was rejected")
+assert(Sync.WorkState().pendingResponses == 1,
+    "bucket reconciliation response was not scheduled")
+local oldTemporary3, oldNamed3 = JoinTemporaryChannel, JoinChannelByName
+H.joinedChannels = {}
+JoinTemporaryChannel = function() end
+JoinChannelByName = function() end
+Sync.OnUpdate(6)
+local rejectedBucket = Sync.WorkState()
+assert(rejectedBucket.control == 0,
+    "bucket claim was queued without a complete admitted payload")
+assert(rejectedBucket.pendingResponses == 1,
+    "backpressured bucket response was not retained for retry")
+assert(rejectedBucket.sending == limits.maxOutboundQueue - 1,
+    "failed bucket admission partially mutated the bulk queue")
+JoinTemporaryChannel, JoinChannelByName = oldTemporary3, oldNamed3
+
+print("sync validation, retry retention, overflow, and claim safety -- OK")

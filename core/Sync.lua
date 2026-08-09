@@ -84,7 +84,6 @@ local ANSWER_COOLDOWN  = 2     -- minimum gap between completed peer responses
 local CLAIM_DELAY_MIN  = 0.35  -- deterministic responder-election delay
 local CLAIM_DELAY_MAX  = 1.75
 local BUCKET_CLAIM_MAX = 5.50 -- wide deterministic window lets different peers win different buckets
-local BUCKET_SETTLE    = 1.50 -- allow a winning claim to propagate before payload queueing
 local HOT_WINDOW       = 120   -- seconds a just-posted build is re-included in answers
 local JOIN_RETRY_INTERVAL = 10
 local JOIN_MAX_ATTEMPTS   = 30
@@ -1081,17 +1080,50 @@ local function BroadcastMineFiltered(peerHash, onlyBucket)
     for id, h in pairs(hotBuilds) do
         if not myMine[id] and (Now()-h.t) <= HOT_WINDOW then myMine[id] = h.build end
     end
-    if not next(myMine) and not next(tombstones or {}) then LogEvent("TX","nothing to share"); return 0 end
+    if not next(myMine) and not next(tombstones or {}) then
+        LogEvent("TX","nothing to share")
+        return 0, true
+    end
     local myHash = LibraryHash(myMine)
     if peerHash and tostring(peerHash) == tostring(myHash) then
         LogEvent("TX","peer build buckets match -- sending nothing")
         stats.skippedUpToDate = (stats.skippedUpToDate or 0) + 1
-        return 0
+        return 0, true
     end
     local peerBuckets = SplitHashes(peerHash)
     local myBuckets = SplitHashes(myHash)
     local legacyPeer = #peerBuckets ~= BUILD_BUCKETS
     local n = 0
+    local queueTailBefore = sendQueueTail
+    local recentBefore, hotBefore = {}, {}
+    local function SnapshotBuildState(build)
+        local buildKey = tostring(build.id or build.fingerprintHash
+            or build.fingerprint or "")
+        if buildKey ~= "" and recentBefore[buildKey] == nil then
+            recentBefore[buildKey] = {
+                present = recentBuildBroadcast[buildKey] ~= nil,
+                value = recentBuildBroadcast[buildKey],
+            }
+        end
+        local id = build.id
+        if id ~= nil and hotBefore[id] == nil then
+            hotBefore[id] = {
+                present = hotBuilds[id] ~= nil,
+                value = hotBuilds[id],
+            }
+        end
+    end
+    local function RollBackBucketQueue()
+        for i = queueTailBefore + 1, sendQueueTail do sendQueue[i] = nil end
+        sendQueueTail = queueTailBefore
+        for key, prior in pairs(recentBefore) do
+            recentBuildBroadcast[key] = prior.present and prior.value or nil
+        end
+        for id, prior in pairs(hotBefore) do
+            hotBuilds[id] = prior.present and prior.value or nil
+        end
+    end
+    local complete = true
     for id, b in pairs(myMine) do
         local bucket = BuildBucket(id)
         if (not onlyBucket or bucket == onlyBucket)
@@ -1099,27 +1131,38 @@ local function BroadcastMineFiltered(peerHash, onlyBucket)
             -- Send the complete build during reconciliation so receivers never
             -- need to click a menu item to fetch its Echo list. Summary is only
             -- a compatibility fallback for legacy/incomplete local rows.
-            local ok = false
+            local ok, why = false, nil
             if type(b.echoes) == "table" and #b.echoes > 0 then
-                ok = Sync.BroadcastBuild(b)
+                SnapshotBuildState(b)
+                ok, why = Sync.BroadcastBuild(b)
             else
                 ok = BroadcastSummary(b)
             end
-            if ok then n=n+1 end
+            if not ok or why == "duplicate suppressed" then
+                complete = false
+                break
+            end
+            n=n+1
         end
     end
-    for id, tomb in pairs(tombstones or {}) do
+    for id, tomb in pairs(complete and (tombstones or {}) or {}) do
         local bucket = BuildBucket(id)
         if SamePeer(TombAuthor(tomb), MyName())
             and (not onlyBucket or bucket == onlyBucket)
             and (legacyPeer or tostring(peerBuckets[bucket] or "") ~= tostring(myBuckets[bucket] or "")) then
-            if Enqueue(string.format("%s|%s|%s|%s|%s", CODE_DELETE,
+            if not Enqueue(string.format("%s|%s|%s|%s|%s", CODE_DELETE,
                 MyName(), id, tostring(TombStamp(tomb)), TombAuthor(tomb))) then
-                n=n+1
+                complete = false
+                break
             end
+            n=n+1
         end
     end
-    return n
+    if not complete then
+        RollBackBucketQueue()
+        return 0, false
+    end
+    return n, true
 end
 
 local function BucketDelay(key, kind, bucket)
@@ -1490,18 +1533,20 @@ local function HandleComplete(buildId, lastMod, fullData, transportSender)
 end
 
 local function SendBucketResponse(entry, kind, bucket)
-    local n, dpsN = 0, 0
+    local n, dpsN, complete = 0, 0, true
     if kind == "B" then
-        n = BroadcastMineFiltered(entry.peerBuildHash, bucket)
+        n, complete = BroadcastMineFiltered(entry.peerBuildHash, bucket)
     else
         local D = Nexus.DpsCapture
         if D and D.BroadcastAllBuildBests then
             local ok, result = pcall(D.BroadcastAllBuildBests, entry.peerDpsHash, bucket)
             if ok then dpsN = tonumber(result) or 0 end
+            if not ok then complete = false end
         end
     end
     LogEvent("RX", "mesh bucket %s%d for %s: %d build(s), %d record(s)",
         kind, bucket, tostring(entry.requester), n, dpsN)
+    return complete
 end
 
 local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
@@ -1541,7 +1586,7 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
     for i=1,BUILD_BUCKETS do
         if tostring(peerB[i] or "") ~= tostring(myB[i] or "") then
             entry.buckets["B"..i]={kind="B",bucket=i,hash=tostring(myB[i] or "0"),
-                claimable=peerBuildBuckets and not BucketContainsTombstone(i),phase="wait",
+                claimable=peerBuildBuckets and not BucketContainsTombstone(i),
                 remaining=BucketDelay(key,"B",i)}
         end
         if tostring(peerD[i] or "") ~= tostring(myD[i] or "") then
@@ -1549,7 +1594,7 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
             -- same row cannot retransmit it, so DPS buckets are never elected
             -- through suppressible claims.
             entry.buckets["D"..i]={kind="D",bucket=i,hash=tostring(myD[i] or "0"),
-                claimable=false,phase="wait",remaining=BucketDelay(key,"D",i)}
+                claimable=false,remaining=BucketDelay(key,"D",i)}
         end
     end
     if next(entry.buckets) then pendingResponses[key]=entry end
@@ -1595,27 +1640,33 @@ local function ProcessPendingResponses(elapsed)
             for id,b in pairs(entry.buckets or {}) do
                 b.remaining=(tonumber(b.remaining) or 0)-elapsed
                 if b.remaining<=0 then
-                    if b.phase=="wait" and b.claimable ~= false then
-                        local queued = EnqueueControl(string.format(
-                            "%s|%s|%s|%s|%s|%d|%s",CODE_BUCKET_CLAIM,
-                            MyName(),entry.requester,entry.requestId,b.kind,
-                            b.bucket,b.hash))
-                        if queued then
-                            b.phase="settle"; b.remaining=BUCKET_SETTLE
-                        else
-                            b.remaining=1
-                        end
-                    else
-                        entry.buckets[id]=nil
-                        sends[#sends+1]={entry=entry,kind=b.kind,bucket=b.bucket}
-                    end
+                    sends[#sends+1]={key=key,id=id,entry=entry,bucketState=b,
+                        kind=b.kind,bucket=b.bucket}
                 end
             end
-            if not next(entry.buckets or {}) then pendingResponses[key]=nil end
         end
     end
     table.sort(sends,function(a,b) return (a.kind..a.bucket)<(b.kind..b.bucket) end)
-    for _,x in ipairs(sends) do SendBucketResponse(x.entry,x.kind,x.bucket) end
+    for _,x in ipairs(sends) do
+        if SendBucketResponse(x.entry,x.kind,x.bucket) then
+            if x.bucketState.claimable ~= false then
+                local claimed, claimWhy = EnqueueControl(string.format(
+                    "%s|%s|%s|%s|%s|%d|%s",CODE_BUCKET_CLAIM,
+                    MyName(),x.entry.requester,x.entry.requestId,x.kind,
+                    x.bucket,x.bucketState.hash))
+                if not claimed then
+                    -- The complete bucket payload is already retained. Sending
+                    -- it without a claim is safe; peers may only duplicate it.
+                    LogEvent("TX","bucket claim skipped for %s%d: %s",x.kind,
+                        x.bucket,tostring(claimWhy or "control queue full"))
+                end
+            end
+            x.entry.buckets[x.id]=nil
+            if not next(x.entry.buckets) then pendingResponses[x.key]=nil end
+        else
+            x.bucketState.remaining=1
+        end
+    end
     local loadoutReady={}
     for key,entry in pairs(pendingLoadouts) do
         if Now() - (tonumber(entry.createdAt) or Now()) > PENDING_TTL then
