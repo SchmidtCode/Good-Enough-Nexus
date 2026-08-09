@@ -56,15 +56,29 @@ local PEER_PROTOCOL_CODES = {
 }
 local CHAT_LIMIT      = 255    -- WoW SendChatMessage hard cap
 local CHAT_SAFETY     = 8      -- conservative margin
-local MAX_BYTES       = 32768  -- refuse builds larger than this
+local MAX_WIRE_BYTES  = CHAT_LIMIT
+local MAX_BYTES       = 32768  -- maximum encoded bytes per transfer
 local MAX_CHUNKS      = 999
 local MAX_CHUNK_BYTES = CHAT_LIMIT
-local MAX_ENCODED_BYTES = math.ceil(MAX_BYTES * 4 / 3) + 32
+local MAX_ENCODED_BYTES = MAX_BYTES
+local MAX_BUILD_ID_BYTES = 96
+local MAX_BUILD_ECHOES = 256
+local MAX_TRANSFER_ID_BYTES = 160
+local MAX_REQUEST_ID_BYTES = 96
+local MAX_HASH_BYTES = 192
+local MAX_VERSION_BYTES = 32
 local MAX_INFLIGHT_GLOBAL = 24
 local MAX_INFLIGHT_PER_SENDER = 4
+local MAX_OUTBOUND_QUEUE = 8192
+local MAX_CONTROL_QUEUE = 512
+local MAX_RECOVERY_QUEUE = 512
+local MAX_PENDING_RESPONSES = 128
+local MAX_PENDING_LOADOUTS = 128
+local MAX_KNOWN_PEERS = 512
 local SEND_INTERVAL   = 1.10   -- conservative channel pacing; avoids server chat spam/mutes
 local RECEIVE_WINDOW  = 60     -- compatibility/status timer; receiving is always enabled
 local INFLIGHT_GRACE  = 30     -- seconds to finish an interrupted chunk transfer
+local INFLIGHT_MAX_AGE = 300   -- absolute cap even if duplicate chunks keep arriving
 local REQUEST_COOLDOWN = 6     -- min seconds between our own Sync Now presses
 local ANSWER_COOLDOWN  = 2     -- minimum gap between completed peer responses
 local CLAIM_DELAY_MIN  = 0.35  -- deterministic responder-election delay
@@ -80,6 +94,7 @@ local AUTO_SYNC_DELAY      = 6
 local AUTO_SYNC_MIN_PASS    = 60  -- allow throttled peers time to begin/drain large responses
 local AUTO_SYNC_QUIET       = 15  -- require a real quiet period before judging a pass stable
 local AUTO_SYNC_MAX_PASSES  = 0   -- retained for diagnostics; convergence now ends only when stable
+local PENDING_TTL           = 30
 
 ------------------------------------------------------------------------
 -- Module state
@@ -89,8 +104,10 @@ local Codec, Adapter
 local channelIndex
 local sendQueue      = {}
 local sendQueueHead  = 1
+local sendQueueTail  = 0
 local controlQueue   = {} -- tiny election/control packets; always drain before bulk chunks
 local controlQueueHead = 1
+local controlQueueTail = 0
 local inflight       = {}
 local dpsInflight    = {}   -- "sender:id" -> { chunks, total, t0, lastMod }
 local seenRemoteIds  = {}   -- id -> lastModified we already hold
@@ -111,6 +128,7 @@ local pendingLoadouts = {}  -- requester:buildId -> staggered on-demand response
 local requestedLoadouts = {} -- buildId -> last recovery request time
 local legacyRecoveryQueue = {} -- incomplete summaries learned from older peers
 local legacyRecoveryHead = 1
+local legacyRecoveryTail = 0
 local legacyRecoveryTicker = 0
 local lastSyncNewCount = 0
 local autoSyncPending = false
@@ -160,16 +178,41 @@ local function CanStartTransfer(map, sender)
 end
 
 local function MarkPeer(name, version)
-    if not name or name == "" then return end
+    if not name or name == "" then return false end
     local me = MyName and MyName() or ""
-    if NormalizePeerName(name) == NormalizePeerName(me) then return end
+    if NormalizePeerName(name) == NormalizePeerName(me) then return false end
     local key = NormalizePeerName(name)
-    if key == "" then return end
+    if key == "" then return false end
+    local now = Now and Now() or ((GetTime and GetTime()) or 0)
+    if not knownPeers[key] then
+        local count = 0
+        for peerKey, peer in pairs(knownPeers) do
+            if now - (tonumber(peer.lastSeen) or 0) > 7200 then
+                knownPeers[peerKey] = nil
+            else
+                count = count + 1
+            end
+        end
+        if count >= MAX_KNOWN_PEERS then return false end
+    end
     local peer = knownPeers[key] or {}
     peer.name = tostring(name):match("^([^%-]+)") or tostring(name)
     if version and version ~= "" then peer.version = tostring(version) end
-    peer.lastSeen = Now and Now() or ((GetTime and GetTime()) or 0)
+    peer.lastSeen = now
     knownPeers[key] = peer
+    return true
+end
+
+local function SameTransportSender(declared, actual)
+    local declaredText = tostring(declared or ""):gsub("%s+", ""):lower()
+    local actualText = tostring(actual or ""):gsub("%s+", ""):lower()
+    if declaredText:find("-", 1, true)
+        and actualText:find("-", 1, true) then
+        return declaredText == actualText
+    end
+    -- Current wire senders use UnitName("player") without a realm. Preserve
+    -- that legacy form while requiring exact realms when both sides carry one.
+    return SamePeer(declaredText, actualText)
 end
 
 function Sync.GetPeerInfo(name)
@@ -186,10 +229,12 @@ local stats = {
     sent=0, received=0, duplicatesSkipped=0,
     malformedRejected=0, ignoredOutsideWindow=0,
     oversizeDropped=0, updated=0, skippedUpToDate=0,
+    queueOverflowRejected=0, pendingOverflowRejected=0,
 }
 
 function Sync.WorkState()
     local buildCount, buildBytes, dpsCount, dpsBytes = 0, 0, 0, 0
+    local pendingResponseCount, pendingLoadoutCount, peerCount = 0, 0, 0
     for _, entry in pairs(inflight) do
         buildCount = buildCount + 1
         buildBytes = buildBytes + (tonumber(entry.bytes) or 0)
@@ -198,11 +243,32 @@ function Sync.WorkState()
         dpsCount = dpsCount + 1
         dpsBytes = dpsBytes + (tonumber(entry.bytes) or 0)
     end
+    for _ in pairs(pendingResponses) do
+        pendingResponseCount = pendingResponseCount + 1
+    end
+    for _ in pairs(pendingLoadouts) do
+        pendingLoadoutCount = pendingLoadoutCount + 1
+    end
+    for _ in pairs(knownPeers) do peerCount = peerCount + 1 end
+    local sending = math.max(0, sendQueueTail - sendQueueHead + 1)
+    local control = math.max(0, controlQueueTail - controlQueueHead + 1)
+    local recovery = math.max(0, legacyRecoveryTail - legacyRecoveryHead + 1)
     return {
         buildInflight=buildCount, buildBytes=buildBytes,
         dpsInflight=dpsCount, dpsBytes=dpsBytes,
         maxGlobal=MAX_INFLIGHT_GLOBAL, maxPerSender=MAX_INFLIGHT_PER_SENDER,
         maxEncodedBytes=MAX_ENCODED_BYTES,
+        sending=sending, control=control, outbound=sending + control,
+        recovery=recovery,
+        pendingResponses=pendingResponseCount,
+        pendingLoadouts=pendingLoadoutCount,
+        knownPeers=peerCount,
+        maxOutboundQueue=MAX_OUTBOUND_QUEUE,
+        maxControlQueue=MAX_CONTROL_QUEUE,
+        maxRecoveryQueue=MAX_RECOVERY_QUEUE,
+        maxPendingResponses=MAX_PENDING_RESPONSES,
+        maxPendingLoadouts=MAX_PENDING_LOADOUTS,
+        maxKnownPeers=MAX_KNOWN_PEERS,
     }
 end
 
@@ -250,6 +316,47 @@ end
 local function FiniteNumber(value)
     return type(value) == "number" and value == value
         and value < math.huge and value > -math.huge
+end
+
+local function ValidField(value, maxBytes, allowEmpty)
+    return type(value) == "string"
+        and (allowEmpty or value ~= "")
+        and #value <= maxBytes
+        and not value:find("[%c|]")
+end
+
+local function ValidIdentifier(value, maxBytes)
+    return ValidField(value, maxBytes, false)
+        and value:match("^[%w%._:@%+%-]+$") ~= nil
+end
+
+local function ValidPeerName(value)
+    return ValidField(value, 80, false)
+        and not value:find("%s")
+end
+
+local function ValidHash(value)
+    return ValidField(value, MAX_HASH_BYTES, false)
+        and value:match("^[%x,]+$") ~= nil
+end
+
+local function ValidVersion(value)
+    return ValidField(value, MAX_VERSION_BYTES, false)
+        and value:match("^[%w%.%+%-]+$") ~= nil
+end
+
+local function ValidIntegerText(value, minimum)
+    if not ValidField(value, 24, false)
+        or value:match("^%-?%d+$") == nil then return false end
+    local number = tonumber(value)
+    return FiniteNumber(number) and number == math.floor(number)
+        and number >= (minimum or 0)
+end
+
+local function TableCount(value)
+    local count = 0
+    for _ in pairs(value or {}) do count = count + 1 end
+    return count
 end
 
 -- djb2 hash of the caller's library so peers can skip sends when already
@@ -378,7 +485,12 @@ local function CompactDecode(data)
     local class  = data.c or data.class
     local lastMod = tonumber(data.m or data.lastModified or data.postedAt) or 0
     local rawE   = data.e or data.echoes
-    if not (data.id and title and type(rawE) == "table") then return nil end
+    if not (ValidIdentifier(data.id, MAX_BUILD_ID_BYTES)
+        and type(title) == "string" and title ~= ""
+        and type(author) == "string" and ValidPeerName(author)
+        and type(rawE) == "table" and #rawE <= MAX_BUILD_ECHOES) then
+        return nil
+    end
     if not OwnerKeyMatchesAuthor(ownerKey, author) then return nil end
     local echoes = {}
     for _, e in ipairs(rawE) do
@@ -462,6 +574,7 @@ function Sync.EnsureChannel()
         LogEvent("CHAN","joined '%s' at index %d", SYNC_CHANNEL, idx)
         return true
     end
+    channelIndex = nil
     LogEvent("CHAN","FAILED to join '%s'", SYNC_CHANNEL)
     return false
 end
@@ -470,6 +583,30 @@ function Sync.ChannelName()  return SYNC_CHANNEL end
 function Sync.ChannelIndex() return channelIndex end
 function Sync.IsConnected()  return channelIndex ~= nil and channelIndex > 0 end
 function Sync.Stats()        return stats end
+
+local function ResolveSendChannel()
+    -- Channel numbers are not stable: leaving/joining any channel can move
+    -- wrbuildssync while the old slot is reassigned to General or Trade.
+    -- Re-resolve the name immediately before each queued channel send.
+    local idx = FindSyncChannel()
+    if idx then
+        if channelIndex ~= idx then
+            LogEvent("CHAN", "'%s' moved from slot %s to %d",
+                SYNC_CHANNEL, tostring(channelIndex), idx)
+        end
+        channelIndex = idx
+        return idx
+    end
+    channelIndex = nil
+    if not Sync.EnsureChannel() then return nil end
+    idx = FindSyncChannel()
+    if not idx then
+        channelIndex = nil
+        return nil
+    end
+    channelIndex = idx
+    return idx
+end
 
 ------------------------------------------------------------------------
 -- Receive window
@@ -485,12 +622,70 @@ function Sync.LastSyncNewCount()  return lastSyncNewCount end
 -- Send queue (rate-limited, anti-spam)
 ------------------------------------------------------------------------
 
+local function QueueDepth(head, tail)
+    return math.max(0, (tonumber(tail) or 0) - (tonumber(head) or 1) + 1)
+end
+
+local function ValidateQueuedPayload(payload)
+    if type(payload) ~= "string" or payload == "" then return false end
+    if EscapedLen(payload) > CHAT_LIMIT then
+        stats.oversizeDropped = (stats.oversizeDropped or 0) + 1
+        LogEvent("TX", "REJECT oversize queued msg (%d>%d): %s",
+            EscapedLen(payload), CHAT_LIMIT, payload:sub(1, 40))
+        return false
+    end
+    return true
+end
+
+local function RejectQueueOverflow(kind, need, depth, cap)
+    stats.queueOverflowRejected = (stats.queueOverflowRejected or 0) + 1
+    LogEvent("TX", "REJECT newest %s packet(s): queue full (%d+%d>%d)",
+        tostring(kind), tonumber(depth) or 0, tonumber(need) or 1,
+        tonumber(cap) or 0)
+    return false, "sync queue full"
+end
+
 local function Enqueue(payload)
-    sendQueue[#sendQueue+1] = payload
+    if not ValidateQueuedPayload(payload) then return false, "invalid packet" end
+    local depth = QueueDepth(sendQueueHead, sendQueueTail)
+    if depth >= MAX_OUTBOUND_QUEUE then
+        return RejectQueueOverflow("bulk", 1, depth, MAX_OUTBOUND_QUEUE)
+    end
+    sendQueueTail = sendQueueTail + 1
+    sendQueue[sendQueueTail] = payload
+    return true
+end
+
+local function EnqueueBatch(payloads)
+    if type(payloads) ~= "table" or #payloads == 0 then
+        return false, "empty batch"
+    end
+    for i = 1, #payloads do
+        if not ValidateQueuedPayload(payloads[i]) then
+            return false, "invalid packet"
+        end
+    end
+    local depth = QueueDepth(sendQueueHead, sendQueueTail)
+    if depth + #payloads > MAX_OUTBOUND_QUEUE then
+        return RejectQueueOverflow("bulk batch", #payloads, depth,
+            MAX_OUTBOUND_QUEUE)
+    end
+    for i = 1, #payloads do
+        sendQueueTail = sendQueueTail + 1
+        sendQueue[sendQueueTail] = payloads[i]
+    end
+    return true
 end
 
 local function EnqueueControl(payload)
-    controlQueue[#controlQueue+1] = payload
+    if not ValidateQueuedPayload(payload) then return false, "invalid packet" end
+    local depth = QueueDepth(controlQueueHead, controlQueueTail)
+    if depth >= MAX_CONTROL_QUEUE then
+        return RejectQueueOverflow("control", 1, depth, MAX_CONTROL_QUEUE)
+    end
+    controlQueueTail = controlQueueTail + 1
+    controlQueue[controlQueueTail] = payload
+    return true
 end
 
 local function IsWaitingNotice(text)
@@ -535,6 +730,22 @@ local function InstallTransportFilters()
     end
 end
 
+local function PopQueued(isControl)
+    if isControl then
+        controlQueue[controlQueueHead] = nil
+        controlQueueHead = controlQueueHead + 1
+        if controlQueueHead > controlQueueTail then
+            controlQueue, controlQueueHead, controlQueueTail = {}, 1, 0
+        end
+    else
+        sendQueue[sendQueueHead] = nil
+        sendQueueHead = sendQueueHead + 1
+        if sendQueueHead > sendQueueTail then
+            sendQueue, sendQueueHead, sendQueueTail = {}, 1, 0
+        end
+    end
+end
+
 local function PumpQueue(elapsed)
     local now = Now()
     if now < (throttlePauseUntil or 0) then return end
@@ -546,39 +757,35 @@ local function PumpQueue(elapsed)
     local isControl = payload ~= nil
     if not payload then payload = sendQueue[sendQueueHead] end
     if not payload then
-        -- Compact only after the queue drains. This avoids O(n) table.remove
-        -- shifts for every transmitted chunk during a large mesh sync.
-        if sendQueueHead > 1 then sendQueue = {}; sendQueueHead = 1 end
-        if controlQueueHead > 1 then controlQueue = {}; controlQueueHead = 1 end
+        if sendQueueHead > sendQueueTail then
+            sendQueue, sendQueueHead, sendQueueTail = {}, 1, 0
+        end
+        if controlQueueHead > controlQueueTail then
+            controlQueue, controlQueueHead, controlQueueTail = {}, 1, 0
+        end
         return
     end
-    if not Sync.IsConnected() then
-        Sync.EnsureChannel()
-        if not Sync.IsConnected() then return end
+    local validatedChannel = ResolveSendChannel()
+    if not validatedChannel then
+        -- Retain the head packet. Reconnect/revalidation will retry later.
+        return
     end
     local escaped = payload:gsub("|","||")
     if #escaped > CHAT_LIMIT then
         LogEvent("TX","DROPPED oversize msg (%d>%d): %s",
             #escaped, CHAT_LIMIT, payload:sub(1,40))
         stats.oversizeDropped = (stats.oversizeDropped or 0) + 1
-        if isControl then
-            controlQueue[controlQueueHead] = nil; controlQueueHead = controlQueueHead + 1
-        else
-            sendQueue[sendQueueHead] = nil; sendQueueHead = sendQueueHead + 1
-        end
+        PopQueued(isControl)
         return
     end
     lastTransportAttempt = now
-    local ok = pcall(SendChatMessage, escaped, "CHANNEL", nil, channelIndex)
+    local ok = pcall(SendChatMessage, escaped, "CHANNEL", nil,
+        validatedChannel)
     if ok then
-        if isControl then
-            controlQueue[controlQueueHead] = nil; controlQueueHead = controlQueueHead + 1
-        else
-            sendQueue[sendQueueHead] = nil; sendQueueHead = sendQueueHead + 1
-        end
+        PopQueued(isControl)
         stats.sent = stats.sent + 1
         LogEvent("TX","sent %d chars ch=%s: %s",
-            #escaped, tostring(channelIndex), payload:sub(1,44))
+            #escaped, tostring(validatedChannel), payload:sub(1,44))
     else
         -- Keep the packet queued. A temporary chat/channel failure must not
         -- discard a build, DPS update, deletion, or reconciliation response.
@@ -638,11 +845,12 @@ end
 
 local function BroadcastSummary(build)
     local payload = SummaryEncode(build)
-    if not payload.id or not payload.h then return false end
+    if not ValidIdentifier(payload.id, MAX_BUILD_ID_BYTES)
+        or not ValidHash(tostring(payload.h or "")) then return false end
     local data = Codec.Base64Encode(Codec.JSONEncode(payload))
     local msg = string.format("%s|%s|%s", CODE_INDEX, MyName(), data)
     if EscapedLen(msg) > CHAT_LIMIT - CHAT_SAFETY then return false end
-    Enqueue(msg)
+    if not Enqueue(msg) then return false end
     LogEvent("TX","queuing summary '%s' (%d chars, no Echo list)", tostring(build.title), EscapedLen(msg))
     return true
 end
@@ -651,27 +859,38 @@ Sync.BroadcastBuildSummary = BroadcastSummary
 local QueueLegacyRecovery
 
 local function StoreSummary(data, transportSender)
-    if type(data)~="table" or not data.id or not data.t or not data.h then return false end
+    if type(data) ~= "table" or not Codec.IsSafeTree(data, 4, 80)
+        or not ValidIdentifier(data.id, MAX_BUILD_ID_BYTES)
+        or not ValidField(data.t, 120, false)
+        or not ValidPeerName(data.a)
+        or not ValidHash(tostring(data.h or ""))
+        or (data.lh ~= nil and not ValidHash(tostring(data.lh)))
+        or not FiniteNumber(tonumber(data.m))
+        or tonumber(data.m) < 0
+        or (data.n ~= nil and (not FiniteNumber(tonumber(data.n))
+            or tonumber(data.n) < 0 or tonumber(data.n) > 10000)) then
+        return false, false
+    end
     if not SamePeer(data.a, transportSender)
         or not OwnerKeyMatchesAuthor(data.o or data.ownerKey, data.a) then
-        return false
+        return false, false
     end
     NexusDB.communityBuilds = NexusDB.communityBuilds or {}
     local id = tostring(data.id)
     local old = NexusDB.communityBuilds[id]
-    if old and old.isMine then return false end
+    if old and old.isMine then return false, false end
     if old and old.ownerVerified ~= false
-        and not SamePeer(old.author, data.a) then return false end
+        and not SamePeer(old.author, data.a) then return false, false end
     local stamp = tonumber(data.m) or 0
     local tomb = tombstones[id]
     if tomb and stamp <= TombStamp(tomb) then
         LogEvent("RX","skip summary '%s': tombstoned", tostring(data.t))
-        return false
+        return true, false
     end
     local oldStamp = old and (tonumber(old.lastModified) or tonumber(old.postedAt) or 0) or nil
     if oldStamp and stamp < oldStamp then
         LogEvent("RX","skip summary '%s': older than local copy", tostring(data.t))
-        return false
+        return true, false
     end
     if oldStamp and stamp == oldStamp then
         stats.duplicatesSkipped = stats.duplicatesSkipped + 1
@@ -681,7 +900,7 @@ local function StoreSummary(data, transportSender)
         else
             LogEvent("RX","skip summary '%s': DUPLICATE", tostring(data.t))
         end
-        return false
+        return true, false
     end
     local newHash = tostring(data.h)
     local newLinkHash = type(data.lh) == "string" and data.lh or nil
@@ -711,17 +930,23 @@ local function StoreSummary(data, transportSender)
             tostring(data.t), tostring(data.a or "Unknown"), tonumber(data.n) or 0)
     end
     if not keepEchoes or linkChanged then QueueLegacyRecovery(id) end
-    return true
+    return true, true
 end
 
 QueueLegacyRecovery = function(buildId)
-    if not buildId then return false end
+    if not ValidIdentifier(buildId, MAX_BUILD_ID_BYTES) then return false end
     local build = NexusDB and NexusDB.communityBuilds and NexusDB.communityBuilds[buildId]
     if build and type(build.echoes) == "table" and #build.echoes > 0 then return false end
     local now = Now()
     if requestedLoadouts[buildId] and now - requestedLoadouts[buildId] < 120 then return false end
     requestedLoadouts[buildId] = now
-    legacyRecoveryQueue[#legacyRecoveryQueue + 1] = tostring(buildId)
+    local depth = QueueDepth(legacyRecoveryHead, legacyRecoveryTail)
+    if depth >= MAX_RECOVERY_QUEUE then
+        RejectQueueOverflow("recovery", 1, depth, MAX_RECOVERY_QUEUE)
+        return false
+    end
+    legacyRecoveryTail = legacyRecoveryTail + 1
+    legacyRecoveryQueue[legacyRecoveryTail] = tostring(buildId)
     return true
 end
 
@@ -743,7 +968,13 @@ end
 -- Header-aware chunking: measures the ACTUAL escaped header so no chunk
 -- can ever exceed the hard limit.
 local function SendChunked(buildId, lastMod, data)
-    if type(data) ~= "string" or #data > MAX_BYTES then return false end
+    if not ValidIdentifier(tostring(buildId or ""), MAX_BUILD_ID_BYTES)
+        or not ValidIntegerText(tostring(lastMod or ""), 0)
+        or type(data) ~= "string" or data == "" or #data > MAX_BYTES then
+        return false, "invalid build envelope"
+    end
+    buildId = tostring(buildId)
+    lastMod = tostring(lastMod)
     local sender = MyName()
     -- Worst-case header = largest chunk index digits (999/999)
     local sampleHdr = string.format("%s|%s|%s|%s|999/999|",
@@ -754,17 +985,18 @@ local function SendChunked(buildId, lastMod, data)
     local single = string.format("%s|%s|%s|%s|1/1|%s",
         CODE_BUILD, sender, buildId, lastMod, data)
     if EscapedLen(single) <= CHAT_LIMIT - CHAT_SAFETY then
-        Enqueue(single); return true
+        return Enqueue(single)
     end
     local total = math.ceil(#data / budget)
-    if total > 999 then return false, "build too large" end
+    if total > MAX_CHUNKS then return false, "build too large" end
+    local messages = {}
     for idx = 1, total do
         local s = (idx-1)*budget + 1
-        Enqueue(string.format("%s|%s|%s|%s|%d/%d|%s",
+        messages[#messages + 1] = string.format("%s|%s|%s|%s|%d/%d|%s",
             CODE_BUILD, sender, buildId, lastMod, idx, total,
-            data:sub(s, s+budget-1)))
+            data:sub(s, s+budget-1))
     end
-    return true
+    return EnqueueBatch(messages)
 end
 
 ------------------------------------------------------------------------
@@ -780,6 +1012,9 @@ local BUILD_BROADCAST_DEDUPE = 2
 function Sync.BroadcastBuild(build)
     if not build or type(build.echoes) ~= "table" or #build.echoes == 0 then
         return false, "no echoes"
+    end
+    if not ValidIdentifier(tostring(build.id or ""), MAX_BUILD_ID_BYTES) then
+        return false, "invalid build id"
     end
     local buildKey = tostring(build.id or build.fingerprintHash or build.fingerprint or "")
     local now = Now()
@@ -870,9 +1105,10 @@ local function BroadcastMineFiltered(peerHash, onlyBucket)
         if SamePeer(TombAuthor(tomb), MyName())
             and (not onlyBucket or bucket == onlyBucket)
             and (legacyPeer or tostring(peerBuckets[bucket] or "") ~= tostring(myBuckets[bucket] or "")) then
-            Enqueue(string.format("%s|%s|%s|%s|%s", CODE_DELETE, MyName(), id,
-                tostring(TombStamp(tomb)), TombAuthor(tomb)))
-            n=n+1
+            if Enqueue(string.format("%s|%s|%s|%s|%s", CODE_DELETE,
+                MyName(), id, tostring(TombStamp(tomb)), TombAuthor(tomb))) then
+                n=n+1
+            end
         end
     end
     return n
@@ -905,7 +1141,14 @@ local function RequestSyncOnce()
     local buildHash = CurrentBuildHash()
     local dpsHash = CurrentDpsHash()
     local requestId = tostring(math.floor(now * 1000)) .. "-" .. tostring(math.random(1000,9999))
-    Enqueue(string.format("%s|%s|%s|%s|%s|%s", CODE_REQUEST, MyName(), buildHash, dpsHash, requestId, tostring((Nexus and Nexus.VERSION) or "?")))
+    local queued, queueWhy = Enqueue(string.format("%s|%s|%s|%s|%s|%s",
+        CODE_REQUEST, MyName(), buildHash, dpsHash, requestId,
+        tostring((Nexus and Nexus.VERSION) or "0.0.0-dev")))
+    if not queued then
+        lastRequestAt = -math.huge
+        receiveWindowUntil = 0
+        return false, queueWhy or "sync queue full"
+    end
     LogEvent("SYNC","requested sync (build=%s dps=%s id=%s) -- reconciliation active",
         buildHash, dpsHash, requestId)
     return true
@@ -966,16 +1209,20 @@ function Sync.BroadcastDpsRecord(record)
     }
     local encoded = Codec.Base64Encode(Codec.JSONEncode(payload))
     local transferId = tostring(payload.p) .. ":" .. tostring(payload.t) .. ":" .. tostring(payload.d)
+    if not ValidIdentifier(transferId, MAX_TRANSFER_ID_BYTES)
+        or #encoded > MAX_ENCODED_BYTES then return false end
     local header = CODE_DPS2 .. "|" .. MyName() .. "|" .. transferId .. "|999/999|"
     local chunkSize = CHAT_LIMIT - CHAT_SAFETY - EscapedLen(header)
     if chunkSize < 24 then return false end
     local total = math.ceil(#encoded / chunkSize)
     if total < 1 or total > 999 then return false end
+    local messages = {}
     for i = 1, total do
         local data = encoded:sub((i - 1) * chunkSize + 1, i * chunkSize)
-        Enqueue(string.format("%s|%s|%s|%d/%d|%s",
-            CODE_DPS2, MyName(), transferId, i, total, data))
+        messages[#messages + 1] = string.format("%s|%s|%s|%d/%d|%s",
+            CODE_DPS2, MyName(), transferId, i, total, data)
     end
+    if not EnqueueBatch(messages) then return false end
     LogEvent("TX","DPS2 [%s] %.0f by %s (%d chunks)",
         tostring(payload.c), payload.d, payload.p, total)
     return true
@@ -988,8 +1235,7 @@ function Sync.BroadcastDps(buildId, player, dps, level, category)
         CODE_DPS, MyName(), buildId, tostring(player),
         tostring(math.floor(dps)), tostring(level or 0), category or "dummy")
     if EscapedLen(payload) > CHAT_LIMIT - CHAT_SAFETY then return false end
-    Enqueue(payload)
-    return true
+    return Enqueue(payload)
 end
 
 local function HandleDps(parts)
@@ -1000,46 +1246,52 @@ local function HandleDps(parts)
 end
 
 local function HandleDps2(parts)
-    autoConverge.lastInbound = Now()
     local sender, transferId, spec, data = parts[2], parts[3], parts[4], parts[5]
-    if not (sender and transferId and spec and data) then return end
+    if not ValidPeerName(sender)
+        or not ValidIdentifier(transferId, MAX_TRANSFER_ID_BYTES)
+        or not ValidField(spec, 16, false)
+        or not ValidField(data, MAX_CHUNK_BYTES, false) then return false end
     local idx, total = spec:match("^(%d+)/(%d+)$")
     idx, total = tonumber(idx), tonumber(total)
     if not (idx and total and idx >= 1 and idx <= total
-        and total >= 1 and total <= MAX_CHUNKS
-        and #data <= MAX_CHUNK_BYTES) then return end
+        and total >= 1 and total <= MAX_CHUNKS) then return false end
+    autoConverge.lastInbound = Now()
     local key = sender .. ":" .. transferId
     local e = dpsInflight[key]
     if not e then
         CleanExpiredInflight()
-        if not CanStartTransfer(dpsInflight, sender) then return end
+        if not CanStartTransfer(dpsInflight, sender) then return false end
         e = { chunks = {}, total = total, t0 = Now(), lastSeen = Now(),
-            sender = sender, bytes = 0, received = 0 }
+            sender = sender, transferId=transferId, bytes = 0, received = 0 }
         dpsInflight[key] = e
     end
-    if e.total ~= total then dpsInflight[key] = nil; return end
+    if e.total ~= total or e.sender ~= sender
+        or e.transferId ~= transferId then
+        dpsInflight[key] = nil
+        return false
+    end
     e.lastSeen = Now()
     local prior = e.chunks[idx]
     if prior ~= nil then
         if prior ~= data then dpsInflight[key] = nil end
-        return
+        return false
     end
     if e.bytes + #data > MAX_ENCODED_BYTES then
         dpsInflight[key] = nil
-        return
+        return false
     end
     e.chunks[idx] = data
     e.bytes = e.bytes + #data
     e.received = e.received + 1
-    if e.received ~= total then return end
+    if e.received ~= total then return false end
     dpsInflight[key] = nil
     local raw = Codec.Base64Decode(table.concat(e.chunks, "", 1, total))
     local record = raw and Codec.JSONDecode(raw)
-    if type(record) ~= "table" then return end
+    if type(record) ~= "table" then return false end
     if Nexus.DpsCapture and Nexus.DpsCapture.ReceiveRecord then
         if not SamePeer(record.p or record.player, sender) then
             LogEvent("RX", "DROP DPS owner mismatch from %s", tostring(sender))
-            return
+            return false
         end
         local ok, accepted = pcall(
             Nexus.DpsCapture.ReceiveRecord, record, sender)
@@ -1054,20 +1306,23 @@ local function HandleDps2(parts)
             if build and type(build.echoes) == "table" and #build.echoes > 0 then
                 pcall(Sync.BroadcastBuild, build)
             end
+            return true
         end
     end
+    return false
 end
 
 function Sync.BroadcastDelete(build)
-    if not build or not build.id then return false end
+    if not build or not ValidIdentifier(tostring(build.id or ""),
+        MAX_BUILD_ID_BYTES) then return false end
     local stamp = tostring((time and time()) or 0)
     local author = tostring(build.author or MyName())
     if not SamePeer(author, MyName()) then return false end
     tombstones[build.id] = { stamp=tonumber(stamp) or 0, author=author }
-    Enqueue(string.format("%s|%s|%s|%s|%s",
+    local queued = Enqueue(string.format("%s|%s|%s|%s|%s",
         CODE_DELETE, MyName(), build.id, stamp, author))
     LogEvent("TX","delete '%s'", tostring(build.title or build.id))
-    return true
+    return queued and true or false
 end
 
 ------------------------------------------------------------------------
@@ -1077,12 +1332,14 @@ end
 CleanExpiredInflight = function()
     local now = Now()
     for key, v in pairs(inflight) do
-        if now - (v.lastSeen or v.t0 or now) > INFLIGHT_GRACE then
+        if now - (v.lastSeen or v.t0 or now) > INFLIGHT_GRACE
+            or now - (v.t0 or now) > INFLIGHT_MAX_AGE then
             inflight[key] = nil
         end
     end
     for key, v in pairs(dpsInflight) do
-        if now - (v.lastSeen or v.t0 or now) > INFLIGHT_GRACE then
+        if now - (v.lastSeen or v.t0 or now) > INFLIGHT_GRACE
+            or now - (v.t0 or now) > INFLIGHT_MAX_AGE then
             dpsInflight[key] = nil
         end
     end
@@ -1143,27 +1400,31 @@ local function HandleComplete(buildId, lastMod, fullData, transportSender)
     if not json then
         stats.malformedRejected = stats.malformedRejected + 1
         LogEvent("RX","REJECT '%s': bad base64 (%d bytes -- truncated?)",
-            tostring(buildId), #tostring(fullData)); return
+            tostring(buildId), #tostring(fullData))
+        return false
     end
     local data = Codec.JSONDecode(json)
     if not data then
         stats.malformedRejected = stats.malformedRejected + 1
-        LogEvent("RX","REJECT '%s': JSON decode failed", tostring(buildId)); return
+        LogEvent("RX","REJECT '%s': JSON decode failed", tostring(buildId))
+        return false
     end
     -- Silently drop legacy placeholder builds posted as "WR Team" before the rename
     if tostring(data.a or data.author or ""):lower() == "wr team" then
         LogEvent("RX","REJECT legacy placeholder '%s'", tostring(data.t or data.title))
-        return
+        return false
     end
     local payload = ValidatePayload(data)
     if not payload then
         stats.malformedRejected = stats.malformedRejected + 1
-        LogEvent("RX","REJECT '%s': validation failed", tostring(buildId)); return
+        LogEvent("RX","REJECT '%s': validation failed", tostring(buildId))
+        return false
     end
     if payload.id ~= buildId then
         stats.malformedRejected = stats.malformedRejected + 1
         LogEvent("RX","REJECT id mismatch: envelope='%s' payload='%s'",
-            tostring(buildId), tostring(payload.id)); return
+            tostring(buildId), tostring(payload.id))
+        return false
     end
     local directOwner = SamePeer(payload.author, transportSender)
     local existing = NexusDB and NexusDB.communityBuilds
@@ -1184,22 +1445,22 @@ local function HandleComplete(buildId, lastMod, fullData, transportSender)
             LogEvent("RX","skip '%s': DUPLICATE (have stamp %s)",
                 tostring(payload.title), tostring(seenRemoteIds[payload.id]))
         end
-        return
+        return true
     end
     if existing and not directOwner then
         LogEvent("RX", "REJECT relayed overwrite of '%s' from %s",
             tostring(payload.id), tostring(transportSender))
-        return
+        return false
     end
     if existing and existing.isMine then
         LogEvent("RX", "REJECT remote overwrite of local build '%s'",
             tostring(payload.id))
-        return
+        return false
     end
     if existing and existing.ownerVerified ~= false
         and not SamePeer(existing.author, payload.author) then
         LogEvent("RX", "REJECT owner change for '%s'", tostring(payload.id))
-        return
+        return false
     end
     if why == "updated" then
         stats.updated = (stats.updated or 0) + 1
@@ -1217,6 +1478,7 @@ local function HandleComplete(buildId, lastMod, fullData, transportSender)
     if Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then
         pcall(Nexus.CommunityBuilds.Refresh)
     end
+    return true
 end
 
 local function SendBucketResponse(entry, kind, bucket)
@@ -1235,22 +1497,43 @@ local function SendBucketResponse(entry, kind, bucket)
 end
 
 local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
-    if requester == MyName() then LogEvent("RX","ignoring own request (no echo loop)"); return end
+    if requester == MyName() then
+        LogEvent("RX","ignoring own request (no echo loop)")
+        return true
+    end
     peerBuildHash, peerDpsHash = peerBuildHash or "0", peerDpsHash or "0"
     requestId = requestId or ("legacy-"..tostring(requester).."-"..tostring(math.floor(Now())))
     local myBuildHash, myDpsHash = CurrentBuildHash(), CurrentDpsHash()
     if myBuildHash == peerBuildHash and myDpsHash == peerDpsHash then
         stats.skippedUpToDate=(stats.skippedUpToDate or 0)+1
-        LogEvent("RX","request from %s skipped: both state hashes match", tostring(requester)); return
+        LogEvent("RX","request from %s skipped: both state hashes match", tostring(requester)); return true
     end
     local key=tostring(requester)..":"..tostring(requestId)
+    local prior = pendingResponses[key]
+    if prior then
+        if tostring(prior.peerBuildHash) ~= tostring(peerBuildHash)
+            or tostring(prior.peerDpsHash) ~= tostring(peerDpsHash) then
+            LogEvent("RX", "REJECT conflicting request metadata for %s", key)
+            return false
+        end
+        return true
+    end
+    if TableCount(pendingResponses) >= MAX_PENDING_RESPONSES then
+        stats.pendingOverflowRejected = (stats.pendingOverflowRejected or 0) + 1
+        LogEvent("RX", "REJECT newest request from %s: pending cap %d",
+            tostring(requester), MAX_PENDING_RESPONSES)
+        return false
+    end
     local peerB,myB=SplitHashes(peerBuildHash),SplitHashes(myBuildHash)
     local peerD,myD=SplitHashes(peerDpsHash),SplitHashes(myDpsHash)
-    local entry={key=key,requester=requester,requestId=requestId,peerBuildHash=peerBuildHash,peerDpsHash=peerDpsHash,buckets={}}
+    local peerBuildBuckets = #peerB == BUILD_BUCKETS
+    local entry={key=key,requester=requester,requestId=requestId,
+        peerBuildHash=peerBuildHash,peerDpsHash=peerDpsHash,buckets={},
+        createdAt=Now()}
     for i=1,BUILD_BUCKETS do
         if tostring(peerB[i] or "") ~= tostring(myB[i] or "") then
             entry.buckets["B"..i]={kind="B",bucket=i,hash=tostring(myB[i] or "0"),
-                claimable=not BucketContainsTombstone(i),phase="wait",
+                claimable=peerBuildBuckets and not BucketContainsTombstone(i),phase="wait",
                 remaining=BucketDelay(key,"B",i)}
         end
         if tostring(peerD[i] or "") ~= tostring(myD[i] or "") then
@@ -1263,6 +1546,7 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
     end
     if next(entry.buckets) then pendingResponses[key]=entry end
     LogEvent("RX","mesh request from %s scheduled by bucket (id=%s)",tostring(requester),tostring(requestId))
+    return true
 end
 
 local function HandleClaim(responder, requester, requestId, buildHash, dpsHash)
@@ -1275,12 +1559,13 @@ local function HandleClaim(responder, requester, requestId, buildHash, dpsHash)
         LogEvent("RX","ignored legacy whole-state claim from %s for owner-only safety",
             tostring(responder))
     end
+    return true
 end
 
 local function HandleBucketClaim(responder, requester, requestId, kind, bucket, bucketHash)
-    if responder==MyName() then return end
+    if responder==MyName() then return true end
     local key=tostring(requester)..":"..tostring(requestId)
-    local entry=pendingResponses[key]; if not entry then return end
+    local entry=pendingResponses[key]; if not entry then return true end
     local id=tostring(kind)..tostring(tonumber(bucket) or 0)
     local b=entry.buckets and entry.buckets[id]
     if b and b.claimable ~= false
@@ -1289,40 +1574,63 @@ local function HandleBucketClaim(responder, requester, requestId, kind, bucket, 
         LogEvent("RX","mesh bucket %s claimed by %s for %s",id,tostring(responder),tostring(requester))
         if not next(entry.buckets) then pendingResponses[key]=nil end
     end
+    return true
 end
 
 local function ProcessPendingResponses(elapsed)
     elapsed=tonumber(elapsed) or 0
     local sends={}
     for key,entry in pairs(pendingResponses) do
-        for id,b in pairs(entry.buckets or {}) do
-            b.remaining=(tonumber(b.remaining) or 0)-elapsed
-            if b.remaining<=0 then
-                if b.phase=="wait" and b.claimable ~= false then
-                    EnqueueControl(string.format("%s|%s|%s|%s|%s|%d|%s",CODE_BUCKET_CLAIM,MyName(),entry.requester,entry.requestId,b.kind,b.bucket,b.hash))
-                    b.phase="settle"; b.remaining=BUCKET_SETTLE
-                else
-                    entry.buckets[id]=nil
-                    sends[#sends+1]={entry=entry,kind=b.kind,bucket=b.bucket}
+        if Now() - (tonumber(entry.createdAt) or Now()) > PENDING_TTL then
+            pendingResponses[key] = nil
+        else
+            for id,b in pairs(entry.buckets or {}) do
+                b.remaining=(tonumber(b.remaining) or 0)-elapsed
+                if b.remaining<=0 then
+                    if b.phase=="wait" and b.claimable ~= false then
+                        local queued = EnqueueControl(string.format(
+                            "%s|%s|%s|%s|%s|%d|%s",CODE_BUCKET_CLAIM,
+                            MyName(),entry.requester,entry.requestId,b.kind,
+                            b.bucket,b.hash))
+                        if queued then
+                            b.phase="settle"; b.remaining=BUCKET_SETTLE
+                        else
+                            b.remaining=1
+                        end
+                    else
+                        entry.buckets[id]=nil
+                        sends[#sends+1]={entry=entry,kind=b.kind,bucket=b.bucket}
+                    end
                 end
             end
+            if not next(entry.buckets or {}) then pendingResponses[key]=nil end
         end
-        if not next(entry.buckets or {}) then pendingResponses[key]=nil end
     end
     table.sort(sends,function(a,b) return (a.kind..a.bucket)<(b.kind..b.bucket) end)
     for _,x in ipairs(sends) do SendBucketResponse(x.entry,x.kind,x.bucket) end
     local loadoutReady={}
     for key,entry in pairs(pendingLoadouts) do
-        entry.remaining=(tonumber(entry.remaining) or 0)-elapsed
-        if entry.remaining<=0 then pendingLoadouts[key]=nil; loadoutReady[#loadoutReady+1]=entry end
+        if Now() - (tonumber(entry.createdAt) or Now()) > PENDING_TTL then
+            pendingLoadouts[key] = nil
+        else
+            entry.remaining=(tonumber(entry.remaining) or 0)-elapsed
+            if entry.remaining<=0 then pendingLoadouts[key]=nil; loadoutReady[#loadoutReady+1]=entry end
+        end
     end
     table.sort(loadoutReady,function(a,b)return tostring(a.key)<tostring(b.key) end)
     for _,entry in ipairs(loadoutReady) do
         local b=NexusDB and NexusDB.communityBuilds and NexusDB.communityBuilds[entry.buildId]
         if b and type(b.echoes)=="table" and #b.echoes>0 then
-            EnqueueControl(string.format("%s|%s|%s|%s",CODE_LOADOUT_CLAIM,MyName(),entry.requester,entry.buildId))
-            Sync.BroadcastBuild(b)
-            LogEvent("TX","answered on-demand loadout '%s' for %s",tostring(entry.buildId),tostring(entry.requester))
+            local claimed = EnqueueControl(string.format("%s|%s|%s|%s",
+                CODE_LOADOUT_CLAIM,MyName(),entry.requester,entry.buildId))
+            if claimed then
+                Sync.BroadcastBuild(b)
+                LogEvent("TX","answered on-demand loadout '%s' for %s",
+                    tostring(entry.buildId),tostring(entry.requester))
+            else
+                entry.remaining = 1
+                pendingLoadouts[entry.key] = entry
+            end
         end
     end
 end
@@ -1332,27 +1640,30 @@ local function HandleDelete(sender, buildId, stamp, originAuthor)
     local db = NexusDB and NexusDB.communityBuilds
     local existing = db and db[buildId]
     -- originAuthor is an optional 5th field; treat empty string same as nil
-    local author = tostring((originAuthor and originAuthor ~= "") and originAuthor or sender or "")
+    local author = tostring((originAuthor and originAuthor ~= "")
+        and originAuthor or sender or "")
     if not SamePeer(sender, author) then
         LogEvent("RX", "REJECT relayed delete for '%s' from %s",
             tostring(buildId), tostring(sender))
-        return
+        return false
     end
     local tomb = { stamp=tonumber(stamp) or 0, author=author }
     local prior = tombstones[buildId]
-    if prior and TombStamp(prior) >= tomb.stamp then return end
+    if prior and TombStamp(prior) >= tomb.stamp then return true end
     if not existing then
         LogEvent("RX", "REJECT unprovable tombstone for unknown build '%s'",
             tostring(buildId))
-        return
+        return false
     end
     if existing.isMine then
         LogEvent("RX","ignoring delete for MY build '%s' relayed by %s",
-            tostring(existing.title), tostring(sender)); return
+            tostring(existing.title), tostring(sender))
+        return false
     end
     if not SamePeer(existing.author, sender) then
         LogEvent("RX","REJECT delete of '%s': origin %s is not the author (%s)",
-            tostring(existing.title), author, tostring(existing.author)); return
+            tostring(existing.title), author, tostring(existing.author))
+        return false
     end
     db[buildId] = nil
     tombstones[buildId] = tomb
@@ -1362,155 +1673,260 @@ local function HandleDelete(sender, buildId, stamp, originAuthor)
     if Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then
         pcall(Nexus.CommunityBuilds.Refresh)
     end
+    return true
 end
 
 -- CHAT_MSG_CHANNEL handler. The wire has | escaped to || on send;
 -- since none of our fields ever contain a literal |, collapsing ||→|
 -- is unambiguous.
-function Sync.HandleIncoming(text, sender)
-    if type(text) ~= "string" then return end
-    text = text:gsub("||", "|")
-    local parts = {}
-    for part in text:gmatch("([^|]*)|?") do
-        parts[#parts+1] = part
-        if #parts > 20 then break end
+local function SplitWire(text)
+    local parts, start = {}, 1
+    while true do
+        if #parts >= 8 then return nil end
+        local pos = text:find("|", start, true)
+        if not pos then
+            parts[#parts + 1] = text:sub(start)
+            return parts
+        end
+        parts[#parts + 1] = text:sub(start, pos - 1)
+        start = pos + 1
     end
-    local code = parts[1]
-    local protocolSender = parts[2] or sender
-    local actualSender = sender or protocolSender
-    if protocolSender and actualSender
-        and not SamePeer(protocolSender, actualSender) then
-        LogEvent("RX", "DROP sender mismatch: wire=%s transport=%s",
-            tostring(protocolSender), tostring(actualSender))
-        return
-    end
-    if actualSender and parts[2] then parts[2] = actualSender end
-    protocolSender = actualSender
-    if PEER_PROTOCOL_CODES[code] and protocolSender and protocolSender ~= "" then
-        MarkPeer(protocolSender, code == CODE_REQUEST and parts[6] or nil)
-    end
+end
 
-    if code == CODE_PRESENCE then
-        MarkPeer(protocolSender, parts[3])
-        return
-    end
-    if code == CODE_REQUEST then
-        HandleRequest(parts[2] or sender, parts[3], parts[4], parts[5])
-        return
-    end
-    if code == CODE_CLAIM then
-        HandleClaim(parts[2] or sender, parts[3], parts[4], parts[5], parts[6])
-        return
-    end
-    if code == CODE_BUCKET_CLAIM then
-        HandleBucketClaim(parts[2] or sender, parts[3], parts[4], parts[5], parts[6], parts[7])
-        return
-    end
-    if code == CODE_DELETE then
-        HandleDelete(parts[2] or sender, parts[3], parts[4], parts[5])
-        return
-    end
-    if code == CODE_INDEX then
-        autoConverge.lastInbound = Now()
-        local raw = parts[3] and Codec.Base64Decode(parts[3])
-        local data = raw and Codec.JSONDecode(raw)
-        if StoreSummary(data, protocolSender)
-            and Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then
-            pcall(Nexus.CommunityBuilds.Refresh)
-        end
-        return
-    end
-    if code == CODE_LOADOUT_REQ then
-        local requester, buildId = parts[2] or sender, parts[3]
-        if requester ~= MyName() and buildId then
-            local b = NexusDB and NexusDB.communityBuilds and NexusDB.communityBuilds[buildId]
-            if b and type(b.echoes)=="table" and #b.echoes>0 then
-                local key = tostring(requester)..":"..tostring(buildId)
-                pendingLoadouts[key] = { key=key, requester=requester, buildId=buildId,
-                    remaining=StableDelay(key..":"..MyName()) }
-            end
-        end
-        return
-    end
-    if code == CODE_LOADOUT_CLAIM then
-        local requester, buildId = parts[3], parts[4]
-        local key = tostring(requester)..":"..tostring(buildId)
-        if parts[2] ~= MyName() and pendingLoadouts[key] then
-            pendingLoadouts[key] = nil
-            LogEvent("RX","suppressed duplicate loadout response; %s claimed %s", tostring(parts[2]), tostring(buildId))
-        end
-        return
-    end
-    if code == CODE_DPS then
-        HandleDps(parts)
-        return
-    end
-    if code == CODE_DPS2 then
-        HandleDps2(parts)
-        return
-    end
-    if code ~= CODE_BUILD then
+local function RejectIncoming(reason)
+    stats.malformedRejected = (stats.malformedRejected or 0) + 1
+    LogEvent("RX", "REJECT envelope: %s", tostring(reason or "malformed"))
+    return false
+end
+
+local function AcceptPeer(sender, version)
+    MarkPeer(sender, version)
+    return true
+end
+
+function Sync.HandleIncoming(text, sender)
+    if type(text) ~= "string" or #text > MAX_WIRE_BYTES
+        or text:find("[%c]") then return RejectIncoming("invalid wire length") end
+    text = text:gsub("||", "|")
+    local parts = SplitWire(text)
+    if not parts then return RejectIncoming("too many fields") end
+    local code = parts[1]
+    if not PEER_PROTOCOL_CODES[code] then
         if code and code ~= "" then
             LogEvent("RX","unknown code '%s'", tostring(code))
         end
-        return
+        return false
     end
 
+    local protocolSender = parts[2]
+    local actualSender = sender or protocolSender
+    if not ValidPeerName(protocolSender) or not ValidPeerName(actualSender)
+        or not SameTransportSender(protocolSender, actualSender) then
+        LogEvent("RX", "DROP sender mismatch: wire=%s transport=%s",
+            tostring(protocolSender), tostring(actualSender))
+        return RejectIncoming("sender mismatch")
+    end
+    parts[2] = actualSender
+    protocolSender = actualSender
+
+    if code == CODE_PRESENCE then
+        if #parts ~= 3 or not ValidVersion(parts[3]) then
+            return RejectIncoming("invalid presence")
+        end
+        return AcceptPeer(protocolSender, parts[3])
+    end
+
+    if code == CODE_REQUEST then
+        if #parts < 2 or #parts > 6
+            or (parts[3] ~= nil and parts[3] ~= "" and not ValidHash(parts[3]))
+            or (parts[4] ~= nil and parts[4] ~= "" and not ValidHash(parts[4]))
+            or (parts[5] ~= nil and parts[5] ~= ""
+                and not ValidIdentifier(parts[5], MAX_REQUEST_ID_BYTES))
+            or (parts[6] ~= nil and not ValidVersion(parts[6])) then
+            return RejectIncoming("invalid request")
+        end
+        local accepted = HandleRequest(protocolSender,
+            (parts[3] and parts[3] ~= "") and parts[3] or "0",
+            (parts[4] and parts[4] ~= "") and parts[4] or "0",
+            (parts[5] and parts[5] ~= "") and parts[5] or nil)
+        if accepted then return AcceptPeer(protocolSender, parts[6]) end
+        return false
+    end
+
+    if code == CODE_CLAIM then
+        if #parts ~= 6 or not ValidPeerName(parts[3])
+            or not ValidIdentifier(parts[4], MAX_REQUEST_ID_BYTES)
+            or not ValidField(parts[5], MAX_HASH_BYTES, false)
+            or not ValidField(parts[6], MAX_HASH_BYTES, false) then
+            return RejectIncoming("invalid legacy claim")
+        end
+        HandleClaim(protocolSender, parts[3], parts[4], parts[5], parts[6])
+        return AcceptPeer(protocolSender)
+    end
+
+    if code == CODE_BUCKET_CLAIM then
+        local bucket = tonumber(parts[6])
+        if #parts ~= 7 or not ValidPeerName(parts[3])
+            or not ValidIdentifier(parts[4], MAX_REQUEST_ID_BYTES)
+            or (parts[5] ~= "B" and parts[5] ~= "D")
+            or not bucket or bucket ~= math.floor(bucket)
+            or bucket < 1 or bucket > BUILD_BUCKETS
+            or not ValidHash(parts[7]) then
+            return RejectIncoming("invalid bucket claim")
+        end
+        HandleBucketClaim(protocolSender, parts[3], parts[4], parts[5],
+            bucket, parts[7])
+        return AcceptPeer(protocolSender)
+    end
+
+    if code == CODE_DELETE then
+        if (#parts ~= 4 and #parts ~= 5)
+            or not ValidIdentifier(parts[3], MAX_BUILD_ID_BYTES)
+            or not ValidIntegerText(parts[4], 1)
+            or (parts[5] ~= nil and parts[5] ~= ""
+                and not ValidPeerName(parts[5])) then
+            return RejectIncoming("invalid delete")
+        end
+        if HandleDelete(protocolSender, parts[3], parts[4], parts[5]) then
+            return AcceptPeer(protocolSender)
+        end
+        return false
+    end
+
+    if code == CODE_INDEX then
+        if #parts ~= 3 or not ValidField(parts[3], MAX_CHUNK_BYTES, false) then
+            return RejectIncoming("invalid build summary")
+        end
+        local raw = Codec.Base64Decode(parts[3])
+        local data = raw and Codec.JSONDecode(raw)
+        local accepted, changed = StoreSummary(data, protocolSender)
+        if not accepted then return RejectIncoming("rejected build summary") end
+        autoConverge.lastInbound = Now()
+        if changed and Nexus.CommunityBuilds
+            and Nexus.CommunityBuilds.Refresh then
+            pcall(Nexus.CommunityBuilds.Refresh)
+        end
+        return AcceptPeer(protocolSender)
+    end
+
+    if code == CODE_LOADOUT_REQ then
+        if #parts ~= 3
+            or not ValidIdentifier(parts[3], MAX_BUILD_ID_BYTES) then
+            return RejectIncoming("invalid loadout request")
+        end
+        local requester, buildId = protocolSender, parts[3]
+        if requester ~= MyName() then
+            local b = NexusDB and NexusDB.communityBuilds
+                and NexusDB.communityBuilds[buildId]
+            if b and type(b.echoes)=="table" and #b.echoes>0 then
+                local key = tostring(requester)..":"..tostring(buildId)
+                if not pendingLoadouts[key] then
+                    if TableCount(pendingLoadouts) >= MAX_PENDING_LOADOUTS then
+                        stats.pendingOverflowRejected =
+                            (stats.pendingOverflowRejected or 0) + 1
+                        return false
+                    end
+                    pendingLoadouts[key] = { key=key, requester=requester,
+                        buildId=buildId, createdAt=Now(),
+                        remaining=StableDelay(key..":"..MyName()) }
+                end
+            end
+        end
+        return AcceptPeer(protocolSender)
+    end
+
+    if code == CODE_LOADOUT_CLAIM then
+        if #parts ~= 4 or not ValidPeerName(parts[3])
+            or not ValidIdentifier(parts[4], MAX_BUILD_ID_BYTES) then
+            return RejectIncoming("invalid loadout claim")
+        end
+        local requester, buildId = parts[3], parts[4]
+        local key = tostring(requester)..":"..tostring(buildId)
+        if protocolSender ~= MyName() and pendingLoadouts[key] then
+            pendingLoadouts[key] = nil
+            LogEvent("RX","suppressed duplicate loadout response; %s claimed %s",
+                tostring(protocolSender), tostring(buildId))
+        end
+        return AcceptPeer(protocolSender)
+    end
+
+    if code == CODE_DPS then
+        if #parts ~= 7 then return RejectIncoming("invalid legacy DPS") end
+        HandleDps(parts)
+        return false
+    end
+
+    if code == CODE_DPS2 then
+        if #parts ~= 5 then return RejectIncoming("invalid DPS transfer") end
+        if HandleDps2(parts) then return AcceptPeer(protocolSender) end
+        return false
+    end
+
+    if code ~= CODE_BUILD or #parts ~= 6 then
+        return RejectIncoming("invalid build transfer")
+    end
     local msgSender, buildId, lastMod, chunkSpec, data =
-        parts[2], parts[3], parts[4], parts[5], parts[6]
-    if not (msgSender and buildId and lastMod and chunkSpec and data) then return end
+        protocolSender, parts[3], parts[4], parts[5], parts[6]
+    if not ValidIdentifier(buildId, MAX_BUILD_ID_BYTES)
+        or not ValidIntegerText(lastMod, 0)
+        or not ValidField(chunkSpec, 16, false)
+        or not ValidField(data, MAX_CHUNK_BYTES, false) then
+        return RejectIncoming("invalid build fields")
+    end
     local idx, total = chunkSpec:match("^(%d+)/(%d+)$")
     idx, total = tonumber(idx), tonumber(total)
     if not (idx and total and idx >= 1 and total >= 1 and idx <= total
-        and total <= MAX_CHUNKS and #data <= MAX_CHUNK_BYTES) then return end
+        and total <= MAX_CHUNKS) then
+        return RejectIncoming("invalid build chunk geometry")
+    end
 
     autoConverge.lastInbound = Now()
-    local key   = msgSender..":"..buildId
+    local key = msgSender..":"..buildId
     local entry = inflight[key]
-
     if not entry then
-        -- Valid build updates are always accepted. The old receive-window gate
-        -- caused permanently incomplete rows and menu-triggered request spam.
-        autoConverge.lastInbound = Now()
         if total == 1 then
-            if #data > MAX_ENCODED_BYTES then return end
-            LogEvent("RX","single-chunk build '%s' from %s", tostring(buildId), tostring(msgSender))
-            HandleComplete(buildId, lastMod, data, msgSender)
-            return
+            local accepted = HandleComplete(buildId, lastMod, data, msgSender)
+            if accepted then return AcceptPeer(protocolSender) end
+            return false
         end
         CleanExpiredInflight()
-        if not CanStartTransfer(inflight, msgSender) then return end
+        if not CanStartTransfer(inflight, msgSender) then return false end
         LogEvent("RX","starting %d-chunk build '%s' from %s",
             total, tostring(buildId), tostring(msgSender))
         entry = { chunks={}, total=total, t0=Now(), lastSeen=Now(),
-            lastMod=lastMod, sender=msgSender, bytes=0, received=0 }
+            buildId=buildId, lastMod=lastMod, sender=msgSender,
+            bytes=0, received=0 }
         inflight[key] = entry
     end
 
-    if total ~= entry.total or tostring(lastMod) ~= tostring(entry.lastMod) then
+    if total ~= entry.total or buildId ~= entry.buildId
+        or msgSender ~= entry.sender
+        or tostring(lastMod) ~= tostring(entry.lastMod) then
         inflight[key] = nil
-        return
+        return false
     end
     entry.lastSeen = Now()
     local prior = entry.chunks[idx]
     if prior ~= nil then
         if prior ~= data then inflight[key] = nil end
-        return
+        return false
     end
     if entry.bytes + #data > MAX_ENCODED_BYTES then
         inflight[key] = nil
-        return
+        return false
     end
     entry.chunks[idx] = data
     entry.bytes = entry.bytes + #data
     entry.received = entry.received + 1
-    if entry.received == entry.total then
-        local full = table.concat(entry.chunks, "", 1, entry.total)
-        inflight[key] = nil
-        LogEvent("RX","transfer '%s' complete (%d/%d chunks, %d bytes)",
-            tostring(buildId), entry.received, entry.total, #full)
-        HandleComplete(buildId, entry.lastMod, full, msgSender)
+    if entry.received ~= entry.total then return false end
+    local full = table.concat(entry.chunks, "", 1, entry.total)
+    inflight[key] = nil
+    LogEvent("RX","transfer '%s' complete (%d/%d chunks, %d bytes)",
+        tostring(buildId), entry.received, entry.total, #full)
+    if HandleComplete(buildId, entry.lastMod, full, msgSender) then
+        return AcceptPeer(protocolSender)
     end
+    return false
 end
 
 local function PumpLegacyRecovery(elapsed)
@@ -1518,21 +1934,25 @@ local function PumpLegacyRecovery(elapsed)
     if legacyRecoveryTicker < 1.5 then return end
     legacyRecoveryTicker = 0
     -- Do not pile recovery traffic on top of a large response burst.
-    local pending = #sendQueue - sendQueueHead + 1
+    local pending = QueueDepth(sendQueueHead, sendQueueTail)
     if pending > 8 then return end
     local buildId = legacyRecoveryQueue[legacyRecoveryHead]
     if not buildId then
-        if legacyRecoveryHead > 1 then legacyRecoveryQueue = {}; legacyRecoveryHead = 1 end
+        if legacyRecoveryHead > legacyRecoveryTail then
+            legacyRecoveryQueue, legacyRecoveryHead, legacyRecoveryTail = {}, 1, 0
+        end
         return
     end
-    legacyRecoveryQueue[legacyRecoveryHead] = nil
-    legacyRecoveryHead = legacyRecoveryHead + 1
     local build = NexusDB and NexusDB.communityBuilds and NexusDB.communityBuilds[buildId]
     if not (build and type(build.echoes) == "table" and #build.echoes > 0) then
-        Enqueue(string.format("%s|%s|%s", CODE_LOADOUT_REQ, MyName(), tostring(buildId)))
+        local queued = Enqueue(string.format("%s|%s|%s",
+            CODE_LOADOUT_REQ, MyName(), tostring(buildId)))
+        if not queued then return end
         receiveWindowUntil = math.max(receiveWindowUntil, Now() + INFLIGHT_GRACE)
         LogEvent("SYNC", "background recovery requested legacy loadout '%s'", tostring(buildId))
     end
+    legacyRecoveryQueue[legacyRecoveryHead] = nil
+    legacyRecoveryHead = legacyRecoveryHead + 1
 end
 
 local function QueueBusy()
@@ -1540,7 +1960,8 @@ local function QueueBusy()
     if sendQueue[sendQueueHead] then return true end
     if next(inflight) or next(dpsInflight) then return true end
     if next(pendingResponses) or next(pendingLoadouts) then return true end
-    if legacyRecoveryQueue[legacyRecoveryHead] then return true end
+    if legacyRecoveryHead <= legacyRecoveryTail
+        and legacyRecoveryQueue[legacyRecoveryHead] then return true end
     return false
 end
 
@@ -1584,18 +2005,19 @@ local function SyncWorkCounts()
         recovery = 0,
         pass = tonumber(autoConverge.pass) or 0,
     }
-    for i = controlQueueHead, #controlQueue do
+    for i = controlQueueHead, controlQueueTail do
         if controlQueue[i] then work.control = work.control + 1 end
     end
-    for i = sendQueueHead, #sendQueue do
+    for i = sendQueueHead, sendQueueTail do
         if sendQueue[i] then work.sending = work.sending + 1 end
     end
     for _ in pairs(inflight) do work.receivingBuilds = work.receivingBuilds + 1 end
     for _ in pairs(dpsInflight) do work.receivingRecords = work.receivingRecords + 1 end
     for _ in pairs(pendingResponses) do work.preparing = work.preparing + 1 end
     for _ in pairs(pendingLoadouts) do work.preparing = work.preparing + 1 end
-    if legacyRecoveryQueue[legacyRecoveryHead] then
-        for i = legacyRecoveryHead, #legacyRecoveryQueue do
+    if legacyRecoveryHead <= legacyRecoveryTail
+        and legacyRecoveryQueue[legacyRecoveryHead] then
+        for i = legacyRecoveryHead, legacyRecoveryTail do
             if legacyRecoveryQueue[i] then work.recovery = work.recovery + 1 end
         end
     end
@@ -1756,8 +2178,8 @@ end
 
 function Sync.Init(codec, adapter)
     Codec, Adapter = codec, adapter
-    sendQueue, sendQueueHead = {}, 1
-    controlQueue, controlQueueHead = {}, 1
+    sendQueue, sendQueueHead, sendQueueTail = {}, 1, 0
+    controlQueue, controlQueueHead, controlQueueTail = {}, 1, 0
     inflight, dpsInflight = {}, {}
     ticker = 0
     throttlePauseUntil, throttleSlowUntil = 0, 0
@@ -1770,12 +2192,14 @@ function Sync.Init(codec, adapter)
     stats.sent, stats.received, stats.duplicatesSkipped = 0, 0, 0
     stats.malformedRejected, stats.ignoredOutsideWindow = 0, 0
     stats.oversizeDropped, stats.updated, stats.skippedUpToDate = 0, 0, 0
+    stats.queueOverflowRejected, stats.pendingOverflowRejected = 0, 0
     hotBuilds    = {}  -- clear on init
     pendingResponses = {}
     pendingLoadouts = {}
     requestedLoadouts = {}
     legacyRecoveryQueue = {}
     legacyRecoveryHead = 1
+    legacyRecoveryTail = 0
     legacyRecoveryTicker = 0
     autoConverge = { active=false, pass=0, stable=0, started=0, lastInbound=0, buildHash=nil, dpsHash=nil }
     -- Keep login initialization constant-time. Existing build timestamps are
