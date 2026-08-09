@@ -125,6 +125,8 @@ local lastRequestAt  = -math.huge
 local lastAnsweredAt = -math.huge
 local pendingResponses = {} -- requester:requestId -> deferred response candidate
 local pendingLoadouts = {}  -- requester:buildId -> staggered on-demand response
+local pendingDeletes = {}   -- local tombstone ids awaiting direct notification
+local pendingDeleteTicker = 0
 local requestedLoadouts = {} -- buildId -> last recovery request time
 local legacyRecoveryQueue = {} -- incomplete summaries learned from older peers
 local legacyRecoveryHead = 1
@@ -234,7 +236,8 @@ local stats = {
 
 function Sync.WorkState()
     local buildCount, buildBytes, dpsCount, dpsBytes = 0, 0, 0, 0
-    local pendingResponseCount, pendingLoadoutCount, peerCount = 0, 0, 0
+    local pendingResponseCount, pendingLoadoutCount, pendingDeleteCount = 0, 0, 0
+    local peerCount = 0
     for _, entry in pairs(inflight) do
         buildCount = buildCount + 1
         buildBytes = buildBytes + (tonumber(entry.bytes) or 0)
@@ -249,6 +252,13 @@ function Sync.WorkState()
     for _ in pairs(pendingLoadouts) do
         pendingLoadoutCount = pendingLoadoutCount + 1
     end
+    for id in pairs(pendingDeletes) do
+        local tomb = tombstones and tombstones[id]
+        local author = type(tomb) == "table" and tostring(tomb.author or "") or ""
+        if tomb and SamePeer(author, MyName()) then
+            pendingDeleteCount = pendingDeleteCount + 1
+        end
+    end
     for _ in pairs(knownPeers) do peerCount = peerCount + 1 end
     local sending = math.max(0, sendQueueTail - sendQueueHead + 1)
     local control = math.max(0, controlQueueTail - controlQueueHead + 1)
@@ -262,6 +272,7 @@ function Sync.WorkState()
         recovery=recovery,
         pendingResponses=pendingResponseCount,
         pendingLoadouts=pendingLoadoutCount,
+        pendingDeletes=pendingDeleteCount,
         knownPeers=peerCount,
         maxOutboundQueue=MAX_OUTBOUND_QUEUE,
         maxControlQueue=MAX_CONTROL_QUEUE,
@@ -876,6 +887,67 @@ local function BroadcastSummary(build)
 end
 Sync.BroadcastBuildSummary = BroadcastSummary
 
+local function DeleteWireMessage(id, tomb)
+    return string.format("%s|%s|%s|%s|%s", CODE_DELETE, MyName(),
+        tostring(id), tostring(TombStamp(tomb)), TombAuthor(tomb))
+end
+
+local function MarkDeletePending(id, tomb)
+    pendingDeletes[id] = true
+    if type(tomb) == "table" then tomb.pending = true end
+end
+
+local function ClearPendingDelete(id, tomb)
+    pendingDeletes[id] = nil
+    if type(tomb) == "table" and tombstones[id] == tomb then
+        tomb.pending = nil
+    end
+end
+
+local function PendingDeleteCount()
+    local count = 0
+    for id in pairs(pendingDeletes) do
+        local tomb = tombstones[id]
+        if tomb and SamePeer(TombAuthor(tomb), MyName()) then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local function PumpPendingDeletes(elapsed)
+    if not next(pendingDeletes) then return end
+    pendingDeleteTicker = pendingDeleteTicker + (tonumber(elapsed) or 0)
+    if pendingDeleteTicker < 1 then return end
+    if QueueDepth(sendQueueHead, sendQueueTail) >= MAX_OUTBOUND_QUEUE then
+        pendingDeleteTicker = 1
+        return
+    end
+    local selectedId, selectedTomb
+    for id in pairs(pendingDeletes) do
+        local tomb = tombstones[id]
+        if not tomb then
+            pendingDeletes[id] = nil
+        elseif SamePeer(TombAuthor(tomb), MyName())
+            and (not selectedId or tostring(id) < tostring(selectedId)) then
+            selectedId, selectedTomb = id, tomb
+        end
+    end
+    if not selectedId then return end
+    pendingDeleteTicker = 0
+    local queued, why = Enqueue(DeleteWireMessage(selectedId, selectedTomb))
+    if queued then
+        ClearPendingDelete(selectedId, selectedTomb)
+        LogEvent("TX", "queued pending delete '%s'", tostring(selectedId))
+    elseif why ~= "sync queue full" then
+        -- A permanent local serialization failure cannot be helped by retrying;
+        -- the tombstone remains available to normal reconciliation.
+        ClearPendingDelete(selectedId, selectedTomb)
+        LogEvent("TX", "dropping unsendable pending delete '%s': %s",
+            tostring(selectedId), tostring(why or "invalid packet"))
+    end
+end
+
 local QueueLegacyRecovery
 
 local function StoreSummary(data, transportSender)
@@ -1157,6 +1229,9 @@ local function BroadcastMineFiltered(peerHash, onlyBucket, progress)
             end
             if ok and why ~= "duplicate suppressed" then
                 progress[item.token] = "admitted"
+                if item.kind == "tomb" then
+                    ClearPendingDelete(item.id, item.tomb)
+                end
                 n = n + 1
             elseif why == "sync queue full"
                 or why == "duplicate suppressed" then
@@ -1382,11 +1457,21 @@ function Sync.BroadcastDelete(build)
     local stamp = tostring((time and time()) or 0)
     local author = tostring(build.author or MyName())
     if not SamePeer(author, MyName()) then return false end
-    tombstones[build.id] = { stamp=tonumber(stamp) or 0, author=author }
-    local queued = Enqueue(string.format("%s|%s|%s|%s|%s",
-        CODE_DELETE, MyName(), build.id, stamp, author))
-    LogEvent("TX","delete '%s'", tostring(build.title or build.id))
-    return queued and true or false
+    local tomb = { stamp=tonumber(stamp) or 0, author=author }
+    tombstones[build.id] = tomb
+    local queued, why = Enqueue(DeleteWireMessage(build.id, tomb))
+    if queued then
+        ClearPendingDelete(build.id, tomb)
+        LogEvent("TX","delete '%s'", tostring(build.title or build.id))
+        return true
+    end
+    if why == "sync queue full" then
+        MarkDeletePending(build.id, tomb)
+        LogEvent("TX", "delete '%s' queued for retry",
+            tostring(build.title or build.id))
+        return false, "queued for retry"
+    end
+    return false, why
 end
 
 ------------------------------------------------------------------------
@@ -2066,6 +2151,7 @@ local function QueueBusy()
     if sendQueue[sendQueueHead] then return true end
     if next(inflight) or next(dpsInflight) then return true end
     if next(pendingResponses) or next(pendingLoadouts) then return true end
+    if PendingDeleteCount() > 0 then return true end
     if legacyRecoveryHead <= legacyRecoveryTail
         and legacyRecoveryQueue[legacyRecoveryHead] then return true end
     return false
@@ -2121,6 +2207,7 @@ local function SyncWorkCounts()
     for _ in pairs(dpsInflight) do work.receivingRecords = work.receivingRecords + 1 end
     for _ in pairs(pendingResponses) do work.preparing = work.preparing + 1 end
     for _ in pairs(pendingLoadouts) do work.preparing = work.preparing + 1 end
+    work.preparing = work.preparing + PendingDeleteCount()
     if legacyRecoveryHead <= legacyRecoveryTail
         and legacyRecoveryQueue[legacyRecoveryHead] then
         for i = legacyRecoveryHead, legacyRecoveryTail do
@@ -2184,6 +2271,7 @@ function Sync.OnUpdate(elapsed)
     CleanExpiredInflight()
     ProcessPendingResponses(elapsed)
     PumpLegacyRecovery(elapsed)
+    PumpPendingDeletes(elapsed)
     PumpQueue(elapsed)
     if Sync.FlushStatusReply then Sync.FlushStatusReply() end
     if autoSyncPending then
@@ -2302,6 +2390,8 @@ function Sync.Init(codec, adapter)
     hotBuilds    = {}  -- clear on init
     pendingResponses = {}
     pendingLoadouts = {}
+    pendingDeletes = {}
+    pendingDeleteTicker = 0
     requestedLoadouts = {}
     legacyRecoveryQueue = {}
     legacyRecoveryHead = 1
@@ -2315,6 +2405,11 @@ function Sync.Init(codec, adapter)
     NexusDB = NexusDB or {}
     NexusDB.syncTombstones = NexusDB.syncTombstones or {}
     tombstones = NexusDB.syncTombstones
+    for id, tomb in pairs(tombstones) do
+        if type(tomb) == "table" and tomb.pending then
+            pendingDeletes[id] = true
+        end
+    end
     autoSyncPending = true
     autoSyncElapsed = 0
     InstallTransportFilters()

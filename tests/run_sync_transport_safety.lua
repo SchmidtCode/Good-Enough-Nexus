@@ -244,6 +244,41 @@ assert(mixedBucket.control == 0,
     "responder claimed a bucket after skipping an unsendable row")
 JoinTemporaryChannel, JoinChannelByName = oldTemporary4, oldNamed4
 
+-- A locally authored delete rejected at the outbound queue limit must remain
+-- pending and use the first capacity that becomes available. Otherwise the
+-- local row is gone before online peers receive its tombstone.
+NexusDB.communityBuilds = {}
+NexusDB.syncTombstones = {}
+Sync.Init(Nexus.Codec, {})
+limits = Sync.WorkState()
+for i = 1, limits.maxOutboundQueue do
+    assert(Sync.BroadcastDps("delete-fill-" .. i, "Alice", 5000 + i,
+        80, "dummy"), "failed to fill delete backpressure queue")
+end
+local immediateDelete, deleteWhy = Sync.BroadcastDelete({
+    id="delete-backpressure", title="Delete Backpressure", author="Alice",
+    lastModified=30, postedAt=30,
+    echoes={{spellId=200301, quality=3, stacks=1}},
+})
+assert(not immediateDelete and deleteWhy == "queued for retry",
+    "full-queue delete was not retained for retry")
+assert(Sync.WorkState().pendingDeletes == 1,
+    "retained delete was not exposed as pending work")
+assert(NexusDB.syncTombstones["delete-backpressure"].pending == true,
+    "retained delete was not persisted across reloads")
+H.joinedChannels[Sync.ChannelName()] = 7
+clock = clock + 1.2
+Sync.OnUpdate(1.2) -- observe the full queue, then drain one packet
+clock = clock + 1.2
+Sync.OnUpdate(1.2) -- admit the pending delete, then drain one packet
+local retriedDelete = Sync.WorkState()
+assert(retriedDelete.pendingDeletes == 0,
+    "retained delete did not clear after queue admission")
+assert(retriedDelete.sending == limits.maxOutboundQueue - 1,
+    "retained delete did not use the first freed queue slot")
+assert(NexusDB.syncTombstones["delete-backpressure"].pending == nil,
+    "admitted delete left stale persisted retry state")
+
 -- DPS bucket broadcasters report partial queue admission separately from the
 -- number of records queued. A partial result must retain the pending bucket
 -- for retry instead of treating it as complete.
