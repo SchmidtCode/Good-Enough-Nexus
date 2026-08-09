@@ -1,0 +1,26 @@
+# Editors and operating-system metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local development and test output
+coverage/
+dist/
+build/
+tmp/
+temp/
+*.log
+*.tmp
+*.bak
+*.orig
+*.rej
+
+# Local addon backups and release archives
+*.zip
+Nexus.codex-backup-*/
+Nexus-backup-*/
+
+# Dependency caches
+node_modules/
+.pnpm-store/
