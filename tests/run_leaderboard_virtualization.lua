@@ -153,7 +153,8 @@ assert(L.VirtualStats().active<=5
 L.Show("lk")
 assert(L.VirtualStats().results==150 and L.VirtualStats().category=="lk")
 L.SetCategory("combined")
-assert(L.VirtualStats().results==150 and L.VirtualStats().category=="combined")
+assert(L.VirtualStats().results==150 and L.VirtualStats().category=="lk",
+    "emergency mode still allowed average-DPS leaderboard calculation")
 NexusLeaderboardSearch:SetText("Player 001")
 L.RefreshData()
 assert(L.VirtualStats().results==1 and L.VirtualStats().offset==0,

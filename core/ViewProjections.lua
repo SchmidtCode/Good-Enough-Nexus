@@ -9,6 +9,7 @@ local Projections = {}
 Nexus.ViewProjections = Projections
 
 local caches = {builds={}, leaderboard={}}
+local MAX_REQUESTED_BUILD_ROWS = 100
 local counters = {
     builds={hits=0,rebuilds=0,failures=0,catalogWalks=0,dpsReads=0,
         sorts=0,defensiveCopies=0},
@@ -75,9 +76,15 @@ local function NormalizeBuildFilters(filters)
     local scope = filters.scope == "mine" and "mine" or "all"
     local sortMode = filters.sortMode
     if sortMode ~= "recent" and sortMode ~= "title" then sortMode = "dps" end
+    local resultLimit = math.floor(tonumber(filters.resultLimit) or 0)
+    if resultLimit < 1 then resultLimit = 0 end
+    if resultLimit > MAX_REQUESTED_BUILD_ROWS then
+        resultLimit = MAX_REQUESTED_BUILD_ROWS
+    end
     return {
         search=search, classFilter=classFilter, scope=scope,
         sortMode=sortMode, player=player, ownerKey=ownerKey,
+        resultLimit=resultLimit, skipDps=filters.skipDps == true,
     }
 end
 
@@ -101,7 +108,7 @@ local function BuildKey(filters)
         Revision(revisions.BUILD_LIBRARY_CHANGED),
         Revision(revisions.DPS_CHANGED),
         filters.scope, filters.classFilter, filters.search, filters.sortMode,
-        filters.player, filters.ownerKey,
+        filters.player, filters.ownerKey, filters.resultLimit, filters.skipDps,
     })
 end
 
@@ -247,7 +254,17 @@ local function BuildProjection(filters)
                 -- projection owns the row and may attach derived DPS fields
                 -- without another full-table copy.
                 local copy = build
-                copy._nexusDps = BuildDpsSummary(copy)
+                if filters.skipDps then
+                    -- Emergency browser safe mode. The dedicated Leaderboard
+                    -- remains the DPS surface; opening Builds must not join
+                    -- every catalog row to DPS data on the main thread.
+                    copy._nexusDps = {
+                        dummy=0,lk=0,best=0,average=0,count=0,
+                    }
+                    copy._nexusDpsDeferred = true
+                else
+                    copy._nexusDps = BuildDpsSummary(copy)
+                end
                 copy._nexusBestDps = copy._nexusDps.best
                 out[#out + 1] = copy
                 if IsLoaded(copy) then summary.ready = summary.ready + 1
@@ -262,7 +279,8 @@ local function BuildProjection(filters)
         local leftCount = left._nexusDps and left._nexusDps.count or 0
         local rightCount = right._nexusDps and right._nexusDps.count or 0
         if leftCount ~= rightCount then return leftCount > rightCount end
-        if filters.sortMode == "recent" then
+        if filters.sortMode == "recent"
+            or (filters.skipDps and filters.sortMode == "dps") then
             local lt = left.lastModified or left.postedAt or 0
             local rt = right.lastModified or right.postedAt or 0
             if lt ~= rt then return lt > rt end
@@ -278,6 +296,14 @@ local function BuildProjection(filters)
         if ln ~= rn then return ln < rn end
         return TypedIdentity(left.id) < TypedIdentity(right.id)
     end)
+    summary.matched = #out
+    if filters.resultLimit > 0 and #out > filters.resultLimit then
+        for index = #out, filters.resultLimit + 1, -1 do
+            out[index] = nil
+        end
+        summary.limited = true
+        summary.limit = filters.resultLimit
+    end
     summary.filtered = #out
     return out, summary
 end

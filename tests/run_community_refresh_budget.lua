@@ -51,10 +51,13 @@ assert(type(onUpdate) == "function", "Community frame did not install update han
 local initialVirtual = C.VirtualStats()
 local initialProjection = P.Stats().builds
 local initialIdentity = Nexus.DpsCapture.IdentityLookupStats()
-assert(initialIdentity.rebuilds == 1 and initialIdentity.rowsScanned == 500
-    and initialIdentity.lookups == 2000
-    and initialIdentity.candidateChecks <= 500,
-    "Community projection repeated full DPS store scans per build")
+assert(initialVirtual.results == 20,
+    "emergency Community projection did not enforce its row limit")
+assert(initialIdentity.rebuilds == 0 and initialIdentity.rowsScanned == 0
+    and initialIdentity.lookups == 0
+    and initialIdentity.candidateChecks == 0
+    and initialProjection.dpsReads == 0,
+    "Community safe mode still calculated per-build or average DPS")
 onUpdate(frame, 8.1)
 local unchangedVirtual = C.VirtualStats()
 local unchangedProjection = P.Stats().builds
@@ -71,6 +74,11 @@ assert(unchangedVirtual.dataBinds == initialVirtual.dataBinds
 receiving, receiveCount = true, 1
 assert(C.MarkDataDirty())
 Nexus.Revisions.Advance(Nexus.Revisions.BUILD_LIBRARY_CHANGED, {scope="record"})
+assert(C.Refresh())
+local directActiveVirtual = C.VirtualStats()
+assert(directActiveVirtual.dataBinds == initialVirtual.dataBinds
+    and directActiveVirtual.refreshDirty,
+    "direct refresh rebuilt Community data during active Sync")
 onUpdate(frame, 8.1)
 local activeVirtual = C.VirtualStats()
 assert(activeVirtual.dataBinds == initialVirtual.dataBinds
@@ -89,8 +97,8 @@ assert(finalVirtual.dataBinds == initialVirtual.dataBinds + 1
     and finalProjection.sorts == initialProjection.sorts + 1
     and finalIdentity.rebuilds == initialIdentity.rebuilds
     and finalIdentity.rowsScanned == initialIdentity.rowsScanned
-    and finalIdentity.lookups == initialIdentity.lookups + 2000,
-    "post-Sync dirty data did not publish exactly one complete projection")
+    and finalIdentity.lookups == initialIdentity.lookups,
+    "post-Sync dirty data did not publish one DPS-free bounded projection")
 
 onUpdate(frame, 8.1)
 local finalNoop = C.VirtualStats()
@@ -114,9 +122,22 @@ assert(fallbackVirtual.dataBinds == finalNoop.dataBinds + 1
     and fallbackVirtual.periodicSkips == finalNoop.periodicSkips,
     "failed dirty probe suppressed the periodic safety refresh")
 
+-- The local fallback must keep the same guarantee if the shared projection is
+-- missing or refuses a request during startup recovery.
+local originalBuilds = P.Builds
+P.Builds = function() return nil end
+C.Refresh()
+P.Builds = originalBuilds
+local fallbackSafe = C.VirtualStats()
+local fallbackIdentity = Nexus.DpsCapture.IdentityLookupStats()
+assert(fallbackSafe.results == 20
+    and fallbackIdentity.lookups == finalIdentity.lookups
+    and fallbackIdentity.rowsScanned == finalIdentity.rowsScanned,
+    "fallback Community browser calculated average DPS or exceeded its limit")
+
 print(string.format(
-    "community refresh budget: rows=1000 dpsRows=%d lookups=%d scans=%d deferred=%d periodicSkips=%d -- OK",
-    finalIdentity.indexedRows, finalIdentity.lookups,
+    "community refresh budget: rows=1000 shown=%d lookups=%d scans=%d deferred=%d periodicSkips=%d -- OK",
+    finalVirtual.results, finalIdentity.lookups,
     finalIdentity.rowsScanned,
     finalVirtual.deferredRefreshes,
     finalNoop.periodicSkips))

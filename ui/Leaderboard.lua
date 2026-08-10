@@ -91,43 +91,6 @@ local function Board(cat)
     return ok and type(rows) == "table" and rows or {}
 end
 
-local function CombinedRows()
-    local dummy, lk = Board("dummy"), Board("lk")
-    local dummyByKey, dummyByBuild = {}, {}
-    for _, row in ipairs(dummy) do
-        dummyByKey[RecordKey(row)] = row
-        if row.buildId then
-            dummyByBuild[PlayerKey(row.player).."|"..type(row.buildId)
-                ..":"..tostring(row.buildId)] = row
-        end
-    end
-    local out = {}
-    for _, lrow in ipairs(lk) do
-        local drow = dummyByKey[RecordKey(lrow)]
-        if not drow and lrow.buildId then
-            drow = dummyByBuild[PlayerKey(lrow.player).."|"..type(lrow.buildId)
-                ..":"..tostring(lrow.buildId)]
-        end
-        if drow then
-            local avg = ((tonumber(drow.dps) or 0) + (tonumber(lrow.dps) or 0)) / 2
-            out[#out+1] = {
-                player=lrow.player, dps=avg, average=avg, dummyDps=drow.dps, lkDps=lrow.dps,
-                dummyDuration=drow.duration, lkDuration=lrow.duration,
-                level=math.max(tonumber(drow.level) or 0, tonumber(lrow.level) or 0),
-                ts=math.min(tonumber(drow.ts) or 0, tonumber(lrow.ts) or 0),
-                category="combined", fingerprint=lrow.fingerprint or drow.fingerprint,
-                echoes=lrow.echoes or drow.echoes, lockedEchoes=lrow.lockedEchoes or drow.lockedEchoes,
-                buildId=lrow.buildId or drow.buildId, build=lrow.build or drow.build,
-            }
-        end
-    end
-    table.sort(out,function(a,b)
-        if a.average ~= b.average then return a.average > b.average end
-        return tostring(a.player):lower() < tostring(b.player):lower()
-    end)
-    return out
-end
-
 local function Rows()
     local projections = Nexus and Nexus.ViewProjections
     if projections and type(projections.Leaderboard) == "function" then
@@ -137,7 +100,7 @@ local function Rows()
         })
         if type(rows) == "table" then return rows end
     end
-    local rows = category == "combined" and CombinedRows() or Board(category)
+    local rows = Board(category)
     local query = searchBox and tostring(searchBox:GetText() or ""):lower() or ""
     local out = {}
     for _, row in ipairs(rows) do
@@ -451,7 +414,7 @@ local function EnsureFrame()
     syncBtn=MakeNavButton(frame,"Sync Now",90); syncBtn:SetPoint("TOPRIGHT",-18,-50); syncBtn:SetScript("OnClick",function() classMenu:Hide(); if Nexus.Sync then Nexus.Sync.RequestSync() end end)
     dummyBtn=MakeTab(frame,"Training Dummy",118); dummyBtn:SetPoint("TOPLEFT",18,-82); dummyBtn:SetScript("OnClick",function() category="dummy"; selectedKey=nil; classMenu:Hide(); M.RefreshData() end)
     lkBtn=MakeTab(frame,"Lich King",100); lkBtn:SetPoint("LEFT",dummyBtn,"RIGHT",5,0); lkBtn:SetScript("OnClick",function() category="lk"; selectedKey=nil; classMenu:Hide(); M.RefreshData() end)
-    combinedBtn=MakeTab(frame,"Best Average",112); combinedBtn:SetPoint("LEFT",lkBtn,"RIGHT",5,0); combinedBtn:SetScript("OnClick",function() category="combined"; selectedKey=nil; classMenu:Hide(); M.RefreshData() end)
+    combinedBtn=MakeTab(frame,"Average Off",112); combinedBtn:SetPoint("LEFT",lkBtn,"RIGHT",5,0); combinedBtn:Disable(); combinedBtn.active:Hide(); combinedBtn.text:SetTextColor(0.5,0.5,0.5)
     statusText=frame:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); statusText:SetPoint("LEFT",combinedBtn,"RIGHT",12,0); statusText:SetSize(250,14); statusText:SetJustifyH("LEFT")
     countText=frame:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); countText:SetPoint("TOPLEFT",18,-113); countText:SetSize(LIST_W,14); countText:SetJustifyH("LEFT")
 
@@ -499,7 +462,8 @@ end
 
 function M.RefreshData()
     if not frame or not frame:IsShown() then return end
-    local tabs={{dummyBtn,"dummy"},{lkBtn,"lk"},{combinedBtn,"combined"}}
+    if category=="combined" then category="lk" end
+    local tabs={{dummyBtn,"dummy"},{lkBtn,"lk"}}
     for _,v in ipairs(tabs) do if category==v[2] then v[1].active:Show() else v[1].active:Hide() end; v[1].text:SetTextColor(category==v[2] and 1 or 0.82, category==v[2] and 0.82 or 0.82, category==v[2] and 0 or 0.82) end
     classBtn.text:SetText(classFilter=="ALL" and "All Classes" or CLASS_LABEL[classFilter] or classFilter)
     currentRows=Rows()
@@ -525,10 +489,10 @@ function M.Refresh()
 end
 
 function M.Init(adapter) Adapter=adapter end
-function M.Show(mode) EnsureFrame(); if Nexus.Panel and Nexus.Panel.AttachMenuFrame then Nexus.Panel.AttachMenuFrame(frame) end; if Nexus.Theme and Nexus.Theme.StyleWindow then Nexus.Theme.StyleWindow(frame, 0.96) end; if Nexus.Theme and Nexus.Theme.StyleTree and not frame._nexusLeaderboardTreeStyled then Nexus.Theme.StyleTree(frame); frame._nexusLeaderboardTreeStyled=true; virtualStats.themeTreeWalks=virtualStats.themeTreeWalks+1 end; if Nexus.Panel and Nexus.Panel.CloseOtherWindows then Nexus.Panel.CloseOtherWindows("NexusLeaderboardFrame") end; if mode=="lk" or mode=="dummy" or mode=="combined" then category=mode end; frame:Show(); M.RefreshData() end
+function M.Show(mode) EnsureFrame(); if Nexus.Panel and Nexus.Panel.AttachMenuFrame then Nexus.Panel.AttachMenuFrame(frame) end; if Nexus.Theme and Nexus.Theme.StyleWindow then Nexus.Theme.StyleWindow(frame, 0.96) end; if Nexus.Theme and Nexus.Theme.StyleTree and not frame._nexusLeaderboardTreeStyled then Nexus.Theme.StyleTree(frame); frame._nexusLeaderboardTreeStyled=true; virtualStats.themeTreeWalks=virtualStats.themeTreeWalks+1 end; if Nexus.Panel and Nexus.Panel.CloseOtherWindows then Nexus.Panel.CloseOtherWindows("NexusLeaderboardFrame") end; if mode=="lk" or mode=="dummy" then category=mode end; frame:Show(); M.RefreshData() end
 function M.Hide() if frame then frame:Hide(); classMenu:Hide() end end
 function M.Toggle(mode) EnsureFrame(); if frame:IsShown() then M.Hide() else M.Show(mode) end end
-function M.SetCategory(mode) category=(mode=="dummy" or mode=="combined") and mode or "lk"; selectedKey=nil; M.RefreshData() end
+function M.SetCategory(mode) category=mode=="dummy" and "dummy" or "lk"; selectedKey=nil; M.RefreshData() end
 function M.SetClassFilter(value) classFilter=CLASS_LABEL[value] and value or "ALL"; selectedKey=nil; M.RefreshData() end
 function M.ScrollTo(offset) if not setScrollValue then return false end; setScrollValue(offset,"scroll"); return true end
 function M.SelectKey(key)

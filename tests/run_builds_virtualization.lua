@@ -50,9 +50,9 @@ local C = Nexus.CommunityBuilds
 C.Init(nil,nil)
 C.Show()
 local initial = C.VirtualStats()
-assert(initial.results == 1000 and initial.active <= 5
+assert(initial.results == 20 and initial.active <= 5
     and initial.created == initial.active and initial.first == 1,
-    "Community Builds created or bound one card per result")
+    "Community Builds did not enforce its emergency result limit")
 
 local dataBinds = initial.dataBinds
 local virtualScroll = NexusCommunityBuildsFrame._virtualListScrollFrame
@@ -68,24 +68,24 @@ virtualScroll:SetHeight(100)
 onSizeChanged(virtualScroll, 460, 100)
 assert(C.VirtualStats().active <= 4 and C.VirtualStats().resizeBinds == 2,
     "viewport shrink did not clamp the bounded visible window")
-assert(C.ScrollTo(500*92))
+assert(C.ScrollTo(10*92))
 local mid = C.VirtualStats()
-assert(mid.first <= 501 and mid.last >= 501
+assert(mid.first <= 11 and mid.last >= 11
     and mid.active <= 7 and mid.created <= 7
     and mid.dataBinds == dataBinds and mid.scrollBinds == 1,
     "scroll movement rebuilt projection or allocated unbounded cards")
 local created = mid.created
 C.ScrollTo(math.huge)
 local last = C.VirtualStats()
-assert(last.last == 1000 and last.created == created,
+assert(last.last == 20 and last.created == created,
     "final Community Builds row was not reachable with fixed card pool")
 
-C.Select("virtual-0500")
+C.Select("virtual-0010")
 local offscreen = C.VirtualStats()
-assert(offscreen.selectedId == "virtual-0500" and not offscreen.selectedVisible
-    and C.GetSelectedBuildForPanel().id == "virtual-0500",
+assert(offscreen.selectedId == "virtual-0010" and not offscreen.selectedVisible
+    and C.GetSelectedBuildForPanel().id == "virtual-0010",
     "offscreen selection lost exact detail identity")
-C.ScrollTo((500-1)*92)
+C.ScrollTo((10-1)*92)
 assert(C.VirtualStats().selectedVisible,
     "returning selected card onscreen did not restore its highlight identity")
 

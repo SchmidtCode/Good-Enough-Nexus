@@ -71,6 +71,7 @@ local IsOwnBuild
 local lastSavedLoadoutImport = 0
 local renderBuildWindow, virtualBinding = nil, false
 local refreshDirty = false
+local EMERGENCY_BUILD_LIMIT = 20
 local virtualStats = {
     created=0, peakActive=0, active=0, results=0,
     dataBinds=0, scrollBinds=0, resizeBinds=0,
@@ -269,7 +270,11 @@ local function SortedBuilds()
     local fs = FilterSettings()
     local projections = Nexus and Nexus.ViewProjections
     if projections and type(projections.Builds) == "function" then
-        local rows, summary = projections.Builds(fs)
+        local safeFilters = {}
+        for key, value in pairs(fs) do safeFilters[key] = value end
+        safeFilters.resultLimit = EMERGENCY_BUILD_LIMIT
+        safeFilters.skipDps = true
+        local rows, summary = projections.Builds(safeFilters)
         if type(rows) == "table" then return rows, summary end
     end
     local search = (fs.search or ""):lower():gsub("^%s+",""):gsub("%s+$","")
@@ -293,13 +298,18 @@ local function SortedBuilds()
             (b.author or ""):lower():find(search, 1, true) or
             (b.description or ""):lower():find(search, 1, true)
         if classMatch and scopeMatch and searchMatch then
-            b._nexusDps = BuildDpsSummary(b)
-            b._nexusBestDps = b._nexusDps.best
+            -- Keep the emergency guarantee even if the shared projection is
+            -- temporarily unavailable: do not calculate DPS or averages from
+            -- every catalog row on the main thread.
+            b._nexusDps = {dummy=0,lk=0,best=0,average=0,count=0}
+            b._nexusBestDps = 0
+            b._nexusDpsDeferred = true
             out[#out+1] = b
         end
     end
     local mode = fs.sortMode or "dps"
     if mode == "class" then mode = "dps"; fs.sortMode = "dps" end
+    if mode == "dps" then mode = "recent" end
 
     -- A partial mesh record is not useful until its exact Echo payload has
     -- arrived. Keep every incomplete build below all usable builds regardless
@@ -318,10 +328,6 @@ local function SortedBuilds()
             local at = a.lastModified or a.postedAt or 0
             local bt = b.lastModified or b.postedAt or 0
             if at ~= bt then return at > bt end
-        elseif mode == "dps" then
-            local da = (a._nexusDps and (a._nexusDps.count == 2 and a._nexusDps.average or a._nexusDps.best)) or 0
-            local db = (b._nexusDps and (b._nexusDps.count == 2 and b._nexusDps.average or b._nexusDps.best)) or 0
-            if da ~= db then return da > db end
         end
 
         local an, bn = (a.title or ""):lower(), (b.title or ""):lower()
@@ -330,7 +336,12 @@ local function SortedBuilds()
         local bid = type(b.id) .. ":" .. tostring(b.id or "")
         return aid < bid
     end)
-    return out, nil
+    local matched = #out
+    for index = #out, EMERGENCY_BUILD_LIMIT + 1, -1 do out[index] = nil end
+    return out, {
+        total=matched, matched=matched, ready=matched,
+        filtered=#out, limited=matched > #out, limit=EMERGENCY_BUILD_LIMIT,
+    }
 end
 
 local function DpsBoardRows(category)
@@ -1999,8 +2010,14 @@ local function EnsureFrame()
             local projections = Nexus and Nexus.ViewProjections
             local current = nil
             if projections and type(projections.BuildsCurrent) == "function" then
+                local safeFilters = {}
+                for key, value in pairs(FilterSettings()) do
+                    safeFilters[key] = value
+                end
+                safeFilters.resultLimit = EMERGENCY_BUILD_LIMIT
+                safeFilters.skipDps = true
                 local ok, result = pcall(projections.BuildsCurrent,
-                    FilterSettings())
+                    safeFilters)
                 if ok then current = result end
             end
             local receiving = Nexus.Sync and Nexus.Sync.IsReceiving
@@ -2285,7 +2302,7 @@ local function EnsureFrame()
     end
     classDropBtn:SetScript("OnClick",function(self) OpenDropdown(dropPanel,self) end)
 
-    local sorts={{key="dps",label="Highest DPS"},{key="recent",label="Newest"},{key="title",label="Name"}}
+    local sorts={{key="recent",label="Newest"},{key="title",label="Name"}}
     sortToggle = CreateFrame("Button",nil,frame)
     sortToggle:SetSize(134,22)
     sortToggle:SetPoint("LEFT",classDropBtn,"RIGHT",8,0)
@@ -2303,7 +2320,7 @@ local function EnsureFrame()
     sortToggle:SetScript("OnEnter",function(self)
         GameTooltip:SetOwner(self,"ANCHOR_TOP")
         GameTooltip:AddLine("Sort builds",1,1,1)
-        GameTooltip:AddLine("Incomplete sync records always remain at the bottom.",0.8,0.8,0.8,true)
+        GameTooltip:AddLine("DPS and average-DPS sorting are temporarily disabled to prevent freezing.",0.8,0.8,0.8,true)
         GameTooltip:Show()
     end)
     sortToggle:SetScript("OnLeave",function() GameTooltip:Hide() end)
@@ -2455,6 +2472,23 @@ end
 
 function M.Refresh()
     if not frame or not frame:IsShown() then return end
+    local sync = Nexus and Nexus.Sync
+    local receiving = sync and type(sync.IsReceiving) == "function"
+        and sync.IsReceiving() or false
+    if receiving then
+        M.MarkDataDirty()
+        if syncStatusText then
+            syncStatusText:SetText(string.format(
+                "|cff4dff80Syncing safely... %ds|r  (%d new so far)",
+                math.ceil(sync.ReceiveTimeLeft()), sync.LastSyncNewCount()))
+        end
+        if syncBtn then syncBtn:SetText("Listening...") end
+        if resultText then
+            resultText:SetText(
+                "|cffffd200Build list paused until Sync finishes to prevent freezing.|r")
+        end
+        return true
+    end
     ImportCurrentSavedLoadouts(false)
 
     -- Sync status
@@ -2500,7 +2534,11 @@ function M.Refresh()
     if sortToggle then
         if fs.sortMode == "class" or not fs.sortMode then fs.sortMode = "dps" end
         local labels={dps="Highest DPS",recent="Newest",title="Name"}
-        sortToggle:SetText("Sort: "..(labels[fs.sortMode] or "Highest DPS"))
+        if fs.sortMode == "dps" then
+            sortToggle:SetText("Sort: Newest (safe mode)")
+        else
+            sortToggle:SetText("Sort: "..(labels[fs.sortMode] or "Newest"))
+        end
         sortToggle:Show()
     end
     if frame._RefreshDropdown then
@@ -2540,6 +2578,11 @@ function M.Refresh()
             else
                 resultText:SetText(string.format("|cffd8c7a0Showing %d|r community builds", ready))
             end
+            if projectionSummary and projectionSummary.limited then
+                resultText:SetText(string.format(
+                    "|cffd8c7a0%d available|r  |cffffd200showing %d newest (safe mode)|r",
+                    ready, tonumber(projectionSummary.filtered) or #builds))
+            end
         end
     end
     renderBuildWindow = function(reason)
@@ -2564,6 +2607,7 @@ function M.Refresh()
         local b = LoadBuild(projected.id) or projected
         b._nexusDps = projected._nexusDps
         b._nexusBestDps = projected._nexusBestDps
+        b._nexusDpsDeferred = projected._nexusDpsDeferred
         local bClass = (b.class or ""):upper()
 
         -- Class header when sorted by class and not filtered
@@ -2639,8 +2683,12 @@ function M.Refresh()
         if #echoes > 0 then
             do
                 local total = EchoTotal(echoes)
-                local dps = b._nexusDps or BuildDpsSummary(b)
-                if dps.count == 2 then
+                local dps = b._nexusDps
+                    or {dummy=0,lk=0,best=0,average=0,count=0}
+                if b._nexusDpsDeferred then
+                    card.echoCount:SetText("|cff888888DPS in Leaderboard|r")
+                    card.dpsBreakdown:SetText("Temporary safe mode")
+                elseif dps.count == 2 then
                     card.echoCount:SetText(string.format("|cff4dff80%s avg|r", DpsText(dps.average)))
                     card.dpsBreakdown:SetText(string.format("Dummy %s  |cff777777•|r  LK %s", DpsText(dps.dummy), DpsText(dps.lk)))
                 elseif dps.dummy > 0 then
@@ -3128,7 +3176,10 @@ function M.GetViewMode() return "builds" end
 
 function M.Show()
     EnsureFrame()
-    ImportCurrentSavedLoadouts(true)
+    local receiving = Nexus.Sync and Nexus.Sync.IsReceiving
+        and Nexus.Sync.IsReceiving() or false
+    if receiving then M.MarkDataDirty()
+    else ImportCurrentSavedLoadouts(true) end
     if Nexus.Panel and Nexus.Panel.AttachMenuFrame then Nexus.Panel.AttachMenuFrame(frame) end
     if Nexus.Theme and Nexus.Theme.StyleWindow then Nexus.Theme.StyleWindow(frame, 0.96) end
     if Nexus.Panel and Nexus.Panel.CloseOtherWindows then Nexus.Panel.CloseOtherWindows("NexusCommunityBuildsFrame") end

@@ -16,6 +16,6 @@ local verified=D.GetBuildVerification(id)
 assert(verified and verified.duration==30,"verified build stamp missing")
 Nexus.CommunityBuilds.Init(Nexus.GameAdapter,Nexus.Model)
 Nexus.CommunityBuilds.Show()
-assert(_G.NexusCommunityBuildsFrame._sortToggle:GetText()=="Sort: Highest DPS",
-    "1.19.3 evidence-first default sort changed")
+assert(_G.NexusCommunityBuildsFrame._sortToggle:GetText()=="Sort: Newest (safe mode)",
+    "emergency build browser did not disable average-DPS sorting")
 print("release UI polish and Details verification -- OK")
