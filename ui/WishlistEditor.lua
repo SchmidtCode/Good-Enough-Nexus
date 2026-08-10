@@ -1459,6 +1459,30 @@ local function LoadEditorForLoadout(slot)
     M.Refresh()
 end
 
+-- A character with no active numbered Saved Build uses the account-local
+-- first-run target until their first real loadout exists. Candidate buttons
+-- previously sent activeSlot=0 through SetLoadoutWishlist, which can only
+-- accept numbered slots and therefore reported "invalid loadout".
+function M.AssignWishlistCandidate(candidate)
+    local wishlistSlot = type(candidate) == "table" and tonumber(candidate.slot)
+    if not wishlistSlot then return false, "invalid wishlist" end
+    local slots = Adapter and Adapter.Slots and Adapter.Slots()
+    local active = slots and tonumber(slots.activeSlot) or 0
+    local maxSlots = slots and (tonumber(slots.maxSlots) or 5) or 5
+    if active >= 1 and active <= maxSlots then
+        if not (Adapter and Adapter.SetLoadoutWishlist) then
+            return false, "loadout association unavailable"
+        end
+        local ok, err = Adapter.SetLoadoutWishlist(active, wishlistSlot)
+        return ok, err, active, false
+    end
+    if not (Adapter and Adapter.SetFirstRunWishlist) then
+        return false, "first-run association unavailable"
+    end
+    local ok, err = Adapter.SetFirstRunWishlist(wishlistSlot)
+    return ok, err, nil, true
+end
+
 local function ShowLoadoutSwitchMenu(anchor)
     if loadoutSwitchMenu and frame and loadoutSwitchMenu:GetParent() ~= frame then loadoutSwitchMenu:SetParent(frame) end
     -- Saved Builds are the server's fixed slots 1-5. Build this selector
@@ -2378,13 +2402,16 @@ function M.Refresh()
                     b:SetText(string.format("%s (%d)",
                         (c.name ~= "" and c.name) or ("Slot " .. tostring(c.slot)), c.count))
                     b:SetScript("OnClick", function()
-                        local slots = Adapter.Slots and Adapter.Slots()
-                        local active = slots and tonumber(slots.activeSlot)
-                        local ok, err = active and Adapter.SetLoadoutWishlist
-                            and Adapter.SetLoadoutWishlist(active, c.slot)
+                        local ok, err, active, firstRun =
+                            M.AssignWishlistCandidate(c)
                         if ok then
-                            print("|cff4dff80Nexus:|r associated '" .. tostring(c.name)
-                                .. "' with Loadout " .. tostring(active) .. ".")
+                            if firstRun then
+                                print("|cff4dff80Nexus:|r selected '" .. tostring(c.name)
+                                    .. "' as the first-run wishlist.")
+                            else
+                                print("|cff4dff80Nexus:|r associated '" .. tostring(c.name)
+                                    .. "' with Loadout " .. tostring(active) .. ".")
+                            end
                             M.Refresh()
                         else
                             print("|cffff6060Nexus:|r " .. tostring(err or
@@ -2403,13 +2430,16 @@ function M.Refresh()
             candidateButtons[1]:SetText(candidates[1].name ~= "" and candidates[1].name
                 or ("Slot " .. tostring(candidates[1].slot)))
             candidateButtons[1]:SetScript("OnClick", function()
-                local slots = Adapter.Slots and Adapter.Slots()
-                local active = slots and tonumber(slots.activeSlot)
-                local ok, err = active and Adapter.SetLoadoutWishlist
-                    and Adapter.SetLoadoutWishlist(active, candidates[1].slot)
+                local ok, err, active, firstRun =
+                    M.AssignWishlistCandidate(candidates[1])
                 if ok then
-                    print("|cff4dff80Nexus:|r associated '" .. tostring(candidates[1].name)
-                        .. "' with Loadout " .. tostring(active) .. ".")
+                    if firstRun then
+                        print("|cff4dff80Nexus:|r selected '" .. tostring(candidates[1].name)
+                            .. "' as the first-run wishlist.")
+                    else
+                        print("|cff4dff80Nexus:|r associated '" .. tostring(candidates[1].name)
+                            .. "' with Loadout " .. tostring(active) .. ".")
+                    end
                     M.Refresh()
                 else
                     print("|cffff6060Nexus:|r " .. tostring(err or
