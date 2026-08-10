@@ -8,7 +8,6 @@
 
 data\Release.lua
 data\DefaultProfile.lua
-data\BundledBuilds.lua
 logic\Version.lua
 core\Performance.lua
 core\EchoCatalogSource.lua
@@ -17,10 +16,6 @@ logic\Strategy.lua
 logic\Ratchet.lua
 logic\Policy.lua
 core\Revisions.lua
-core\LoadoutEvidence.lua
-core\DataCompaction.lua
-core\BuildCatalog.lua
-core\BuildHashCache.lua
 core\Store.lua
 core\Errors.lua
 core\Scheduler.lua
@@ -29,9 +24,7 @@ core\DiagnosticLogs.lua
 core\ViewRefresh.lua
 core\Updates.lua
 core\Codec.lua
-core\Sync.lua
-core\DpsCapture.lua
-core\ViewProjections.lua
+core\EmergencyCommunity.lua
 core\GameAdapter.lua
 ui\VirtualList.lua
 ui\Theme.lua
@@ -43,8 +36,5 @@ ui\LogViewer.lua
 ui\WishlistEditor.lua
 ui\WishlistOverlay.lua
 ui\QuickStart.lua
-ui\CommunityBuilds.lua
-ui\Leaderboard.lua
-ui\Nameplate.lua
 ui\Changelog.lua
 core\Main.lua

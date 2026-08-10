@@ -749,6 +749,13 @@ local function EnsureFrame()
     end)
     leaderboardBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+    if Nexus.Emergency and Nexus.Emergency.communityDisabled then
+        buildsBtn:SetText("Builds (Off)")
+        buildsBtn:Disable()
+        leaderboardBtn:SetText("Ranks (Off)")
+        leaderboardBtn:Disable()
+    end
+
     -- Compact settings control. Navigation stays visible in the footer while
     -- infrequent tools live behind this single unobtrusive button.
     menuBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")

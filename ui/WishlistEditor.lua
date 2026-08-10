@@ -1666,6 +1666,12 @@ local function EnsureFrame()
         frame:Hide()
         if Nexus.Leaderboard then Nexus.Leaderboard.Show() end
     end)
+    if Nexus.Emergency and Nexus.Emergency.communityDisabled then
+        buildsNav:SetText("Builds (Off)")
+        buildsNav:Disable()
+        boardNav:SetText("Ranks (Off)")
+        boardNav:Disable()
+    end
     local wishNav = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     wishNav:SetSize(92, 22)
     wishNav:SetPoint("LEFT", boardNav, "RIGHT", 4, 0)

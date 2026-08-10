@@ -3386,6 +3386,10 @@ SlashCmdList["NEXUS"] = function(msg)
             Print("Nameplate module not loaded.")
         end
     elseif msg == "dps" then
+        if Nexus.Emergency and Nexus.Emergency.dpsDisabled then
+            Print(Nexus.Emergency.reason)
+            return
+        end
         -- Always-on: this just shows the current capture status
         local D = Nexus.DpsCapture
         if not D then Print("DPS capture module not loaded"); return end
