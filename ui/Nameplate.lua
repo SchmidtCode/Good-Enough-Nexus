@@ -39,20 +39,11 @@ local function OrdinalSuffix(n)
     else return tostring(n) .. "th" end
 end
 
-local function NormalizeName(name)
-    name = tostring(name or "")
-    return (name:match("^([^%-]+)") or name):lower()
-end
-
 local function IsCommunityAuthor(name)
     if not name or name == "" then return false end
     local catalog = Nexus and Nexus.BuildCatalog
-    local builds = catalog and catalog.All and catalog.All() or {}
-    local lname = NormalizeName(name)
-    for _, build in pairs(builds) do
-        if NormalizeName(build.author) == lname then return true end
-    end
-    return false
+    return catalog and type(catalog.IsAuthor) == "function"
+        and catalog.IsAuthor(name) == true or false
 end
 
 ------------------------------------------------------------------------

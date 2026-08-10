@@ -864,6 +864,19 @@ local function GlobalForBuild(buildId, key, category)
     return best
 end
 
+local function GlobalForIdentity(buildId, key, hash, category)
+    MigrateLegacyLeaderboard()
+    local best
+    local bucket = CharacterBestStore()[category] or {}
+    for _, row in pairs(bucket) do
+        if RowMatchesBuild(row, buildId, key, hash)
+            and BetterRow(row, best) then
+            best = row
+        end
+    end
+    return best
+end
+
 local function GlobalForKey(key, category)
     return GlobalForBuild(nil, key, category)
 end
@@ -904,6 +917,16 @@ end
 function DPS.GetLeaderboard(buildId, category)
     local key = BuildKey(buildId)
     return key and SortedEntries(GlobalForBuild(buildId, key, category)) or {}
+end
+
+-- Projection-facing lookup. BuildCatalog summaries already carry the stable
+-- identity fields, so browser refreshes need not hydrate/copy every Echo list
+-- merely to find a DPS row.
+function DPS.GetLeaderboardForIdentity(buildId, fingerprint, fingerprintHash, category)
+    local key = type(fingerprint) == "string" and fingerprint or nil
+    local hash = fingerprintHash ~= nil and tostring(fingerprintHash) or nil
+    if not key and not hash then return {} end
+    return SortedEntries(GlobalForIdentity(buildId, key, hash, category))
 end
 
 -- A build is Details-verified only when a valid public record exists for its

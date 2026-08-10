@@ -36,8 +36,13 @@ end
 
 local function BuildEntry(id, build)
     if type(build) ~= "table" then return nil end
-    local complete = type(build.echoes) == "table" and #build.echoes > 0
-        and "F" or "S"
+    local complete
+    if build.loadoutAvailable ~= nil then
+        complete = build.loadoutAvailable == true
+    else
+        complete = type(build.echoes) == "table" and #build.echoes > 0
+    end
+    complete = complete and "F" or "S"
     local fingerprint = tostring(build.fingerprintHash or build.fingerprint or "0")
     return tostring(id) .. ":" .. tostring(build.lastModified or build.postedAt or 0)
         .. ":" .. complete .. ":" .. fingerprint
@@ -99,8 +104,10 @@ local function Warm()
     local catalog = Catalog()
     if not (catalog and catalog.DeltaSnapshot and catalog.All
         and catalog.TombstoneSnapshot) then return false end
-    local okDelta, delta = pcall(catalog.DeltaSnapshot)
-    local okLegacy, legacy = pcall(catalog.All)
+    local deltaReader = catalog.DeltaSummaries or catalog.DeltaSnapshot
+    local legacyReader = catalog.Summaries or catalog.All
+    local okDelta, delta = pcall(deltaReader)
+    local okLegacy, legacy = pcall(legacyReader)
     local okTombs, tombstones = pcall(catalog.TombstoneSnapshot)
     if not okDelta or not okLegacy or not okTombs then return false end
 

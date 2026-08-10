@@ -10,6 +10,13 @@ local db
 local bundled
 local baseline = {}
 local initialized = false
+local lastInitSummary
+local libraryGeneration = 0
+local authorIndex, authorIndexGeneration = {}, -1
+local debugStats = {
+    initCalls=0, rebinds=0, fastPathHits=0, revisionSnapshots=0,
+    authorIndexRebuilds=0, summarySnapshots=0,
+}
 
 local function DeepCopy(value, seen)
     if type(value) ~= "table" then return value end
@@ -142,6 +149,7 @@ local function Count(source)
 end
 
 local function BumpBuild(reason, id)
+    libraryGeneration = libraryGeneration + 1
     local revisions = Nexus and Nexus.Revisions
     if revisions and type(revisions.Advance) == "function" then
         pcall(revisions.Advance, revisions.BUILD_LIBRARY_CHANGED, {
@@ -221,6 +229,7 @@ local function RevisionRecord(id)
 end
 
 local function RevisionSnapshot()
+    debugStats.revisionSnapshots = debugStats.revisionSnapshots + 1
     local rows, seen = {}, {}
     for id in pairs(baseline or {}) do
         seen[id] = true
@@ -245,6 +254,84 @@ local function RevisionSnapshot()
     }
 end
 
+local function SummaryValue(value)
+    if type(value) == "table" then return DeepCopy(value) end
+    return value
+end
+
+local SUMMARY_FIELDS = {
+    "id", "title", "description", "author", "ownerKey", "class",
+    "postedAt", "lastModified", "importedSavedBuild", "isMine",
+    "destinationWishlistName", "destinationProgress", "destinationTotal",
+    "recordBuildId", "publishedBuildId", "autoDps", "fingerprint",
+    "fingerprintHash", "needsFullBuild", "ownerVerified",
+}
+
+-- Browser/hash consumers need identity and display metadata, not tens of
+-- thousands of nested Echo rows. Keep this projection defensive while
+-- deliberately excluding `echoes`; visible cards hydrate exact rows via Get.
+local function SummaryRecord(record)
+    if type(record) ~= "table" then return nil end
+    local out = {}
+    for _, key in ipairs(SUMMARY_FIELDS) do
+        if record[key] ~= nil then out[key] = SummaryValue(record[key]) end
+    end
+    local count = tonumber(record.echoCount)
+    local hasEchoes = type(record.echoes) == "table" and #record.echoes > 0
+    if count == nil and hasEchoes then
+        count = 0
+        for _, echo in ipairs(record.echoes) do
+            count = count + (tonumber(echo.stacks or echo.count) or 1)
+        end
+    end
+    out.echoCount = count or 0
+    if record.loadoutAvailable ~= nil then
+        out.loadoutAvailable = record.loadoutAvailable == true
+    else
+        out.loadoutAvailable = hasEchoes
+            or (type(record.evidenceKey) == "string" and record.evidenceKey ~= "")
+    end
+    return out
+end
+
+local function SummarySnapshot(deltaOnly)
+    EnsureBound()
+    debugStats.summarySnapshots = debugStats.summarySnapshots + 1
+    local out, seen = {}, {}
+    if not deltaOnly then
+        for id in pairs(baseline) do
+            seen[id] = true
+            local record = SelectedRaw(id)
+            if record then out[id] = SummaryRecord(record) end
+        end
+    end
+    local overlay = db and type(db.communityBuilds) == "table"
+        and db.communityBuilds or {}
+    for id in pairs(overlay) do
+        if deltaOnly or not seen[id] then
+            local record, source = SelectedRaw(id)
+            if record and (not deltaOnly or source == "overlay") then
+                out[id] = SummaryRecord(record)
+            end
+        end
+    end
+    return out
+end
+
+local function MergedCountRaw()
+    local count, seen = 0, {}
+    for id in pairs(baseline) do
+        seen[id] = true
+        if SelectedRaw(id) then count = count + 1 end
+    end
+    local overlay = db and type(db.communityBuilds) == "table"
+        and db.communityBuilds or {}
+    for id in pairs(overlay) do
+        if not seen[id] and SelectedRaw(id) then count = count + 1 end
+    end
+    return count
+end
+
 local function BumpIfChanged(before, after, reason, id)
     if not DeepEqual(before, after) then BumpBuild(reason, id) end
 end
@@ -264,13 +351,25 @@ local function PruneOverlay(overlay)
 end
 
 function Catalog.Init(database, bundle)
-    local before = initialized and RevisionSnapshot()
-        or {catalogVersion=nil,rows={}}
-    db = type(database) == "table" and database or {}
-    bundled = type(bundle) == "table" and bundle
+    debugStats.initCalls = debugStats.initCalls + 1
+    local nextDb = type(database) == "table" and database or {}
+    local nextBundled = type(bundle) == "table" and bundle
         or type(Nexus.BundledBuilds) == "table" and Nexus.BundledBuilds
         or {}
-    baseline = type(bundled.builds) == "table" and bundled.builds or {}
+    local nextBaseline = type(nextBundled.builds) == "table"
+        and nextBundled.builds or {}
+    if initialized and db == nextDb and bundled == nextBundled
+        and baseline == nextBaseline then
+        debugStats.fastPathHits = debugStats.fastPathHits + 1
+        local summary = DeepCopy(lastInitSummary)
+        summary.migrated = false
+        summary.redundantRemoved = 0
+        return summary
+    end
+
+    debugStats.rebinds = debugStats.rebinds + 1
+    local before = initialized and RevisionSnapshot() or nil
+    db, bundled, baseline = nextDb, nextBundled, nextBaseline
 
     db.communityBuilds = type(db.communityBuilds) == "table"
         and db.communityBuilds or {}
@@ -293,20 +392,27 @@ function Catalog.Init(database, bundle)
         meta.sourceVersion = tostring(bundled.sourceVersion or "unknown")
     end
 
-    local merged = Catalog.Count()
-    local after = RevisionSnapshot()
+    local bundledCount = Count(baseline)
+    local overlayCount = Count(db.communityBuilds)
+    local tombstoneCount = Count(db.syncTombstones)
+    local merged = MergedCountRaw()
     initialized = true
-    BumpIfChanged(before, after, "catalog initialized")
-    return {
+    if before then
+        BumpIfChanged(before, RevisionSnapshot(), "catalog initialized")
+    elseif bundledCount > 0 or overlayCount > 0 or tombstoneCount > 0 then
+        BumpBuild("catalog initialized")
+    end
+    lastInitSummary = {
         migrated = needsMigration,
-        bundled = Count(baseline),
-        overlay = Count(db.communityBuilds),
-        tombstones = Count(db.syncTombstones),
+        bundled = bundledCount,
+        overlay = overlayCount,
+        tombstones = tombstoneCount,
         merged = merged,
         redundantRemoved = redundant,
         schemaVersion = STORAGE_SCHEMA_VERSION,
         catalogVersion = catalogVersion,
     }
+    return DeepCopy(lastInitSummary)
 end
 
 function Catalog.Get(id)
@@ -331,6 +437,53 @@ function Catalog.All()
     return out
 end
 
+function Catalog.Summaries()
+    return SummarySnapshot(false)
+end
+
+function Catalog.DeltaSummaries()
+    return SummarySnapshot(true)
+end
+
+local function AuthorKey(value)
+    if type(value) ~= "string" or value == "" then return nil end
+    local name = value:match("^([^%-]+)") or value
+    name = name:lower()
+    return name ~= "" and name or nil
+end
+
+local function RebuildAuthorIndex()
+    local nextIndex, seen = {}, {}
+    for id in pairs(baseline) do
+        seen[id] = true
+        local record = SelectedRaw(id)
+        local key = record and AuthorKey(record.author)
+        if key then nextIndex[key] = true end
+    end
+    for id in pairs(db and db.communityBuilds or {}) do
+        if not seen[id] then
+            local record = SelectedRaw(id)
+            local key = record and AuthorKey(record.author)
+            if key then nextIndex[key] = true end
+        end
+    end
+    authorIndex = nextIndex
+    authorIndexGeneration = libraryGeneration
+    debugStats.authorIndexRebuilds = debugStats.authorIndexRebuilds + 1
+end
+
+function Catalog.IsAuthor(name)
+    EnsureBound()
+    local key = AuthorKey(name)
+    if not key then return false end
+    if authorIndexGeneration ~= libraryGeneration then RebuildAuthorIndex() end
+    return authorIndex[key] == true
+end
+
+function Catalog.DebugStats()
+    return DeepCopy(debugStats)
+end
+
 function Catalog.ForEach(visitor)
     if type(visitor) ~= "function" then return 0 end
     local all = Catalog.All()
@@ -344,16 +497,7 @@ end
 
 function Catalog.Count()
     EnsureBound()
-    local count = 0
-    local seen = {}
-    for id in pairs(baseline) do
-        seen[id] = true
-        if Selected(id) then count = count + 1 end
-    end
-    for id in pairs(Overlay()) do
-        if not seen[id] and Selected(id) then count = count + 1 end
-    end
-    return count
+    return MergedCountRaw()
 end
 
 function Catalog.Put(record)

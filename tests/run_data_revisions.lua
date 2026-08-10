@@ -124,6 +124,10 @@ local record = {
 assert(DPS.ReceiveRecord(record, "Peer")
     and R.Get(R.DPS_CHANGED) == 1,
     "winning DPS record did not advance once")
+local identityRows = DPS.GetLeaderboardForIdentity(
+    "unrelated-id", fingerprint, DPS.GetEchoHash(echoes), "dummy")
+assert(identityRows[1] and identityRows[1].dps == 25000,
+    "lightweight DPS identity lookup changed exact fingerprint matching")
 assert(not DPS.ReceiveRecord(record, "Peer")
     and R.Get(R.DPS_CHANGED) == 1,
     "duplicate DPS record advanced the revision")

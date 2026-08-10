@@ -27,10 +27,10 @@ for _, invalid in ipairs({"", "v", "01.2.3", "1..2", "1.2.3-", "1.2.3+",
     assert(Version.Parse(invalid) == nil, "malformed version accepted: " .. tostring(invalid))
 end
 
-Nexus.Release = {
-    version="1.19.4-dev", baseVersion="1.19.4", published=false,
-    releasesUrl="https://github.com/Viscerals/Better-Nexus/releases",
-}
+assert(Nexus.Release.version == "1.20.0-beta.1"
+    and Nexus.Release.baseVersion == "1.19.5"
+    and Nexus.Release.published == false,
+    "beta release identity does not retain the actual stable base")
 UnitName = function() return "Local" end
 GetNormalizedRealmName = function() return "Ebonhold" end
 NexusDB = {
@@ -55,7 +55,7 @@ end
 InitUpdates()
 assert(NexusDB.updateNotice == nil and #notices == 0,
     "persisted prerelease poison survived sanitation or notified")
-assert(not Updates.Observe("1.19.3", "Older") and not Updates.Observe("1.19.4", "Equal"),
+assert(not Updates.Observe("1.19.4", "Older") and not Updates.Observe("1.19.5", "Equal"),
     "older/equal version created an update")
 assert(not Updates.Observe("9.0.0-dev", "Dev")
     and not Updates.Observe("9.0.0-rc.1", "Prerelease")

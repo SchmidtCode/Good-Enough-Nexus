@@ -151,8 +151,10 @@ local function IsOwnBuild(build, filters)
 end
 
 local function IsLoaded(build)
-    return type(build) == "table" and type(build.echoes) == "table"
-        and #build.echoes > 0
+    if type(build) ~= "table" then return false end
+    if build.loadoutAvailable ~= nil then return build.loadoutAvailable == true end
+    if tonumber(build.echoCount) then return tonumber(build.echoCount) > 0 end
+    return type(build.echoes) == "table" and #build.echoes > 0
 end
 
 local function BuildDpsSummary(build)
@@ -163,7 +165,13 @@ local function BuildDpsSummary(build)
     local recordId = build.recordBuildId or build.publishedBuildId or build.id
     for _, category in ipairs({"dummy", "lk"}) do
         local rows
-        if recordId and type(dps.GetLeaderboard) == "function" then
+        if recordId and type(dps.GetLeaderboardForIdentity) == "function" then
+            stats.dpsReads = stats.dpsReads + 1
+            local ok, result = pcall(dps.GetLeaderboardForIdentity,
+                recordId, build.fingerprint, build.fingerprintHash, category)
+            if not ok then error("DPS identity read failed: " .. tostring(result)) end
+            rows = result
+        elseif recordId and type(dps.GetLeaderboard) == "function" then
             stats.dpsReads = stats.dpsReads + 1
             local ok, result = pcall(dps.GetLeaderboard, recordId, category)
             if not ok then error("DPS leaderboard read failed: " .. tostring(result)) end
@@ -196,12 +204,13 @@ end
 
 local function BuildProjection(filters)
     local catalog = Nexus and Nexus.BuildCatalog
-    if not (catalog and type(catalog.All) == "function") then
-        error("BuildCatalog.All unavailable")
+    local reader = catalog and (catalog.Summaries or catalog.All)
+    if type(reader) ~= "function" then
+        error("BuildCatalog projection reader unavailable")
     end
     counters.builds.catalogWalks = counters.builds.catalogWalks + 1
-    local all = catalog.All()
-    if type(all) ~= "table" then error("BuildCatalog.All returned invalid data") end
+    local all = reader()
+    if type(all) ~= "table" then error("BuildCatalog projection reader returned invalid data") end
     local out = {}
     local summary = {
         total=0, mine=0, savedLoadouts=0, uploaded=0,

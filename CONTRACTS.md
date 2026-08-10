@@ -247,7 +247,8 @@ authority.
 ## core/BuildHashCache.lua — revision-cached Sync compatibility hashes
 
 `Nexus.BuildHashCache.Delta()`, `Legacy()`, and `Stats()` retain the established
-eight-bucket hash strings. First read builds both maps from BuildCatalog; unchanged
+eight-bucket hash strings. First read builds both maps from BuildCatalog's
+lightweight identity summaries without materializing Echo arrays; unchanged
 reads reuse them without another catalog walk or sort. A record-scoped build
 revision refreshes only that ID and dirties its one deterministic delta/legacy
 bucket. Unknown, catalog-wide, missed, or failed invalidation state discards the
@@ -257,7 +258,9 @@ initialized state. The module owns no transport queue or gameplay authority.
 ## core/ViewProjections.lua — defensive revision/filter view caches
 
 `Nexus.ViewProjections.Builds(filters)` and `Leaderboard(category, filters)`
-read only public BuildCatalog/DpsCapture materialized shapes. One last-good
+read only public BuildCatalog/DpsCapture defensive shapes. Build projections use
+display/identity summaries without Echo arrays; Community Builds hydrates exact
+records only for the bounded visible-card window. One last-good
 projection per view is keyed by represented build/DPS revisions plus normalized
 scope, class, search, sort, category, and current-owner identity. Unchanged reads
 perform no catalog/DPS walk or ordering pass, and every caller receives a
@@ -394,10 +397,13 @@ erasing the candidate. No module performs an update network request or install.
 
 ## core/BuildCatalog.lua — `Nexus.BuildCatalog`
 
-`BuildCatalog.Init(db, bundled)`, `Get(id)`, `All()`, `ForEach(visitor)`, `Count()`,
+`BuildCatalog.Init(db, bundled)`, `Get(id)`, `All()`, `Summaries()`,
+`DeltaSummaries()`, `IsAuthor(name)`, `ForEach(visitor)`, `Count()`,
 `Put(build)`, `RemoveOverlay(id)`, `SetTombstone(id, tombstone)`,
 `ClearTombstone(id)`, `OverlaySnapshot()`, `DeltaSnapshot()`, and
-`TombstoneSnapshot()`. Returned records/tables are deep copies. Read precedence is
+`TombstoneSnapshot()`. Returned records/tables are defensive copies; summary
+surfaces deliberately omit Echo arrays. Rebinding the same database and immutable
+bundle is an idempotent allocation-bounded fast path. Read precedence is
 authorized tombstone, then a personal or at-least-as-new overlay row, then the
 bundled row. `DeltaSnapshot()` contains only overlay rows that win that selection;
 stale hidden rows and bundled-only rows are excluded. During the staged consumer

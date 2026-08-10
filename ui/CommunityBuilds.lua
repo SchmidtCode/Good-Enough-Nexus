@@ -2528,7 +2528,10 @@ function M.Refresh()
     local showHeaders = false
 
     for index = virtual.first, virtual.last do
-        local b = builds[index]
+        local projected = builds[index]
+        local b = LoadBuild(projected.id) or projected
+        b._nexusDps = projected._nexusDps
+        b._nexusBestDps = projected._nexusBestDps
         local bClass = (b.class or ""):upper()
 
         -- Class header when sorted by class and not filtered

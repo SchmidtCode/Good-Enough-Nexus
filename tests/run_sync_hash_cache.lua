@@ -172,13 +172,13 @@ assert(allDpsAfter.fullRebuilds == allDpsBefore.fullRebuilds + 1
 -- A failed warm-up never publishes a half-initialized cache. Restoring the
 -- catalog lets the reloaded module build cleanly and reproduce both hashes.
 local expectedCurrent, expectedLegacy = Sync.GetCompatibilityHashes(), Sync.GetLegacyBuildHash()
-local realDelta = Catalog.DeltaSnapshot
+local realDelta = Catalog.DeltaSummaries
 dofile("core/BuildHashCache.lua")
-Catalog.DeltaSnapshot = function() error("forced cache warm failure") end
+Catalog.DeltaSummaries = function() error("forced cache warm failure") end
 assert(Nexus.BuildHashCache.Delta() == nil
     and Nexus.BuildHashCache.Stats().initialized == false,
     "failed cache warm published initialized state")
-Catalog.DeltaSnapshot = realDelta
+Catalog.DeltaSummaries = realDelta
 assert(Sync.GetCompatibilityHashes() == expectedCurrent
     and Sync.GetLegacyBuildHash() == expectedLegacy
     and Nexus.BuildHashCache.Stats().fullRebuilds == 1,
