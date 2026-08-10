@@ -1,5 +1,5 @@
--- Same-release peers exchange overlay deltas; legacy/different-release peers
--- retain full-catalog and exact-loadout recovery without persisting baseline.
+-- Same-release, legacy, and different-release peers exchange bounded overlay
+-- deltas. Immutable bundled rows remain available by exact loadout request.
 local H = dofile("tests/harness.lua")
 dofile("core/Codec.lua")
 dofile("core/Sync.lua")
@@ -86,12 +86,13 @@ clock = clock + 10
 H.sentChatMessages = {}
 assert(Sync.HandleIncoming("WLLQ|ExactPeer|baseline-a", "ExactPeer"))
 Pump(80)
-local exactIds = BuildIds(H.sentChatMessages)
+local exactMessages = H.sentChatMessages
+local exactIds = BuildIds(exactMessages)
 assert(exactIds["baseline-a"] and not exactIds["baseline-b"],
     "exact loadout recovery did not resolve the requested bundled row")
 
--- An eight-bucket requester is an older peer. It must still receive the full
--- merged library so installs without this bundled catalog can recover it.
+-- An eight-bucket requester is an older peer. It receives the mutable overlay
+-- only; bundled loadouts remain explicit on-demand transfers.
 clock = clock + 10
 H.sentChatMessages = {}
 local emptyLegacy = "0,0,0,0,0,0,0,0"
@@ -100,12 +101,12 @@ assert(Sync.HandleIncoming("WLRQ|Legacy|" .. emptyLegacy
 Pump(180)
 local legacyMessages = H.sentChatMessages
 local legacyIds = BuildIds(legacyMessages)
-assert(legacyIds["baseline-a"] and legacyIds["baseline-b"]
-    and legacyIds["overlay-change"],
-    "legacy requester did not receive the complete merged catalog")
+assert(legacyIds["overlay-change"] and not legacyIds["baseline-a"]
+    and not legacyIds["baseline-b"],
+    "legacy requester did not receive only the bounded overlay delta")
 
--- A current-format peer with a different release token also needs the full
--- fallback because its delta buckets are not comparable to this baseline.
+-- A current-format peer with a different release token uses the same bounded
+-- compatibility delta instead of a complete bundled-baseline fallback.
 clock = clock + 10
 H.sentChatMessages = {}
 local differentRelease = emptyLegacy .. ",deadbeef"
@@ -113,18 +114,19 @@ assert(Sync.HandleIncoming("WLRQ|OtherRelease|" .. differentRelease
     .. "|0|different-release|1.19.4", "OtherRelease"))
 Pump(180)
 local differentIds = BuildIds(H.sentChatMessages)
-assert(differentIds["baseline-a"] and differentIds["baseline-b"],
-    "different-release peer did not receive full-catalog fallback")
+assert(differentIds["overlay-change"] and not differentIds["baseline-a"]
+    and not differentIds["baseline-b"],
+    "different-release peer did not receive only the compatibility delta")
 
--- Feed a legacy baseline payload back into a clean current install. It is a
--- valid duplicate, but the immutable row must not be copied into SavedVariables.
+-- Feed the exact requested baseline payload back into a clean current install.
+-- It is valid, but the immutable row must not be copied into SavedVariables.
 local baselinePackets = {}
-for _, message in ipairs(legacyMessages) do
+for _, message in ipairs(exactMessages) do
     if message.text:gsub("||", "|"):find("^WLRB|Alice|baseline%-a|") then
         baselinePackets[#baselinePackets + 1] = message.text
     end
 end
-assert(#baselinePackets > 0, "legacy fixture did not capture baseline payload")
+assert(#baselinePackets > 0, "exact-loadout fixture did not capture baseline payload")
 playerName = "Receiver"
 clock = clock + 100
 NexusDB = {communityBuilds={},syncTombstones={}}
@@ -164,4 +166,4 @@ end
 assert(sawDelete and next(BuildIds(H.sentChatMessages)) == nil,
     "same-release tombstone delta omitted the delete or resent baseline rows")
 
-print("release-aware overlay delta and legacy full-catalog recovery -- OK")
+print("release-aware bounded deltas and exact bundled recovery -- OK")

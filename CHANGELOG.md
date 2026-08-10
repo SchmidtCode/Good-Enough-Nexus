@@ -1,6 +1,7 @@
 # Nexus 1.20 Beta
 
 - Ships a versioned baseline of community builds and synchronizes smaller incremental changes instead of repeatedly exchanging the full catalog.
+- Makes Sync response preparation incremental and queue-aware so busy sessions avoid frame stalls and resume fairly as capacity becomes available.
 - Keeps personal builds, newer revisions, filters, DPS records, and deletions intact while migrating existing data additively.
 - Adds bounded, coalesced, and virtualized Builds, Leaderboard, HUD, and wishlist rendering for large collections.
 - Adds session diagnostics, structured error history, and aggregate performance counters for easier tester reports without storing raw samples.

@@ -1183,72 +1183,114 @@ function DPS.BroadcastBestForBuild(buildId)
     return sent
 end
 
-function DPS.BroadcastAllBuildBests(peerHash, onlyBucket, progress)
-    if peerHash and tostring(peerHash) == tostring(DPS.GetSyncHash()) then
-        return 0, true
-    end
+function DPS.BroadcastAllBuildBests(peerHash, onlyBucket, progress, maxItems)
+    local localHash = tostring(DPS.GetSyncHash())
+    if peerHash and tostring(peerHash) == localHash then return 0, true end
     progress = type(progress) == "table" and progress or {}
     MigrateLegacyLeaderboard()
     local peerBuckets = SplitBucketHash(peerHash)
-    local myBuckets = SplitBucketHash(DPS.GetSyncHash())
+    local myBuckets = SplitBucketHash(localHash)
     local legacyPeer = #peerBuckets ~= DPS_BUCKETS
-    local n, complete = 0, true
+    local stateKey = table.concat({tostring(peerHash or "0"),
+        tostring(onlyBucket or "*"), localHash}, "|")
+    local state = progress._responseState
+    if state and state.key ~= stateKey then
+        progress._responseState = nil
+        state = nil
+    end
+    if not state then
+        state = {key=stateKey, localHash=localHash, categoryIndex=1,
+            cursor=nil, scanComplete=false, candidates={}, sendCursor=1}
+        progress._responseState = state
+    elseif tostring(DPS.GetSyncHash()) ~= state.localHash then
+        progress._responseState = nil
+        return 0, false, true, "stale candidate snapshot"
+    end
+
+    local limit = tonumber(maxItems)
+    if not limit or limit < 1 then limit = math.huge end
+    local work, n, progressed = 0, 0, false
+    local categories = {"dummy", "lk"}
     local store = CharacterBestStore()
-    local candidates = {}
-    for _, category in ipairs({ "dummy", "lk" }) do
-        for playerKey, row in pairs(store[category] or {}) do
-            local bucket = DpsBucket(category, playerKey)
-            if (not onlyBucket or bucket == onlyBucket) and (legacyPeer or tostring(peerBuckets[bucket] or "") ~= tostring(myBuckets[bucket] or ""))
-                and row and (tonumber(row.dps) or 0) > 0 and Sync and Sync.BroadcastDpsRecord then
-                local loadoutHash = row.loadoutHash
-                    or EchoHashFromKey(row.fingerprint or "")
-                candidates[#candidates + 1] = {
-                    key=table.concat({ category, tostring(playerKey),
-                        tostring(math.floor(tonumber(row.dps) or 0)),
-                        tostring(loadoutHash or "0") }, "|"),
-                    category=category, row=row, loadoutHash=loadoutHash,
-                }
-            end
-        end
-    end
-    table.sort(candidates, function(a, b) return a.key < b.key end)
-    for _, item in ipairs(candidates) do
-        if not progress[item.key] then
-            local row, category = item.row, item.category
-            local record = {
-                protocolVersion=PROTOCOL_VERSION, fingerprint=row.fingerprint,
-                loadoutHash=item.loadoutHash,
-                category=category, dps=math.floor(tonumber(row.dps) or 0),
-                duration=tonumber(row.duration) or 0, ts=tonumber(row.ts) or 0,
-                player=row.player or "?", level=tonumber(row.level) or 0,
-                buildId=row.buildId, class=row.class, ownerKey=row.ownerKey,
-                realm=row.realm, echoes=StoredEchoes(row, false),
-                lockedEchoes=StoredEchoes(row, true),
-            }
-            local ok, result, why=pcall(Sync.BroadcastDpsRecord,record)
-            if ok and result~=false then
-                progress[item.key] = "admitted"
-                n=n+1
-                -- Also broadcast the build's echo list so peers can view and
-                -- copy it. DPS progress does not depend on this convenience
-                -- copy because the record already carries exact Echo evidence.
-                local build = row.buildId and CatalogGet(row.buildId)
-                if build and type(build.echoes)=="table"
-                    and #build.echoes>0 and Sync.BroadcastBuild then
-                    pcall(Sync.BroadcastBuild, build)
-                end
-            elseif not ok or why == "sync queue full" then
-                -- Stop at the first transient failure. The caller preserves
-                -- progress so the next attempt resumes here.
-                complete=false
-                break
+    while work < limit do
+        if not state.scanComplete then
+            local category = categories[state.categoryIndex]
+            if not category then
+                state.scanComplete = true
+                progressed = true
+                work = work + 1
             else
-                -- Invalid/non-owner records are not retryable queue work.
+                local playerKey, row = next(store[category] or {}, state.cursor)
+                work = work + 1
+                progressed = true
+                if playerKey == nil then
+                    state.categoryIndex = state.categoryIndex + 1
+                    state.cursor = nil
+                else
+                    state.cursor = playerKey
+                    local bucket = DpsBucket(category, playerKey)
+                    if (not onlyBucket or bucket == onlyBucket)
+                        and (legacyPeer or tostring(peerBuckets[bucket] or "")
+                            ~= tostring(myBuckets[bucket] or ""))
+                        and row and (tonumber(row.dps) or 0) > 0
+                        and Sync and Sync.BroadcastDpsRecord then
+                        local loadoutHash = row.loadoutHash
+                            or EchoHashFromKey(row.fingerprint or "")
+                        local key = table.concat({category, tostring(playerKey),
+                            tostring(math.floor(tonumber(row.dps) or 0)),
+                            tostring(loadoutHash or "0")}, "|")
+                        state.candidates[#state.candidates + 1] = {
+                            key=key,
+                            record={
+                                protocolVersion=PROTOCOL_VERSION,
+                                fingerprint=row.fingerprint,
+                                loadoutHash=loadoutHash,
+                                category=category,
+                                dps=math.floor(tonumber(row.dps) or 0),
+                                duration=tonumber(row.duration) or 0,
+                                ts=tonumber(row.ts) or 0,
+                                player=row.player or "?",
+                                level=tonumber(row.level) or 0,
+                                buildId=row.buildId, class=row.class,
+                                ownerKey=row.ownerKey, realm=row.realm,
+                                echoes=StoredEchoes(row, false),
+                                lockedEchoes=StoredEchoes(row, true),
+                            },
+                        }
+                    end
+                end
+            end
+        else
+            while state.sendCursor <= #state.candidates
+                and progress[state.candidates[state.sendCursor].key] do
+                state.sendCursor = state.sendCursor + 1
+            end
+            if state.sendCursor > #state.candidates then
+                return n, true, progressed
+            end
+            local item = state.candidates[state.sendCursor]
+            work = work + 1
+            local ok, result, why, retryPrepared = pcall(
+                Sync.BroadcastDpsRecord, item.record, item.prepared, true)
+            if ok and result ~= false then
+                progress[item.key] = "admitted"
+                state.sendCursor = state.sendCursor + 1
+                item.prepared = nil
+                n, progressed = n + 1, true
+            elseif ok and why == "sync queue full" then
+                item.prepared = retryPrepared or item.prepared
+                return n, false, progressed, why
+            else
                 progress[item.key] = "skipped"
+                state.sendCursor = state.sendCursor + 1
+                item.prepared = nil
+                progressed = true
             end
         end
     end
-    return n, complete
+    local complete = state.scanComplete
+        and state.sendCursor > #state.candidates
+    return n, complete, progressed
 end
 
 -- Public board: one row per character for the selected encounter. The row is

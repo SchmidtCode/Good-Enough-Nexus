@@ -97,6 +97,7 @@ local AUTO_SYNC_QUIET       = 15  -- require a real quiet period before judging 
 local AUTO_SYNC_MAX_PASSES  = 0   -- retained for diagnostics; convergence now ends only when stable
 local PENDING_TTL           = 30  -- inactivity cap for pending response work
 local PENDING_MAX_AGE       = 300 -- absolute cap even while backpressured
+local RESPONSE_QUEUE_HEADROOM = 8 -- do no response preparation near saturation
 
 ------------------------------------------------------------------------
 -- Module state
@@ -141,6 +142,18 @@ local autoConverge = { active=false, pass=0, stable=0, started=0, lastInbound=0,
 local Now, MyName
 local knownPeers = {} -- normalized player name -> { name, version, lastSeen }
 local CleanExpiredInflight
+local recentBuildBroadcast = {}
+local BUILD_BROADCAST_DEDUPE = 2
+local Responder = {
+    fairCursor=nil,
+    candidateCache=nil,
+    stats={
+        turns=0, workUnits=0, backpressureDeferrals=0,
+        entryPreparations=0, candidateSnapshots=0, candidateSorts=0,
+        buildSerializations=0, buildAdmissions=0, dpsSerializations=0,
+        chunkMessagesBuilt=0, compatRequests=0,
+    },
+}
 
 local function Catalog()
     return Nexus and Nexus.BuildCatalog
@@ -338,7 +351,14 @@ function Sync.WorkState()
         maxPendingResponses=MAX_PENDING_RESPONSES,
         maxPendingLoadouts=MAX_PENDING_LOADOUTS,
         maxKnownPeers=MAX_KNOWN_PEERS,
+        responseHeadroom=RESPONSE_QUEUE_HEADROOM,
     }
+end
+
+function Sync.ResponseStats()
+    local out = {}
+    for key, value in pairs(Responder.stats) do out[key] = value end
+    return out
 end
 
 ------------------------------------------------------------------------
@@ -766,6 +786,20 @@ local function QueueDepth(head, tail)
     return math.max(0, (tonumber(tail) or 0) - (tonumber(head) or 1) + 1)
 end
 
+function Responder.BulkFree()
+    return math.max(0, MAX_OUTBOUND_QUEUE
+        - QueueDepth(sendQueueHead, sendQueueTail))
+end
+
+function Responder.Backpressured()
+    return Responder.BulkFree() < RESPONSE_QUEUE_HEADROOM
+end
+
+function Responder.CanAdmit(count)
+    return tonumber(count) ~= nil and count >= 1
+        and count <= Responder.BulkFree()
+end
+
 local function ValidateQueuedPayload(payload)
     if type(payload) ~= "string" or payload == "" then return false end
     if EscapedLen(payload) > CHAT_LIMIT then
@@ -983,19 +1017,26 @@ local function SummaryEncode(build)
     }
 end
 
-local function BroadcastSummary(build)
+function Responder.PrepareSummary(build)
     local payload = SummaryEncode(build)
     if not ValidIdentifier(payload.id, MAX_BUILD_ID_BYTES) then
-        return false, "invalid build id"
+        return nil, "invalid build id"
     end
     if not ValidHash(tostring(payload.h or "")) then
-        return false, "invalid build hash"
+        return nil, "invalid build hash"
     end
     local data = Codec.Base64Encode(Codec.JSONEncode(payload))
     local msg = string.format("%s|%s|%s", CODE_INDEX, MyName(), data)
     if EscapedLen(msg) > CHAT_LIMIT - CHAT_SAFETY then
-        return false, "summary too large"
+        return nil, "summary too large"
     end
+    return {messages={msg}, title=build.title, summary=true}
+end
+
+local function BroadcastSummary(build)
+    local prepared, why = Responder.PrepareSummary(build)
+    if not prepared then return false, why end
+    local msg = prepared.messages[1]
     local queued, queueWhy = Enqueue(msg)
     if not queued then return false, queueWhy end
     LogEvent("TX","queuing summary '%s' (%d chars, no Echo list)", tostring(build.title), EscapedLen(msg))
@@ -1200,11 +1241,11 @@ end
 
 -- Header-aware chunking: measures the ACTUAL escaped header so no chunk
 -- can ever exceed the hard limit.
-local function SendChunked(buildId, lastMod, data)
+function Responder.ChunkBuildMessages(buildId, lastMod, data, responseMode)
     if not ValidIdentifier(tostring(buildId or ""), MAX_BUILD_ID_BYTES)
         or not ValidIntegerText(tostring(lastMod or ""), 0)
         or type(data) ~= "string" or data == "" or #data > MAX_BYTES then
-        return false, "invalid build envelope"
+        return nil, "invalid build envelope"
     end
     buildId = tostring(buildId)
     lastMod = tostring(lastMod)
@@ -1213,15 +1254,19 @@ local function SendChunked(buildId, lastMod, data)
     local sampleHdr = string.format("%s|%s|%s|%s|999/999|",
         CODE_BUILD, sender, buildId, lastMod)
     local budget = CHAT_LIMIT - CHAT_SAFETY - EscapedLen(sampleHdr)
-    if budget < 32 then return false, "id too long" end
+    if budget < 32 then return nil, "id too long" end
 
     local single = string.format("%s|%s|%s|%s|1/1|%s",
         CODE_BUILD, sender, buildId, lastMod, data)
     if EscapedLen(single) <= CHAT_LIMIT - CHAT_SAFETY then
-        return Enqueue(single)
+        if responseMode then
+            Responder.stats.chunkMessagesBuilt =
+                Responder.stats.chunkMessagesBuilt + 1
+        end
+        return {single}
     end
     local total = math.ceil(#data / budget)
-    if total > MAX_CHUNKS then return false, "build too large" end
+    if total > MAX_CHUNKS then return nil, "build too large" end
     local messages = {}
     for idx = 1, total do
         local s = (idx-1)*budget + 1
@@ -1229,20 +1274,14 @@ local function SendChunked(buildId, lastMod, data)
             CODE_BUILD, sender, buildId, lastMod, idx, total,
             data:sub(s, s+budget-1))
     end
-    return EnqueueBatch(messages)
+    if responseMode then
+        Responder.stats.chunkMessagesBuilt =
+            Responder.stats.chunkMessagesBuilt + #messages
+    end
+    return messages
 end
 
-------------------------------------------------------------------------
--- Outgoing
-------------------------------------------------------------------------
-
--- A DPS record relay and a full-sync response may both ask for the same
--- exact build in the same frame. Suppress only rapid duplicate wire sends;
--- later sync requests still receive the build normally.
-local recentBuildBroadcast = {}
-local BUILD_BROADCAST_DEDUPE = 2
-
-function Sync.BroadcastBuild(build)
+function Responder.ResolveBuild(build)
     if build and (type(build.echoes) ~= "table" or #build.echoes == 0) then
         local evidence = Nexus and Nexus.LoadoutEvidence
         if evidence and type(evidence.ResolveBuildRow) == "function" then
@@ -1255,6 +1294,73 @@ function Sync.BroadcastBuild(build)
         local stored = CatalogGet(build.id)
         if stored then build = stored end
     end
+    return build
+end
+
+function Responder.PrepareBuild(build, responseMode)
+    build = Responder.ResolveBuild(build)
+    if not build or type(build.echoes) ~= "table" or #build.echoes == 0 then
+        return nil, "no echoes"
+    end
+    if not ValidIdentifier(tostring(build.id or ""), MAX_BUILD_ID_BYTES) then
+        return nil, "invalid build id"
+    end
+    if responseMode then
+        Responder.stats.buildSerializations =
+            Responder.stats.buildSerializations + 1
+    end
+    local payload = CompactEncode(build)
+    local json = Codec.JSONEncode(payload)
+    local b64 = Codec.Base64Encode(json)
+    if #b64 > MAX_BYTES then
+        return nil, "too large"
+    end
+    local messages, why = Responder.ChunkBuildMessages(
+        build.id, tostring(payload.m), b64, responseMode)
+    if not messages then return nil, why end
+    return {
+        messages=messages, build=build,
+        buildKey=tostring(build.id or build.fingerprintHash
+            or build.fingerprint or ""),
+        title=build.title, id=build.id,
+        echoCount=#build.echoes, b64Bytes=#b64,
+    }
+end
+
+function Responder.AdmitBuild(prepared, responseMode)
+    if type(prepared) ~= "table" or type(prepared.messages) ~= "table" then
+        return false, "invalid prepared build"
+    end
+    if not Responder.CanAdmit(#prepared.messages) then
+        return false, "sync queue full"
+    end
+    local queued, why = EnqueueBatch(prepared.messages)
+    if not queued then return false, why end
+    if responseMode then
+        Responder.stats.buildAdmissions =
+            Responder.stats.buildAdmissions + 1
+    end
+    LogEvent("TX","queuing '%s' %d echoes %d b64 bytes (compact)",
+        tostring(prepared.title), tonumber(prepared.echoCount) or 0,
+        tonumber(prepared.b64Bytes) or 0)
+    if not responseMode then
+        hotBuilds[prepared.id] = { build=prepared.build, t=Now() }
+        if prepared.buildKey ~= "" then
+            recentBuildBroadcast[prepared.buildKey] = Now()
+        end
+    end
+    return true
+end
+
+------------------------------------------------------------------------
+-- Outgoing
+------------------------------------------------------------------------
+
+-- A DPS record relay and a full-sync response may both ask for the same
+-- exact build in the same frame. Suppress only rapid duplicate wire sends;
+-- later sync requests still receive the build normally.
+function Sync.BroadcastBuild(build)
+    build = Responder.ResolveBuild(build)
     if not build or type(build.echoes) ~= "table" or #build.echoes == 0 then
         return false, "no echoes"
     end
@@ -1267,21 +1373,15 @@ function Sync.BroadcastBuild(build)
         and now - recentBuildBroadcast[buildKey] < BUILD_BROADCAST_DEDUPE then
         return true, "duplicate suppressed"
     end
-    local payload = CompactEncode(build)
-    local json    = Codec.JSONEncode(payload)
-    local b64     = Codec.Base64Encode(json)
-    if #b64 > MAX_BYTES then
-        LogEvent("TX","'%s' too large (%d bytes)", tostring(build.id), #b64)
-        return false, "too large"
+    local prepared, why = Responder.PrepareBuild(build, false)
+    if not prepared then
+        if why == "too large" then
+            LogEvent("TX","'%s' too large", tostring(build.id))
+        end
+        return false, why
     end
-    local lastMod = tostring(payload.m)
-    LogEvent("TX","queuing '%s' %d echoes %d b64 bytes (compact)",
-        tostring(build.title), #build.echoes, #b64)
-    -- Mark hot: any BroadcastMine in the next HOT_WINDOW seconds includes this
-    hotBuilds[build.id] = { build=build, t=Now() }
-    local sent, why = SendChunked(build.id, lastMod, b64)
-    if sent and buildKey ~= "" then recentBuildBroadcast[buildKey] = now end
-    return sent, why
+    prepared.buildKey = buildKey
+    return Responder.AdmitBuild(prepared, false)
 end
 
 function Sync.BroadcastMine()
@@ -1307,110 +1407,180 @@ function Sync.BroadcastMine()
     return n
 end
 
--- Only send builds the requester doesn't already have.
--- peerHash: djb2 hash of peer's library (from their WLRQ).
--- If hash matches ours, peer is fully up to date → send nothing.
-local function BroadcastMineFiltered(peerHash, onlyBucket, progress, mode)
-    mode = mode == "delta" and "delta" or "legacy"
-    local myDB = mode == "delta" and CatalogDelta() or CatalogAll()
-    local myMine = {}
-    progress = type(progress) == "table" and progress or {}
-    for id, b in pairs(myDB) do myMine[id] = b end
-    for id, h in pairs(hotBuilds) do
-        if not myMine[id] and (Now()-h.t) <= HOT_WINDOW then
-            local _, source = CatalogGet(id)
-            if mode == "legacy" or source == "overlay" then
-                myMine[id] = h.build
-            end
+-- Response candidates are the mutable overlay/tombstone delta only. Immutable
+-- release baselines arrive with addon releases; mixed-version peers can request
+-- an exact known ID through WLLQ without flooding the channel with every bundled
+-- loadout. Candidate discovery itself advances one catalog row per worker turn.
+function Responder.BuildCandidateSnapshot(deltaHash)
+    local cacheKey = tostring(deltaHash) .. "|" .. tostring(MyName())
+    local cached = Responder.candidateCache
+    if cached and cached.key == cacheKey then return cached end
+    local byBucket = {}
+    for i = 1, BUILD_BUCKETS do byBucket[i] = {} end
+    cached = {
+        key=cacheKey, deltaHash=tostring(deltaHash), sender=MyName(),
+        byBucket=byBucket, phase="overlay", cursor=nil,
+        complete=false, createdAt=Now(),
+    }
+    Responder.candidateCache = cached
+    Responder.stats.candidateSnapshots =
+        Responder.stats.candidateSnapshots + 1
+    return cached
+end
+
+function Responder.SnapshotCurrent(snapshot)
+    return type(snapshot) == "table"
+        and snapshot.key == tostring(DeltaBuildHash()) .. "|" .. tostring(MyName())
+end
+
+function Responder.AdvanceCandidateSnapshot(snapshot)
+    if not Responder.SnapshotCurrent(snapshot) then
+        return false, "stale candidate snapshot", true
+    end
+    if snapshot.complete then return true, nil, false end
+    Responder.stats.candidateScans =
+        (Responder.stats.candidateScans or 0) + 1
+    if snapshot.phase == "overlay" then
+        local catalog = Catalog()
+        local id, build, done
+        if catalog and catalog.SyncDeltaNext then
+            id, build, done = catalog.SyncDeltaNext(snapshot.cursor)
+        else
+            done = true
         end
-    end
-    if not next(myMine) and not next(tombstones or {}) then
-        LogEvent("TX","nothing to share")
-        return 0, true, true
-    end
-    local myHash = LibraryHash(myMine)
-    if peerHash and tostring(peerHash) == tostring(myHash) then
-        LogEvent("TX","peer build buckets match -- sending nothing")
-        stats.skippedUpToDate = (stats.skippedUpToDate or 0) + 1
-        return 0, true, true
-    end
-    local peerBuckets = SplitHashes(peerHash)
-    local myBuckets = SplitHashes(myHash)
-    local legacyPeer = #peerBuckets ~= BUILD_BUCKETS
-    local n, claimSafe = 0, true
-    local candidates = {}
-    for id, b in pairs(myMine) do
-        local bucket = BuildBucket(id)
-        if (not onlyBucket or bucket == onlyBucket)
-            and (legacyPeer or tostring(peerBuckets[bucket] or "") ~= tostring(myBuckets[bucket] or "")) then
-            local complete = (type(b.echoes) == "table" and #b.echoes > 0)
-                and "F" or "S"
-            local token = table.concat({ "B", tostring(id),
-                tostring(b.lastModified or b.postedAt or 0), complete,
-                tostring(b.fingerprintHash or b.fingerprint or "0") }, ":")
-            candidates[#candidates + 1] = {
-                kind="build", id=id, build=b, token=token,
+        if done then
+            snapshot.phase, snapshot.cursor = "tombstone", nil
+            return false, nil, true
+        end
+        snapshot.cursor = id
+        if build then
+            local complete = (type(build.echoes) == "table"
+                and #build.echoes > 0) and "F" or "S"
+            local token = table.concat({"B", tostring(id),
+                tostring(build.lastModified or build.postedAt or 0), complete,
+                tostring(build.fingerprintHash or build.fingerprint or "0")}, ":")
+            local bucket = BuildBucket(id)
+            snapshot.byBucket[bucket][#snapshot.byBucket[bucket] + 1] = {
+                kind="build", id=id, build=build, token=token,
             }
         end
+        return false, nil, true
     end
-    for id, tomb in pairs(tombstones or {}) do
+    local id, tomb = next(tombstones or {}, snapshot.cursor)
+    if id == nil then
+        snapshot.complete = true
+        return true, nil, true
+    end
+    snapshot.cursor = id
+    if SamePeer(TombAuthor(tomb), snapshot.sender) then
+        local copy = {stamp=TombStamp(tomb), author=TombAuthor(tomb)}
         local bucket = BuildBucket(id)
-        if SamePeer(TombAuthor(tomb), MyName())
-            and (not onlyBucket or bucket == onlyBucket)
-            and (legacyPeer or tostring(peerBuckets[bucket] or "") ~= tostring(myBuckets[bucket] or "")) then
-            candidates[#candidates + 1] = {
-                kind="tomb", id=id, tomb=tomb,
-                token=table.concat({ "T", tostring(id),
-                    tostring(TombStamp(tomb)), TombAuthor(tomb) }, ":"),
-            }
+        snapshot.byBucket[bucket][#snapshot.byBucket[bucket] + 1] = {
+            kind="tomb", id=id, tomb=copy,
+            token=table.concat({"T", tostring(id),
+                tostring(TombStamp(copy)), TombAuthor(copy)}, ":"),
+        }
+    end
+    return false, nil, true
+end
+
+function Responder.PrepareCandidate(item, bucketState)
+    bucketState.prepared = bucketState.prepared or {}
+    local cached = bucketState.prepared[item.token]
+    if cached then return cached end
+    local prepared, why
+    if item.kind == "build" then
+        if type(item.build.echoes) == "table" and #item.build.echoes > 0 then
+            prepared, why = Responder.PrepareBuild(item.build, true)
+        else
+            Responder.stats.buildSerializations =
+                Responder.stats.buildSerializations + 1
+            prepared, why = Responder.PrepareSummary(item.build)
+        end
+    else
+        prepared = {messages={DeleteWireMessage(item.id, item.tomb)},
+            tomb=true, id=item.id, tombstone=item.tomb}
+    end
+    if not prepared then return nil, why end
+    bucketState.prepared[item.token] = prepared
+    return prepared
+end
+
+function Responder.AdmitCandidate(item, bucketState)
+    if Responder.Backpressured() then
+        return false, "sync queue full", true
+    end
+    local prepared, why = Responder.PrepareCandidate(item, bucketState)
+    if not prepared then return false, why, false end
+    if not Responder.CanAdmit(#prepared.messages) then
+        return false, "sync queue full", true
+    end
+    local admitted, admitWhy
+    if item.kind == "build" and not prepared.summary then
+        admitted, admitWhy = Responder.AdmitBuild(prepared, true)
+    else
+        admitted, admitWhy = EnqueueBatch(prepared.messages)
+        if admitted and prepared.summary then
+            LogEvent("TX", "queuing summary '%s' (no Echo list)",
+                tostring(item.build and item.build.title))
         end
     end
-    table.sort(candidates, function(a, b)
-        return tostring(a.token) < tostring(b.token)
-    end)
-    for _, item in ipairs(candidates) do
-        if not progress[item.token] then
-            local ok, why
-            if item.kind == "build" then
-                -- Full builds are preferred; summaries are compatibility
-                -- fallbacks for incomplete legacy rows.
-                if type(item.build.echoes) == "table"
-                    and #item.build.echoes > 0 then
-                    ok, why = Sync.BroadcastBuild(item.build)
-                else
-                    ok, why = BroadcastSummary(item.build)
-                end
-            else
-                ok, why = Enqueue(string.format("%s|%s|%s|%s|%s",
-                    CODE_DELETE, MyName(), item.id,
-                    tostring(TombStamp(item.tomb)), TombAuthor(item.tomb)))
-            end
-            if ok and why ~= "duplicate suppressed" then
-                progress[item.token] = "admitted"
-                if item.kind == "tomb" then
-                    ClearPendingDelete(item.id, item.tomb)
-                end
-                n = n + 1
-                if mode == "delta" and item.kind == "build" then
-                    stats.overlaySent = (stats.overlaySent or 0) + 1
-                end
-            elseif why == "sync queue full"
-                or why == "duplicate suppressed" then
-                -- Preserve admitted progress. The next attempt resumes with
-                -- this item instead of re-enqueueing earlier payloads.
-                return n, false, claimSafe
-            else
-                -- Permanent serialization/validation failures must not block
-                -- unrelated valid rows. Do not claim the bucket, so another
-                -- peer with a sendable copy remains free to answer.
-                progress[item.token] = "skipped"
-                claimSafe = false
-                LogEvent("TX", "skipping unsendable %s '%s': %s",
-                    item.kind, tostring(item.id), tostring(why or "invalid"))
-            end
+    if not admitted then
+        return false, admitWhy, admitWhy == "sync queue full"
+    end
+    bucketState.prepared[item.token] = nil
+    return true, "admitted", false
+end
+
+function Responder.SendNextBuild(bucketState)
+    bucketState.progress = bucketState.progress or {}
+    bucketState.cursor = tonumber(bucketState.cursor) or 1
+    local snapshot = bucketState.snapshot
+    if snapshot then
+        if not Responder.SnapshotCurrent(snapshot) then
+            return 0, false, false, true, "stale candidate snapshot"
+        end
+        if not snapshot.complete then
+            local _, why, progressed =
+                Responder.AdvanceCandidateSnapshot(snapshot)
+            return 0, false, bucketState.claimSafe ~= false,
+                progressed, why
+        end
+        if bucketState.candidates == nil then
+            bucketState.candidates = snapshot.byBucket[bucketState.bucket] or {}
         end
     end
-    return n, true, claimSafe
+    local candidates = bucketState.candidates or {}
+    while bucketState.cursor <= #candidates
+        and bucketState.progress[candidates[bucketState.cursor].token] do
+        bucketState.cursor = bucketState.cursor + 1
+    end
+    if bucketState.cursor > #candidates then
+        return 0, true, bucketState.claimSafe ~= false, false
+    end
+    local item = candidates[bucketState.cursor]
+    local admitted, why, transient = Responder.AdmitCandidate(item, bucketState)
+    if admitted then
+        bucketState.progress[item.token] = "admitted"
+        bucketState.cursor = bucketState.cursor + 1
+        if item.kind == "tomb" then
+            ClearPendingDelete(item.id, item.tomb)
+        else
+            stats.overlaySent = (stats.overlaySent or 0) + 1
+        end
+        return 1, bucketState.cursor > #candidates,
+            bucketState.claimSafe ~= false, true
+    end
+    if transient then
+        return 0, false, bucketState.claimSafe ~= false, false, why
+    end
+    bucketState.prepared[item.token] = nil
+    bucketState.progress[item.token] = "skipped"
+    bucketState.cursor = bucketState.cursor + 1
+    bucketState.claimSafe = false
+    LogEvent("TX", "skipping unsendable %s '%s': %s",
+        tostring(item.kind), tostring(item.id), tostring(why or "invalid"))
+    return 0, bucketState.cursor > #candidates, false, true, why
 end
 
 local function BucketDelay(key, kind, bucket)
@@ -1455,7 +1625,58 @@ end
 
 -- Broadcast a validated exact-set DPS record. The JSON/base64 payload is
 -- chunked using the same 255-byte-safe discipline as build sync.
-function Sync.BroadcastDpsRecord(record)
+function Responder.ValidatePreparedDps(payload)
+    local D = Nexus and Nexus.DpsCapture
+    if type(payload) ~= "table" or type(payload.f) ~= "string"
+        or type(payload.e) ~= "table" then return false end
+    local dps, duration, stamp, level = tonumber(payload.d),
+        tonumber(payload.u), tonumber(payload.t), tonumber(payload.l)
+    local player = tostring(payload.p or "")
+    local playerClass = type(payload.k) == "string"
+        and payload.k:upper() or nil
+    local validClass = playerClass == "WARRIOR" or playerClass == "PALADIN"
+        or playerClass == "HUNTER" or playerClass == "ROGUE"
+        or playerClass == "PRIEST" or playerClass == "DEATHKNIGHT"
+        or playerClass == "SHAMAN" or playerClass == "MAGE"
+        or playerClass == "WARLOCK" or playerClass == "DRUID"
+    local computed = D and D.GetEchoKey and D.GetEchoKey(payload.e) or nil
+    local computedHash = D and D.GetEchoHash and D.GetEchoHash(payload.e)
+        or nil
+    return FiniteNumber(dps) and dps > 0 and dps <= 500000000
+        and FiniteNumber(duration) and duration >= 30
+        and FiniteNumber(stamp) and stamp > 0
+        and FiniteNumber(level) and level >= 1 and level <= 80
+        and level == math.floor(level) and validClass
+        and player ~= "" and #player <= 64 and not player:find("[%c|]")
+        and (payload.c == "dummy" or payload.c == "lk")
+        and SamePeer(player, MyName())
+        and OwnerKeyMatchesAuthor(payload.o, player)
+        and computed and computed == payload.f
+        and payload.h and (not computedHash or payload.h == computedHash)
+end
+
+function Sync.BroadcastDpsRecord(record, prepared, responseMode)
+    if type(prepared) ~= "table" then prepared = nil end
+    if responseMode and Responder.Backpressured() then
+        return false, "sync queue full", prepared
+    end
+    if prepared ~= nil then
+        if type(prepared) ~= "table" or type(prepared.messages) ~= "table"
+            or type(prepared.payload) ~= "table"
+            or #prepared.messages < 1
+            or not Responder.ValidatePreparedDps(prepared.payload) then
+            return false, "invalid prepared DPS record"
+        end
+        if not Responder.CanAdmit(#prepared.messages) then
+            return false, "sync queue full", prepared
+        end
+        local queued, queueWhy = EnqueueBatch(prepared.messages)
+        if not queued then return false, queueWhy, prepared end
+        LogEvent("TX","DPS2 [%s] %.0f by %s (%d chunks)",
+            tostring(prepared.payload.c), prepared.payload.d,
+            prepared.payload.p, #prepared.messages)
+        return true
+    end
     local D = Nexus.DpsCapture
     if type(record) == "table" and D
         and type(D.MaterializeRecord) == "function" then
@@ -1511,6 +1732,10 @@ function Sync.BroadcastDpsRecord(record)
         lk = (type(record.lockedEchoes)=="table" and #record.lockedEchoes>0)
              and record.lockedEchoes or nil,
     }
+    if responseMode then
+        Responder.stats.dpsSerializations =
+            Responder.stats.dpsSerializations + 1
+    end
     local encoded = Codec.Base64Encode(Codec.JSONEncode(payload))
     local transferId = tostring(payload.p) .. ":" .. tostring(payload.t) .. ":" .. tostring(payload.d)
     if not ValidTransferIdentifier(transferId)
@@ -1526,8 +1751,16 @@ function Sync.BroadcastDpsRecord(record)
         messages[#messages + 1] = string.format("%s|%s|%s|%d/%d|%s",
             CODE_DPS2, MyName(), transferId, i, total, data)
     end
+    if responseMode then
+        Responder.stats.chunkMessagesBuilt =
+            Responder.stats.chunkMessagesBuilt + #messages
+    end
+    prepared = {messages=messages, payload=payload}
+    if not Responder.CanAdmit(#messages) then
+        return false, "sync queue full", prepared
+    end
     local queued, queueWhy = EnqueueBatch(messages)
-    if not queued then return false, queueWhy end
+    if not queued then return false, queueWhy, prepared end
     LogEvent("TX","DPS2 [%s] %.0f by %s (%d chunks)",
         tostring(payload.c), payload.d, payload.p, total)
     return true
@@ -1810,26 +2043,32 @@ local function HandleComplete(buildId, lastMod, fullData, transportSender)
 end
 
 local function SendBucketResponse(entry, kind, bucket, bucketState)
-    local n, dpsN, complete, claimSafe = 0, 0, true, true
+    local n, dpsN, complete, claimSafe, progressed, why =
+        0, 0, true, true, false, nil
     bucketState.progress = bucketState.progress or {}
     if kind == "B" then
-        n, complete, claimSafe = BroadcastMineFiltered(
-            entry.peerBuildHash, bucket, bucketState.progress,
-            entry.buildMode)
+        n, complete, claimSafe, progressed, why =
+            Responder.SendNextBuild(bucketState)
         if claimSafe == false then bucketState.claimSafe = false end
     else
         local D = Nexus.DpsCapture
         if D and D.BroadcastAllBuildBests then
-            local ok, result, allAdmitted = pcall(
+            local ok, result, allAdmitted, didProgress, responseWhy = pcall(
                 D.BroadcastAllBuildBests, entry.peerDpsHash, bucket,
-                bucketState.progress)
+                bucketState.progress, 1)
             if ok then dpsN = tonumber(result) or 0 end
             complete = ok and allAdmitted == true
+            progressed = ok and didProgress == true
+            why = ok and responseWhy or "DPS response failed"
+            if not ok then bucketState.claimSafe = false end
         end
     end
-    LogEvent("RX", "mesh bucket %s%d for %s: %d build(s), %d record(s)",
-        kind, bucket, tostring(entry.requester), n, dpsN)
-    return complete, bucketState.claimSafe ~= false
+    if n > 0 or dpsN > 0 or complete then
+        LogEvent("RX", "mesh bucket %s%d for %s: %d build(s), %d record(s)",
+            kind, bucket, tostring(entry.requester), n, dpsN)
+    end
+    return complete, bucketState.claimSafe ~= false,
+        progressed or n > 0 or dpsN > 0, why
 end
 
 local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
@@ -1839,11 +2078,6 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
     end
     peerBuildHash, peerDpsHash = peerBuildHash or "0", peerDpsHash or "0"
     requestId = requestId or ("legacy-"..tostring(requester).."-"..tostring(math.floor(Now())))
-    local myBuildHash, myDpsHash = CurrentBuildHash(), CurrentDpsHash()
-    if myBuildHash == peerBuildHash and myDpsHash == peerDpsHash then
-        stats.skippedUpToDate=(stats.skippedUpToDate or 0)+1
-        LogEvent("RX","request from %s skipped: both state hashes match", tostring(requester)); return true
-    end
     local key=tostring(requester)..":"..tostring(requestId)
     local prior = pendingResponses[key]
     if prior then
@@ -1861,60 +2095,87 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
             tostring(requester), MAX_PENDING_RESPONSES)
         return false
     end
-    local peerWireBuckets = SplitHashes(peerBuildHash)
-    local localToken = CatalogToken()
-    local buildMode, comparablePeerHash, comparableMineHash
+    pendingResponses[key]={
+        key=key, requester=requester, requestId=requestId,
+        peerBuildWireHash=peerBuildHash, peerDpsHash=peerDpsHash,
+        createdAt=Now(), lastActiveAt=Now(), prepared=false,
+        remaining=StableDelay(key..":prepare:"..MyName()),
+        buildProgress={}, dpsProgress={}, bucketCursor=0,
+    }
+    LogEvent("RX","mesh request from %s scheduled (id=%s)",
+        tostring(requester),tostring(requestId))
+    return true
+end
+
+function Responder.PrepareResponseEntry(entry)
+    local localDeltaHash, myDpsHash = DeltaBuildHash(), CurrentDpsHash()
+    local peerWireBuckets = SplitHashes(entry.peerBuildWireHash)
+    local comparablePeerHash, buildMode
     if #peerWireBuckets == BUILD_BUCKETS + 1
-        and tostring(peerWireBuckets[BUILD_BUCKETS + 1]) == localToken then
-        buildMode = "delta"
+        and tostring(peerWireBuckets[BUILD_BUCKETS + 1]) == CatalogToken() then
         local peerDelta = {}
         for i = 1, BUILD_BUCKETS do peerDelta[i] = peerWireBuckets[i] end
         comparablePeerHash = table.concat(peerDelta, ",")
-        comparableMineHash = DeltaBuildHash()
+        buildMode = "delta"
     elseif #peerWireBuckets == BUILD_BUCKETS then
-        buildMode = "legacy"
-        comparablePeerHash = peerBuildHash
-        comparableMineHash = LegacyBuildHash()
+        -- Legacy bucket hashes may describe a library with no bundled baseline.
+        -- Comparing them directly to our delta is safe; any mismatch still
+        -- sends only bounded overlay/tombstone candidates.
+        comparablePeerHash = entry.peerBuildWireHash
+        buildMode = "compat"
+        Responder.stats.compatRequests = Responder.stats.compatRequests + 1
     else
-        -- A new peer on a different catalog version advertises delta buckets
-        -- that cannot be compared with our baseline. Force the conservative
-        -- legacy/full response so either side can still recover missing exact
-        -- rows. Catalog tokens are compatibility hints, not ownership proof;
-        -- an existing identity still requires an author-originated update.
-        buildMode = "legacy"
-        comparablePeerHash = "0"
-        comparableMineHash = LegacyBuildHash()
+        -- Compatibility peers reconcile only the mutable overlay/tombstone
+        -- delta. Bundled loadouts are obtained explicitly by known ID.
+        comparablePeerHash = "0,0,0,0,0,0,0,0"
+        buildMode = "compat"
+        Responder.stats.compatRequests = Responder.stats.compatRequests + 1
     end
-    if comparablePeerHash == comparableMineHash and myDpsHash == peerDpsHash then
-        stats.skippedUpToDate = (stats.skippedUpToDate or 0) + 1
-        LogEvent("RX", "request from %s skipped: comparable state hashes match",
-            tostring(requester))
-        return true
-    end
-    local peerB,myB=SplitHashes(comparablePeerHash),SplitHashes(comparableMineHash)
-    local peerD,myD=SplitHashes(peerDpsHash),SplitHashes(myDpsHash)
-    local peerBuildBuckets = #peerB == BUILD_BUCKETS
-    local entry={key=key,requester=requester,requestId=requestId,
-        peerBuildHash=comparablePeerHash,peerBuildWireHash=peerBuildHash,
-        buildMode=buildMode,peerDpsHash=peerDpsHash,buckets={},
-        createdAt=Now(),lastActiveAt=Now()}
-    for i=1,BUILD_BUCKETS do
+    local peerB, myB = SplitHashes(comparablePeerHash),
+        SplitHashes(localDeltaHash)
+    local peerD, myD = SplitHashes(entry.peerDpsHash),
+        SplitHashes(myDpsHash)
+    local buckets, snapshot = {}, nil
+    for i = 1, BUILD_BUCKETS do
         if tostring(peerB[i] or "") ~= tostring(myB[i] or "") then
-            entry.buckets["B"..i]={kind="B",bucket=i,hash=tostring(myB[i] or "0"),
-                claimable=peerBuildBuckets and not BucketContainsTombstone(i),
-                remaining=BucketDelay(key,"B",i)}
+            snapshot = snapshot or Responder.BuildCandidateSnapshot(localDeltaHash)
+            buckets["B"..i]={kind="B", bucket=i,
+                hash=tostring(myB[i] or "0"), snapshot=snapshot,
+                progress=entry.buildProgress, claimSafe=true,
+                claimable=not BucketContainsTombstone(i),
+                remaining=BucketDelay(entry.key,"B",i)}
         end
         if tostring(peerD[i] or "") ~= tostring(myD[i] or "") then
-            -- Exact DPS evidence is owner-only. A peer that merely holds the
-            -- same row cannot retransmit it, so DPS buckets are never elected
-            -- through suppressible claims.
-            entry.buckets["D"..i]={kind="D",bucket=i,hash=tostring(myD[i] or "0"),
-                claimable=false,remaining=BucketDelay(key,"D",i)}
+            entry.dpsProgress[i] = entry.dpsProgress[i] or {}
+            buckets["D"..i]={kind="D", bucket=i,
+                hash=tostring(myD[i] or "0"),
+                progress=entry.dpsProgress[i], claimable=false,
+                remaining=BucketDelay(entry.key,"D",i)}
         end
     end
-    if next(entry.buckets) then pendingResponses[key]=entry end
-    LogEvent("RX","mesh request from %s scheduled by bucket (id=%s)",tostring(requester),tostring(requestId))
+    entry.peerBuildHash = comparablePeerHash
+    entry.buildMode = buildMode
+    entry.localDeltaHash = localDeltaHash
+    entry.localDpsHash = myDpsHash
+    entry.buckets = buckets
+    entry.prepared = true
+    entry.remaining = nil
+    entry.lastActiveAt = Now()
+    Responder.stats.entryPreparations =
+        Responder.stats.entryPreparations + 1
+    if not next(buckets) then
+        stats.skippedUpToDate = (stats.skippedUpToDate or 0) + 1
+        return false
+    end
     return true
+end
+
+function Responder.ResetResponseEntry(entry)
+    entry.prepared = false
+    entry.buckets = nil
+    entry.remaining = 0
+    entry.bucketCursor = 0
+    entry.lastActiveAt = Now()
 end
 
 local function HandleClaim(responder, requester, requestId, buildHash, dpsHash)
@@ -1953,88 +2214,170 @@ local function PendingExpired(entry)
         or now - lastActiveAt > PENDING_TTL
 end
 
+function Responder.NextReadyBucket(entry)
+    local cursor = tonumber(entry.bucketCursor) or 0
+    for offset = 1, BUILD_BUCKETS * 2 do
+        local ordinal = ((cursor + offset - 1) % (BUILD_BUCKETS * 2)) + 1
+        local id = ordinal <= BUILD_BUCKETS and ("B"..ordinal)
+            or ("D"..(ordinal - BUILD_BUCKETS))
+        local bucketState = entry.buckets and entry.buckets[id]
+        if bucketState and (tonumber(bucketState.remaining) or 0) <= 0 then
+            return id, bucketState, ordinal
+        end
+    end
+end
+
+function Responder.SelectFairUnit(units)
+    if #units == 0 then return nil end
+    table.sort(units, function(left, right) return left.key < right.key end)
+    local selected = units[1]
+    if Responder.fairCursor then
+        for _, unit in ipairs(units) do
+            if unit.key > Responder.fairCursor then
+                selected = unit
+                break
+            end
+        end
+    end
+    Responder.fairCursor = selected.key
+    return selected
+end
+
+function Responder.ProcessLoadoutResponse(entry)
+    local progressed = false
+    if entry.preparedBuild
+        and entry.preparedRevision ~= CurrentBuildHash() then
+        entry.preparedBuild = nil
+        entry.preparedRevision = nil
+        progressed = true
+    end
+    if not entry.preparedBuild then
+        local build = CatalogGet(entry.buildId)
+        if not build or type(build.echoes) ~= "table" or #build.echoes == 0 then
+            return true, false, "loadout unavailable"
+        end
+        local prepared, why = Responder.PrepareBuild(build, true)
+        if not prepared then return true, false, why end
+        entry.preparedBuild = prepared
+        entry.preparedRevision = CurrentBuildHash()
+        progressed = true
+    end
+    local sent, why = Responder.AdmitBuild(entry.preparedBuild, true)
+    if not sent then return false, progressed, why end
+    local claimed, claimWhy = EnqueueControl(string.format(
+        "%s|%s|%s|%s",CODE_LOADOUT_CLAIM,MyName(),
+        entry.requester,entry.buildId))
+    if not claimed then
+        LogEvent("TX","loadout claim skipped for '%s': %s",
+            tostring(entry.buildId),tostring(claimWhy or "control queue full"))
+    end
+    LogEvent("TX","answered on-demand loadout '%s' for %s",
+        tostring(entry.buildId),tostring(entry.requester))
+    return true, true
+end
+
 local function ProcessPendingResponses(elapsed)
-    elapsed=tonumber(elapsed) or 0
-    local sends={}
+    elapsed = tonumber(elapsed) or 0
+    Responder.stats.turns = Responder.stats.turns + 1
     for key,entry in pairs(pendingResponses) do
         if PendingExpired(entry) then
             pendingResponses[key] = nil
+        elseif not entry.prepared then
+            entry.remaining = (tonumber(entry.remaining) or 0) - elapsed
         else
-            for id,b in pairs(entry.buckets or {}) do
-                b.remaining=(tonumber(b.remaining) or 0)-elapsed
-                if b.remaining<=0 then
-                    sends[#sends+1]={key=key,id=id,entry=entry,bucketState=b,
-                        kind=b.kind,bucket=b.bucket}
-                end
+            for _, bucketState in pairs(entry.buckets or {}) do
+                bucketState.remaining =
+                    (tonumber(bucketState.remaining) or 0) - elapsed
             end
         end
     end
-    table.sort(sends,function(a,b) return (a.kind..a.bucket)<(b.kind..b.bucket) end)
-    for _,x in ipairs(sends) do
-        local complete, claimSafe = SendBucketResponse(
-            x.entry,x.kind,x.bucket,x.bucketState)
-        if complete then
-            if claimSafe and x.bucketState.claimable ~= false then
-                local claimed, claimWhy = EnqueueControl(string.format(
-                    "%s|%s|%s|%s|%s|%d|%s",CODE_BUCKET_CLAIM,
-                    MyName(),x.entry.requester,x.entry.requestId,x.kind,
-                    x.bucket,x.bucketState.hash))
-                if not claimed then
-                    -- The complete bucket payload is already retained. Sending
-                    -- it without a claim is safe; peers may only duplicate it.
-                    LogEvent("TX","bucket claim skipped for %s%d: %s",x.kind,
-                        x.bucket,tostring(claimWhy or "control queue full"))
-                end
-            end
-            x.entry.buckets[x.id]=nil
-            if not next(x.entry.buckets) then pendingResponses[x.key]=nil end
-        else
-            x.bucketState.remaining=1
-            x.entry.lastActiveAt=Now()
-        end
-    end
-    local loadoutReady={}
     for key,entry in pairs(pendingLoadouts) do
         if PendingExpired(entry) then
             pendingLoadouts[key] = nil
         else
-            entry.remaining=(tonumber(entry.remaining) or 0)-elapsed
-            if entry.remaining<=0 then pendingLoadouts[key]=nil; loadoutReady[#loadoutReady+1]=entry end
+            entry.remaining = (tonumber(entry.remaining) or 0) - elapsed
         end
     end
-    table.sort(loadoutReady,function(a,b)return tostring(a.key)<tostring(b.key) end)
-    for _,entry in ipairs(loadoutReady) do
-        local b=CatalogGet(entry.buildId)
-        if b and type(b.echoes)=="table" and #b.echoes>0 then
-            -- Queue the payload before publishing the prioritized claim. If
-            -- bulk backpressure rejects the build, keep this response pending
-            -- so another attempt or responder can still satisfy the request.
-            local sent, sendWhy = Sync.BroadcastBuild(b)
-            if sent and sendWhy ~= "duplicate suppressed" then
-                local claimed, claimWhy = EnqueueControl(string.format(
-                    "%s|%s|%s|%s",CODE_LOADOUT_CLAIM,MyName(),
-                    entry.requester,entry.buildId))
-                if not claimed then
-                    -- The payload is already retained in the bulk queue. It is
-                    -- safer to allow a duplicate response than to discard it.
-                    LogEvent("TX","loadout claim skipped for '%s': %s",
-                        tostring(entry.buildId),tostring(claimWhy or "control queue full"))
-                end
-                LogEvent("TX","answered on-demand loadout '%s' for %s",
-                    tostring(entry.buildId),tostring(entry.requester))
-            else
-                if sendWhy == "sync queue full"
-                    or sendWhy == "duplicate suppressed" then
-                    entry.remaining = 1
-                    entry.lastActiveAt = Now()
-                    pendingLoadouts[entry.key] = entry
-                else
-                    LogEvent("TX", "dropping unsendable loadout '%s': %s",
-                        tostring(entry.buildId),
-                        tostring(sendWhy or "invalid build"))
-                end
+
+    -- Saturation is a cheap yield: no hash, catalog, sort, validation,
+    -- serialization, encoding, or chunk construction occurs below this gate.
+    if Responder.Backpressured() then
+        Responder.stats.backpressureDeferrals =
+            Responder.stats.backpressureDeferrals + 1
+        return
+    end
+
+    local units = {}
+    for key, entry in pairs(pendingResponses) do
+        if not entry.prepared then
+            if (tonumber(entry.remaining) or 0) <= 0 then
+                units[#units + 1] = {key="R|"..key, type="prepare",
+                    entryKey=key, entry=entry}
+            end
+        else
+            local id, bucketState, ordinal = Responder.NextReadyBucket(entry)
+            if id then
+                units[#units + 1] = {key="R|"..key, type="bucket",
+                    entryKey=key, entry=entry, id=id,
+                    bucketState=bucketState, ordinal=ordinal}
             end
         end
+    end
+    for key, entry in pairs(pendingLoadouts) do
+        if (tonumber(entry.remaining) or 0) <= 0 then
+            units[#units + 1] = {key="L|"..key, type="loadout",
+                entryKey=key, entry=entry}
+        end
+    end
+    local unit = Responder.SelectFairUnit(units)
+    if not unit then return end
+    Responder.stats.workUnits = Responder.stats.workUnits + 1
+    Responder.stats.lastRequester = unit.entry.requester
+
+    if unit.type == "prepare" then
+        if not Responder.PrepareResponseEntry(unit.entry) then
+            pendingResponses[unit.entryKey] = nil
+        end
+        return
+    end
+    if unit.type == "loadout" then
+        local complete, progressed, why =
+            Responder.ProcessLoadoutResponse(unit.entry)
+        if complete then
+            pendingLoadouts[unit.entryKey] = nil
+        else
+            unit.entry.remaining = why == "sync queue full" and 1 or 0
+            if progressed then unit.entry.lastActiveAt = Now() end
+        end
+        return
+    end
+
+    local entry, bucketState = unit.entry, unit.bucketState
+    entry.bucketCursor = unit.ordinal
+    Responder.stats.lastBucket = unit.id
+    local complete, claimSafe, progressed, why = SendBucketResponse(
+        entry, bucketState.kind, bucketState.bucket, bucketState)
+    if why == "stale candidate snapshot" then
+        Responder.ResetResponseEntry(entry)
+        return
+    end
+    if progressed then entry.lastActiveAt = Now() end
+    if complete then
+        if claimSafe and bucketState.claimable ~= false then
+            local claimed, claimWhy = EnqueueControl(string.format(
+                "%s|%s|%s|%s|%s|%d|%s",CODE_BUCKET_CLAIM,
+                MyName(),entry.requester,entry.requestId,bucketState.kind,
+                bucketState.bucket,bucketState.hash))
+            if not claimed then
+                LogEvent("TX","bucket claim skipped for %s%d: %s",
+                    bucketState.kind,bucketState.bucket,
+                    tostring(claimWhy or "control queue full"))
+            end
+        end
+        entry.buckets[unit.id] = nil
+        if not next(entry.buckets) then pendingResponses[unit.entryKey] = nil end
+    else
+        bucketState.remaining = why == "sync queue full" and 1 or 0
     end
 end
 
@@ -2218,19 +2561,16 @@ function Sync.HandleIncoming(text, sender)
         end
         local requester, buildId = protocolSender, parts[3]
         if requester ~= MyName() then
-            local b = CatalogGet(buildId)
-            if b and type(b.echoes)=="table" and #b.echoes>0 then
-                local key = tostring(requester)..":"..tostring(buildId)
-                if not pendingLoadouts[key] then
-                    if TableCount(pendingLoadouts) >= MAX_PENDING_LOADOUTS then
-                        stats.pendingOverflowRejected =
-                            (stats.pendingOverflowRejected or 0) + 1
-                        return false
-                    end
-                    pendingLoadouts[key] = { key=key, requester=requester,
-                        buildId=buildId, createdAt=Now(), lastActiveAt=Now(),
-                        remaining=StableDelay(key..":"..MyName()) }
+            local key = tostring(requester)..":"..tostring(buildId)
+            if not pendingLoadouts[key] then
+                if TableCount(pendingLoadouts) >= MAX_PENDING_LOADOUTS then
+                    stats.pendingOverflowRejected =
+                        (stats.pendingOverflowRejected or 0) + 1
+                    return false
                 end
+                pendingLoadouts[key] = { key=key, requester=requester,
+                    buildId=buildId, createdAt=Now(), lastActiveAt=Now(),
+                    remaining=StableDelay(key..":"..MyName()) }
             end
         end
         return AcceptPeer(protocolSender)
@@ -2596,6 +2936,14 @@ function Sync.Init(codec, adapter)
     stats.oversizeDropped, stats.updated, stats.skippedUpToDate = 0, 0, 0
     stats.queueOverflowRejected, stats.pendingOverflowRejected = 0, 0
     stats.baselineSkipped, stats.overlaySent = 0, 0
+    Responder.fairCursor = nil
+    Responder.candidateCache = nil
+    Responder.stats = {
+        turns=0, workUnits=0, backpressureDeferrals=0,
+        entryPreparations=0, candidateSnapshots=0, candidateSorts=0,
+        candidateScans=0, buildSerializations=0, buildAdmissions=0,
+        dpsSerializations=0, chunkMessagesBuilt=0, compatRequests=0,
+    }
     hotBuilds    = {}  -- clear on init
     local evidence = Nexus and Nexus.LoadoutEvidence
     if evidence and type(evidence.RegisterReferenceProvider) == "function" then

@@ -628,6 +628,21 @@ function Catalog.DeltaSnapshot()
     return out
 end
 
+-- Sync-facing bounded cursor. Each call examines at most one overlay row and
+-- returns a defensive, evidence-resolved record only when that row currently
+-- wins merged selection. Callers keep the opaque id cursor and never reach
+-- into SavedVariables or the bundled baseline directly.
+function Catalog.SyncDeltaNext(cursor)
+    EnsureBound()
+    local id = next(Overlay(), cursor)
+    if id == nil then return nil, nil, true end
+    local record, source = Selected(id)
+    if source == "overlay" and record then
+        return id, PublicRecord(record, source), false
+    end
+    return id, nil, false
+end
+
 function Catalog.TombstoneSnapshot()
     return DeepCopy(Tombstones())
 end
