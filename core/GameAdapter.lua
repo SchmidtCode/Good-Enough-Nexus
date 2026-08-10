@@ -1097,6 +1097,19 @@ function A.Wishlist()
     local slots = A.Slots()
     local activeSlot = slots and tonumber(slots.activeSlot) or 0
     local maxSlots = slots and (tonumber(slots.maxSlots) or 5) or 5
+    -- Project Ebonhold can make a designed wishlist (slot > maxSlots) the
+    -- active server selection. That slot is already an exact, authoritative
+    -- target; resolving it must not go through the activeSlot=0 first-run
+    -- fallback or depend on a numbered Saved Build association.
+    if activeSlot > maxSlots then
+        for _, candidate in ipairs(A.GetWishlistCandidates()) do
+            if tonumber(candidate.slot) == activeSlot then
+                A._wishlistNote = "Active designed wishlist target"
+                return EchoesToWishlist(candidate.echoes, candidate.name,
+                    "designed", false, candidate.slot)
+            end
+        end
+    end
     if activeSlot < 1 or activeSlot > maxSlots then
         local starter = ResolveFirstRunWishlist()
         if starter then

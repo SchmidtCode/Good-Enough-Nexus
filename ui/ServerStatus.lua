@@ -168,6 +168,12 @@ end
 
 local function UsingNexusHud()
     EnsureDefaultMode()
+    -- The emergency community-off build keeps Project Ebonhold's stock HUD
+    -- authoritative. Do not rewrite the saved preference: removing this
+    -- release flag in a later full build restores the user's chosen mode.
+    if Nexus.Release and Nexus.Release.emergencyCommunityOff == true then
+        return false
+    end
     return NexusDB.soulAshHudMode == "nexus"
 end
 

@@ -27,9 +27,10 @@ for _, invalid in ipairs({"", "v", "01.2.3", "1..2", "1.2.3-", "1.2.3+",
     assert(Version.Parse(invalid) == nil, "malformed version accepted: " .. tostring(invalid))
 end
 
-assert(Nexus.Release.version == "1.20.0-beta.2.community-off"
+assert(Nexus.Release.version == "1.20.0-beta.2.co-test.1"
     and Nexus.Release.baseVersion == "1.19.5"
-    and Nexus.Release.published == false,
+    and Nexus.Release.published == false
+    and Nexus.Release.emergencyCommunityOff == true,
     "beta release identity does not retain the actual stable base")
 UnitName = function() return "Local" end
 GetNormalizedRealmName = function() return "Ebonhold" end
