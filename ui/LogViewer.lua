@@ -18,6 +18,8 @@ local TABS = {
     { key = "sync",     label = "Sync" },
     { key = "dps",      label = "DPS" },
     { key = "autolock", label = "AutoLock" },
+    { key = "perf",     label = "Perf" },
+    { key = "errors",   label = "Errors" },
 }
 
 local frame, editBox, scroll, tabButtons, statusFS, exportButton
@@ -191,7 +193,9 @@ local function EnsureFrame()
     for i, tab in ipairs(TABS) do
         local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
         b:SetSize(76, 22)
-        if prev then
+        if i == 6 then
+            b:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -56)
+        elseif prev then
             b:SetPoint("LEFT", prev, "RIGHT", 4, 0)
         else
             b:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -30)
@@ -245,14 +249,18 @@ local function EnsureFrame()
     clearButton:SetText("Clear Log")
     clearButton:SetScript("OnClick", function(self)
         StopExport()
+        local errorsOnly = activeTab == "errors"
         local ok, result = false, nil
         if type(clearProvider) == "function" then
-            ok, result = pcall(clearProvider)
+            ok, result = pcall(clearProvider, activeTab)
         end
-        activeTab = "state"
+        if activeTab ~= "errors" then activeTab = "state" end
         if ok and result ~= false then
             self:SetText("Cleared")
-            if statusFS then statusFS:SetText("Diagnostic history cleared") end
+            if statusFS then
+                statusFS:SetText(errorsOnly and "Error history cleared"
+                    or "Diagnostic history cleared")
+            end
         else
             self:SetText("Clear Failed")
             if statusFS then statusFS:SetText("Could not clear diagnostic history") end
@@ -270,14 +278,14 @@ local function EnsureFrame()
     clearButton:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText("Clear diagnostic history")
-        GameTooltip:AddLine("Clears retained boards, save/guarantee audits, UI probes, sync events, and DPS debug lines in one click. This does not change settings, builds, or automation.", 1, 1, 1, true)
+        GameTooltip:AddLine("On the Errors tab, clears only retained errors. On other tabs, clears retained boards, audits, UI probes, sync events, DPS debug lines, and errors. Settings, builds, and automation are unchanged.", 1, 1, 1, true)
         GameTooltip:Show()
     end)
     clearButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     scroll = CreateFrame("ScrollFrame", "NexusLogScroll", frame,
         "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -58)
+    scroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -84)
     scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 36)
 
     editBox = CreateFrame("EditBox", nil, scroll)

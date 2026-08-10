@@ -2,20 +2,38 @@
 ## Title: Nexus
 ## Notes: Nexus — Echo build automation, community builds, DPS leaderboards, and auto-snapshot convergence.
 ## Author: Boganic
-## Version: 1.19.5
+## Version: 1.20.0-beta.1
 ## OptionalDeps: ProjectEbonhold
 ## SavedVariables: NexusDB WishlistRealizerDB
 
+data\Release.lua
 data\DefaultProfile.lua
+data\BundledBuilds.lua
+logic\Version.lua
+core\Performance.lua
+core\EchoCatalogSource.lua
 logic\Model.lua
 logic\Strategy.lua
 logic\Ratchet.lua
 logic\Policy.lua
+core\Revisions.lua
+core\LoadoutEvidence.lua
+core\DataCompaction.lua
+core\BuildCatalog.lua
+core\BuildHashCache.lua
 core\Store.lua
+core\Errors.lua
+core\Scheduler.lua
+core\DiagnosticHistory.lua
+core\DiagnosticLogs.lua
+core\ViewRefresh.lua
+core\Updates.lua
 core\Codec.lua
 core\Sync.lua
 core\DpsCapture.lua
+core\ViewProjections.lua
 core\GameAdapter.lua
+ui\VirtualList.lua
 ui\Theme.lua
 ui\Readout.lua
 ui\ServerStatus.lua

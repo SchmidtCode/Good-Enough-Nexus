@@ -69,6 +69,12 @@ local selectedId  = nil
 local pendingLockIn = nil
 local IsOwnBuild
 local lastSavedLoadoutImport = 0
+local renderBuildWindow, virtualBinding = nil, false
+local virtualStats = {
+    created=0, peakActive=0, active=0, results=0,
+    dataBinds=0, scrollBinds=0, resizeBinds=0,
+    first=1, last=0, offset=0, maxOffset=0,
+}
 
 ------------------------------------------------------------------------
 -- Saved-variable helpers
@@ -79,12 +85,38 @@ local function IsAdmin()
     return name and tostring(name):lower() == "explore"
 end
 
+local function Catalog()
+    return Nexus and Nexus.BuildCatalog
+end
+
+local function LoadBuild(id)
+    local catalog = Catalog()
+    if not (catalog and catalog.Get) then return nil end
+    return catalog.Get(id)
+end
+
+local function SaveBuild(build)
+    local catalog = Catalog()
+    if not (catalog and catalog.Put) then return false, "build catalog unavailable" end
+    return catalog.Put(build)
+end
+
+local function RemoveOverlay(id)
+    local catalog = Catalog()
+    return catalog and catalog.RemoveOverlay and catalog.RemoveOverlay(id) or false
+end
+
+local function SetTombstone(id, tombstone)
+    local catalog = Catalog()
+    return catalog and catalog.SetTombstone
+        and catalog.SetTombstone(id, tombstone) or false
+end
+
 local function RemoveLegacyBuilds()
-    NexusDB.communityBuilds = NexusDB.communityBuilds or {}
-    local db = NexusDB.communityBuilds
+    local db = Catalog() and Catalog().All and Catalog().All() or {}
     for id, b in pairs(db) do
         if b and tostring(b.author or ""):lower() == "wr team" then
-            db[id] = nil
+            RemoveOverlay(id)
             if selectedId == id then selectedId = nil end
         end
     end
@@ -92,8 +124,8 @@ local function RemoveLegacyBuilds()
 end
 
 local function Store()
-    NexusDB.communityBuilds = NexusDB.communityBuilds or {}
-    return NexusDB.communityBuilds
+    local catalog = Catalog()
+    return catalog and catalog.All and catalog.All() or {}
 end
 
 local function FilterSettings()
@@ -233,6 +265,11 @@ end
 
 local function SortedBuilds()
     local fs = FilterSettings()
+    local projections = Nexus and Nexus.ViewProjections
+    if projections and type(projections.Builds) == "function" then
+        local rows, summary = projections.Builds(fs)
+        if type(rows) == "table" then return rows, summary end
+    end
     local search = (fs.search or ""):lower():gsub("^%s+",""):gsub("%s+$","")
     local classFilter = fs.classFilter
     local scope = fs.scope or "all"
@@ -287,9 +324,11 @@ local function SortedBuilds()
 
         local an, bn = (a.title or ""):lower(), (b.title or ""):lower()
         if an ~= bn then return an < bn end
-        return tostring(a.id or "") < tostring(b.id or "")
+        local aid = type(a.id) .. ":" .. tostring(a.id or "")
+        local bid = type(b.id) .. ":" .. tostring(b.id or "")
+        return aid < bid
     end)
-    return out
+    return out, nil
 end
 
 local function DpsBoardRows(category)
@@ -303,7 +342,8 @@ local function DpsBoardRows(category)
     local out = {}
     for _, row in ipairs(rows) do
         local build = row.build or {}
-        local classMatch = not classFilter or (build.class or ""):upper() == classFilter
+        local classMatch = not classFilter
+            or (build.class or row.class or ""):upper() == classFilter
         local searchMatch = search == ""
             or tostring(row.player or ""):lower():find(search, 1, true)
             or tostring(build.title or ""):lower():find(search, 1, true)
@@ -372,7 +412,7 @@ end
 
 function M.IsOwnBuild(idOrBuild)
     local build = type(idOrBuild) == "table" and idOrBuild
-        or Store()[idOrBuild]
+        or LoadBuild(idOrBuild)
     return IsOwnBuild(build)
 end
 
@@ -477,7 +517,7 @@ local function ImportCurrentSavedLoadouts(force)
                 total = total + stacks
             end
             local serverTitle = (live.name and live.name ~= "") and live.name or ("Saved Build " .. slot)
-            local old = Store()[id]
+            local old = LoadBuild(id)
             -- Saved-loadout mirrors keep the server name as their default, but a
             -- player-entered build title remains available for editing/uploading.
             local title = (old and old.userTitle and old.userTitle ~= "") and old.userTitle or serverTitle
@@ -521,7 +561,7 @@ local function ImportCurrentSavedLoadouts(force)
                     activeServerBuild=(slots.activeSlot == slot), _savedSignature=signature,
                 }
                 if RefreshBuildIdentity(record) then
-                    Store()[id] = record
+                    SaveBuild(record)
                     changed = changed + 1
                 end
             elseif old then
@@ -538,6 +578,7 @@ local function ImportCurrentSavedLoadouts(force)
                 old.destinationWishlistSlot = linked and linked.slot or nil
                 old.destinationProgress = progress
                 old.destinationTotal = destinationTotal
+                SaveBuild(old)
             end
         end
     end
@@ -546,7 +587,7 @@ local function ImportCurrentSavedLoadouts(force)
     -- posted builds and imported records belonging to other characters stay.
     for id, build in pairs(Store()) do
         if build and build.importedSavedBuild and tostring(build.author or ""):lower() == me:lower() and not seen[id] then
-            Store()[id] = nil
+            RemoveOverlay(id)
             if selectedId == id then selectedId = nil end
             changed = changed + 1
         end
@@ -676,7 +717,7 @@ function M.EnsureDpsBuildForEchoes(echoes, category, record)
 
     -- A protocol build ID is an identity, not a derived alias. Never attach
     -- its record to a different loadout or owner merely because IDs collide.
-    local explicitExisting = explicitId and Store()[explicitId] or nil
+    local explicitExisting = explicitId and LoadBuild(explicitId) or nil
     if explicitExisting then
         local existingKey = explicitExisting.fingerprint
             or D.GetEchoKey(explicitExisting.echoes)
@@ -716,6 +757,7 @@ function M.EnsureDpsBuildForEchoes(echoes, category, record)
             explicitExisting.description = "Automatically completed from a compatible DPS record. Exact Echo IDs and stack quantities are preserved for copying and comparison."
             explicitExisting.lastModified = NextStamp(
                 explicitExisting.lastModified or explicitExisting.postedAt or 0)
+            SaveBuild(explicitExisting)
             BroadcastIfPossible(explicitExisting)
         end
         return explicitId, explicitExisting
@@ -782,6 +824,7 @@ function M.EnsureDpsBuildForEchoes(echoes, category, record)
                 .. " Record Loadout"
             ownAutoBuild.lastModified = NextStamp(
                 ownAutoBuild.lastModified or ownAutoBuild.postedAt)
+            SaveBuild(ownAutoBuild)
             BroadcastIfPossible(ownAutoBuild)
         end
         return ownAutoId, ownAutoBuild
@@ -802,7 +845,7 @@ function M.EnsureDpsBuildForEchoes(echoes, category, record)
         needsFullBuild=false,
     }
     if not RefreshBuildIdentity(build) then return nil end
-    Store()[id] = build
+    SaveBuild(build)
     BroadcastIfPossible(build)
     return id, build
 end
@@ -858,7 +901,7 @@ function M.PostCurrentWishlist(title, description, selectedWishlist, selectedCla
     }
     local identityOk, identityErr = RefreshBuildIdentity(record)
     if not identityOk then return false, identityErr end
-    Store()[id] = record
+    SaveBuild(record)
     BroadcastIfPossible(record)
     local D = Nexus.DpsCapture
     if D and D.BroadcastBestForBuild then
@@ -878,7 +921,7 @@ local function HasLeaderboardRecord(build)
 end
 
 function M.PublishImportedBuild(id)
-    local source = Store()[id]
+    local source = LoadBuild(id)
     if not source or not source.importedSavedBuild then return false, "not a saved loadout" end
     if not IsOwnBuild(source) then return false, "not your build" end
     if type(source.echoes) ~= "table" or #source.echoes == 0 then return false, "that build has no echoes" end
@@ -886,7 +929,7 @@ function M.PublishImportedBuild(id)
     -- Use one stable published record per Saved Build mirror. Re-uploading
     -- updates the existing community record rather than creating duplicates.
     local publishedId = source.publishedBuildId or ("published-" .. tostring(id))
-    local old = Store()[publishedId]
+    local old = LoadBuild(publishedId)
     local stamp = NextStamp(old and old.lastModified or 0)
     local echoes = {}
     for _, e in ipairs(source.echoes) do
@@ -914,9 +957,10 @@ function M.PublishImportedBuild(id)
     }
     local identityOk, identityErr = RefreshBuildIdentity(record)
     if not identityOk then return false, identityErr end
-    Store()[publishedId] = record
+    SaveBuild(record)
     source.publishedBuildId = publishedId
     source.lastPublishedAt = stamp
+    SaveBuild(source)
     BroadcastIfPossible(record)
     local D = Nexus.DpsCapture
     if D and D.BroadcastBestForBuild then pcall(D.BroadcastBestForBuild, publishedId) end
@@ -924,7 +968,7 @@ function M.PublishImportedBuild(id)
 end
 
 function M.EditBuild(id, title, description, discordLink)
-    local b = Store()[id]
+    local b = LoadBuild(id)
     if not b then return false, "not found" end
     if not IsOwnBuild(b) then return false, "not your build" end
 
@@ -956,6 +1000,7 @@ function M.EditBuild(id, title, description, discordLink)
         b.userDescription = nextDescription
     end
     b.lastModified = NextStamp(b.lastModified or b.postedAt)
+    SaveBuild(b)
     -- Editing a server Saved Build mirror is local-only. It reaches the
     -- community only through the explicit Upload Build action (or a DPS
     -- record path handled by DpsCapture).
@@ -964,7 +1009,7 @@ function M.EditBuild(id, title, description, discordLink)
 end
 
 function M.UpdateFromWishlist(id)
-    local b = Store()[id]
+    local b = LoadBuild(id)
     if not b then return false, "not found" end
     if not IsOwnBuild(b) then return false, "not your build" end
     if b.importedSavedBuild then
@@ -992,6 +1037,7 @@ function M.UpdateFromWishlist(id)
     b.loadoutAvailable = candidate.loadoutAvailable
     b.needsFullBuild = candidate.needsFullBuild
     b.lastModified = NextStamp(b.lastModified or b.postedAt)
+    SaveBuild(b)
     BroadcastIfPossible(b)
     local D = Nexus.DpsCapture
     if D and D.BroadcastBestForBuild then
@@ -1001,7 +1047,7 @@ function M.UpdateFromWishlist(id)
 end
 
 function M.DeleteBuild(id)
-    local b = Store()[id]
+    local b = LoadBuild(id)
     if not b then return false, "not found" end
     if not IsOwnBuild(b) and not IsAdmin() then
         return false, "not your build"
@@ -1012,7 +1058,18 @@ function M.DeleteBuild(id)
     if IsOwnBuild(b) and Nexus.Sync then
         pcall(Nexus.Sync.BroadcastDelete, b)
     end
-    Store()[id] = nil
+    -- Sync normally creates the authorized tombstone. Keep the catalog
+    -- lifecycle correct in focused/offline callers too, and let an explicit
+    -- local admin removal hide an immutable bundled row without broadcasting
+    -- a forged owner deletion.
+    if LoadBuild(id) then
+        SetTombstone(id, {
+            stamp=(time and time()) or 0,
+            author=tostring(b.author or ""),
+            localOnly=not IsOwnBuild(b) or nil,
+        })
+    end
+    RemoveOverlay(id)
     if selectedId == id then selectedId = nil end
     return true
 end
@@ -1073,7 +1130,7 @@ StaticPopupDialogs["NEXUS_LOCKIN_BUILD"] = {
 
 function M.LockInSelected()
     if not selectedId then return end
-    local build = Store()[selectedId]
+    local build = LoadBuild(selectedId)
     if not build then return end
     if type(build.echoes) ~= "table" or #build.echoes == 0 then
         if Nexus.Sync and Nexus.Sync.RequestLoadout then Nexus.Sync.RequestLoadout(selectedId) end
@@ -1203,7 +1260,7 @@ local function EnsureDetailPanel(parent)
     linkSaveBtn:SetText("Save Link")
     linkSaveBtn:SetScript("OnClick", function()
         local link = linkBox:GetText():gsub("^%s+",""):gsub("%s+$","")
-        local build = selectedId and Store()[selectedId]
+        local build = selectedId and LoadBuild(selectedId)
         if not build or not IsOwnBuild(build) then return end
         local ok, err = M.EditBuild(
             selectedId, build.title, build.description, link)
@@ -1362,7 +1419,7 @@ local function EnsureDetailPanel(parent)
     p.lockBtn:SetPoint("BOTTOMLEFT",8,8)
     p.lockBtn:SetText("Copy into Editor")
     p.lockBtn:SetScript("OnClick", function()
-        local b = selectedId and Store()[selectedId]
+        local b = selectedId and LoadBuild(selectedId)
         if not b then return end
         if b.importedSavedBuild then
             local ok, err = M.PublishImportedBuild(selectedId)
@@ -1430,7 +1487,7 @@ local function EnsureDetailPanel(parent)
     end)
     p.lockBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self,"ANCHOR_TOP")
-        local b = selectedId and Store()[selectedId]
+        local b = selectedId and LoadBuild(selectedId)
         if b and b.importedSavedBuild then
             GameTooltip:AddLine("Publish this saved loadout",0.9,0.9,0.9,true)
             GameTooltip:AddLine("Uploads it to the community build list so others can see and copy it.",0.7,0.7,0.7,true)
@@ -1706,6 +1763,7 @@ local function GetCard(parent)
     end
 
     local card = CreateFrame("Button", nil, parent)
+    virtualStats.created = virtualStats.created + 1
     card:SetHeight(CARD_HEIGHT)
     card:EnableMouse(true)
 
@@ -1819,6 +1877,9 @@ local function GetCard(parent)
         selectedId = self.buildId
         M.Refresh()
     end)
+    if Nexus.Theme and Nexus.Theme.StyleVirtualRow then
+        Nexus.Theme.StyleVirtualRow(card, {card.addBtn, card.menuBtn})
+    end
     return card
 end
 
@@ -2294,6 +2355,10 @@ local function EnsureFrame()
         val = math.max(scrollBar.min, math.min(scrollBar.max, val))
         scrollBar.value = val
         pcall(function() scrollFrame:SetVerticalScroll(val) end)
+        if renderBuildWindow and frame and frame:IsShown()
+            and not virtualBinding then
+            renderBuildWindow("scroll")
+        end
     end
     scrollBar.SetValue = function(_, val) SetScroll(val) end
     scrollBar.GetValue = function(_) return scrollBar.value end
@@ -2303,6 +2368,13 @@ local function EnsureFrame()
     scrollFrame:SetScript("OnMouseWheel",function(_,delta)
         SetScroll(scrollBar.value - delta * CARD_HEIGHT * 3)
     end)
+    scrollFrame:SetScript("OnSizeChanged", function()
+        if renderBuildWindow and frame and frame:IsShown()
+            and not virtualBinding then
+            renderBuildWindow("resize")
+        end
+    end)
+    frame._virtualListScrollFrame = scrollFrame
 
     local emptyState = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     emptyState:SetPoint("TOPLEFT", listClip, "TOPLEFT", 20, 34)
@@ -2329,7 +2401,20 @@ end
 
 function M.GetSelectedBuildForPanel()
     if not frame or not frame:IsShown() or not selectedId then return nil end
-    return Store()[selectedId]
+    return LoadBuild(selectedId)
+end
+
+function M.VirtualStats()
+    local out = {}
+    for key, value in pairs(virtualStats) do out[key] = value end
+    out.selectedId = selectedId
+    return out
+end
+
+function M.ScrollTo(offset)
+    if not scrollBar then return false end
+    scrollBar:SetValue(tonumber(offset) or 0)
+    return true
 end
 
 ------------------------------------------------------------------------
@@ -2394,21 +2479,29 @@ function M.Refresh()
     -- Build browser contains builds only. DPS rankings are rendered in the
     -- dedicated Leaderboard window.
     local boardRows = nil
-    local builds = SortedBuilds()
+    local builds, projectionSummary = SortedBuilds()
     if resultText then
-        local total, mine = 0, 0
-        for _, b in pairs(Store()) do total=total+1; if IsOwnBuild(b) then mine=mine+1 end end
+        local total = projectionSummary and projectionSummary.total or 0
+        if not projectionSummary then
+            for _ in pairs(Store()) do total=total+1 end
+        end
         if fs.scope == "mine" then
-            local loadouts, uploaded = 0, 0
-            for _, b in pairs(Store()) do
-                if b.importedSavedBuild then loadouts = loadouts + 1
-                elseif IsOwnBuild(b) then uploaded = uploaded + 1 end
+            local loadouts = projectionSummary and projectionSummary.savedLoadouts or 0
+            local uploaded = projectionSummary and projectionSummary.uploaded or 0
+            if not projectionSummary then
+                for _, b in pairs(Store()) do
+                    if b.importedSavedBuild then loadouts = loadouts + 1
+                    elseif IsOwnBuild(b) then uploaded = uploaded + 1 end
+                end
             end
             resultText:SetText(string.format("|cffd8c7a0%d saved loadouts|r  |cff777777•|r  %d uploaded builds", loadouts, uploaded))
         else
-            local ready, pending = 0, 0
-            for _, b in ipairs(builds) do
-                if IsBuildFullyLoaded(b) then ready = ready + 1 else pending = pending + 1 end
+            local ready = projectionSummary and projectionSummary.ready or 0
+            local pending = projectionSummary and projectionSummary.pending or 0
+            if not projectionSummary then
+                for _, b in ipairs(builds) do
+                    if IsBuildFullyLoaded(b) then ready = ready + 1 else pending = pending + 1 end
+                end
             end
             if pending > 0 then
                 resultText:SetText(string.format("|cffd8c7a0%d ready|r  |cff777777•|r  |cffffd200%d syncing|r", ready, pending))
@@ -2417,14 +2510,25 @@ function M.Refresh()
             end
         end
     end
+    renderBuildWindow = function(reason)
+        if virtualBinding then return end
+        virtualBinding = true
+        local ok, err = pcall(function()
     ReleaseAllCards()
     ReleaseAllHeaders()
 
-    local yOffset = 0
+    local rowHeight = CARD_HEIGHT + 4
+    local visibleH = math.max(100,
+        (scrollFrame and scrollFrame:GetHeight()) or 458)
+    local virtual = Nexus.VirtualList.Window(
+        #builds, rowHeight, visibleH,
+        scrollBar and scrollBar.value or 0, 2)
+    local yOffset = (virtual.first - 1) * rowHeight
     local lastClass = "__none__"
     local showHeaders = false
 
-    for index, b in ipairs(builds) do
+    for index = virtual.first, virtual.last do
+        local b = builds[index]
         local bClass = (b.class or ""):upper()
 
         -- Class header when sorted by class and not filtered
@@ -2443,6 +2547,9 @@ function M.Refresh()
 
         -- Build card
         local card = GetCard(scrollChild)
+        -- Check cards into the active set before binding data so the failure
+        -- path can always reclaim a partially bound card.
+        activeCards[#activeCards+1] = card
         card:SetWidth(460)
         card:ClearAllPoints()
         card:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -yOffset)
@@ -2526,13 +2633,15 @@ function M.Refresh()
         card.menuBtn:Hide()
         card.record = nil
 
-        activeCards[#activeCards+1] = card
-        yOffset = yOffset + CARD_HEIGHT + 4
+        yOffset = yOffset + rowHeight
     end
 
     -- Empty state
     if #builds == 0 then
-        local total = 0; for _ in pairs(Store()) do total=total+1 end
+        local total = projectionSummary and projectionSummary.total or 0
+        if not projectionSummary then
+            for _ in pairs(Store()) do total=total+1 end
+        end
         local msg
         msg = total == 0
             and "No builds yet.\n\nPost a build from your active Echo Wishlist, or press Sync Now to find builds from other players."
@@ -2543,20 +2652,50 @@ function M.Refresh()
         end
         scrollChild:SetHeight(80)
         scrollBar:SetMinMaxValues(0,0)
-        scrollBar:SetValue(0)
+        scrollBar.value = 0
+        pcall(function() scrollFrame:SetVerticalScroll(0) end)
         RefreshDetailPanel(nil)
     else
         if frame._emptyState then frame._emptyState:Hide() end
-        scrollChild:SetHeight(math.max(yOffset, 10))
-        local visibleH = math.max(100, (scrollFrame and scrollFrame:GetHeight()) or 458)
-        local overflow = math.max(0, yOffset - visibleH)
-        scrollBar:SetMinMaxValues(0, overflow)
-        local curVal = tonumber(scrollBar:GetValue()) or 0
-        if curVal > overflow then scrollBar:SetValue(overflow) end
+        scrollChild:SetHeight(math.max(virtual.contentHeight, 10))
+        scrollBar:SetMinMaxValues(0, virtual.maxOffset)
+        scrollBar.value = virtual.offset
+        pcall(function() scrollFrame:SetVerticalScroll(virtual.offset) end)
     end
+    virtualStats.results = #builds
+    virtualStats.active = #activeCards
+    virtualStats.peakActive = math.max(virtualStats.peakActive, #activeCards)
+    virtualStats.first, virtualStats.last = virtual.first, virtual.last
+    virtualStats.offset, virtualStats.maxOffset = virtual.offset, virtual.maxOffset
+    virtualStats.selectedVisible = false
+    for index = virtual.first, virtual.last do
+        if builds[index] and builds[index].id == selectedId then
+            virtualStats.selectedVisible = true
+            break
+        end
+    end
+    if reason == "scroll" then
+        virtualStats.scrollBinds = virtualStats.scrollBinds + 1
+    elseif reason == "resize" then
+        virtualStats.resizeBinds = virtualStats.resizeBinds + 1
+    else
+        virtualStats.dataBinds = virtualStats.dataBinds + 1
+    end
+        end)
+        virtualBinding = false
+        if not ok then
+            pcall(ReleaseAllCards)
+            pcall(ReleaseAllHeaders)
+            virtualStats.active = 0
+            virtualStats.first, virtualStats.last = 1, 0
+            virtualStats.selectedVisible = false
+            error(err)
+        end
+    end
+    renderBuildWindow("data")
 
     -- Detail panel
-    RefreshDetailPanel(selectedId and Store()[selectedId])
+    RefreshDetailPanel(selectedId and LoadBuild(selectedId))
 
     -- Search placeholder visibility
     if searchBox then
@@ -2871,7 +3010,7 @@ end
 function M.ToggleEditPopup(id)
     EnsureEditPopup()
     if editPopup:IsShown() then editPopup:Hide(); return end
-    local b = Store()[id]
+    local b = LoadBuild(id)
     if not b or not IsOwnBuild(b) then return end
     editPopup._editingId = id
     local locked = HasLeaderboardRecord(b)
@@ -2908,12 +3047,29 @@ end
 
 function M.Init(adapter, model)
     Adapter, Model = adapter, model
+    if Catalog() and Catalog().Init then
+        Catalog().Init(NexusDB or {}, Nexus.BundledBuilds)
+    end
     RemoveLegacyBuilds()  -- once at startup, not on every Store() access
     -- Repair hashes written by the short-lived two-part hash implementation.
     -- This is metadata-only: no timestamps or ownership fields are changed.
-    for _, build in pairs(Store()) do
-        if type(build.echoes) == "table" and #build.echoes > 0 then
-            RefreshBuildIdentity(build)
+    for id, build in pairs(Store()) do
+        local _, source = Catalog().Get(id)
+        if source == "overlay" and type(build.echoes) == "table"
+            and #build.echoes > 0 then
+            local oldFingerprint = build.fingerprint
+            local oldHash = build.fingerprintHash
+            local oldCount = build.echoCount
+            local oldAvailable = build.loadoutAvailable
+            local oldNeeds = build.needsFullBuild
+            if RefreshBuildIdentity(build)
+                and (oldFingerprint ~= build.fingerprint
+                    or oldHash ~= build.fingerprintHash
+                    or oldCount ~= build.echoCount
+                    or oldAvailable ~= build.loadoutAvailable
+                    or oldNeeds ~= build.needsFullBuild) then
+                SaveBuild(build)
+            end
         end
     end
 end
@@ -2947,7 +3103,8 @@ end
 function M.ShowBuild(id)
     selectedId = id
     M.Show()
-    if id and Store()[id] and (not Store()[id].echoes or #Store()[id].echoes == 0)
+    local build = id and LoadBuild(id)
+    if build and (not build.echoes or #build.echoes == 0)
         and Nexus.Sync and Nexus.Sync.RequestLoadout then
         Nexus.Sync.RequestLoadout(id)
     end

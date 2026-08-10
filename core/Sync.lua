@@ -10,6 +10,8 @@
 --
 -- WIRE PROTOCOL (| separated; pipe escaped to || on send):
 --   WLRQ|<sender>|<buildhash>|<dpshash>|<requestId> -- state request
+--     buildhash is 8 delta buckets plus a bundled-catalog token on current
+--     releases; legacy 8-bucket hashes retain full-catalog recovery.
 --   WLRC|<sender>|<requester>|<requestId>|<buildhash>|<dpshash> -- claim
 --   WLRB|<sender>|<id>|<m>|<idx>/<total>|<b64>  -- build chunk
 --   WLRD|<sender>|<id>|<stamp>                   -- delete notification
@@ -140,6 +142,49 @@ local Now, MyName
 local knownPeers = {} -- normalized player name -> { name, version, lastSeen }
 local CleanExpiredInflight
 
+local function Catalog()
+    return Nexus and Nexus.BuildCatalog
+end
+
+local function CatalogGet(id)
+    local catalog = Catalog()
+    if not (catalog and catalog.Get) then return nil end
+    return catalog.Get(id)
+end
+
+local function CatalogAll()
+    local catalog = Catalog()
+    return catalog and catalog.All and catalog.All() or {}
+end
+
+local function CatalogDelta()
+    local catalog = Catalog()
+    return catalog and catalog.DeltaSnapshot and catalog.DeltaSnapshot() or {}
+end
+
+local function CatalogVersion()
+    local catalog = Catalog()
+    return catalog and catalog.CatalogVersion
+        and catalog.CatalogVersion() or "unversioned"
+end
+
+local function CatalogPut(build)
+    local catalog = Catalog()
+    return catalog and catalog.Put and catalog.Put(build) or false
+end
+
+local function CatalogSetTombstone(id, tomb)
+    local catalog = Catalog()
+    return catalog and catalog.SetTombstone
+        and catalog.SetTombstone(id, tomb) or false
+end
+
+local function CatalogClearTombstone(id)
+    local catalog = Catalog()
+    return catalog and catalog.ClearTombstone
+        and catalog.ClearTombstone(id) or false
+end
+
 local function NormalizePeerName(name)
     name = tostring(name or ""):gsub("%s+", "")
     name = name:match("^([^%-]+)") or name
@@ -179,6 +224,13 @@ local function CanStartTransfer(map, sender)
         and (buildSender + dpsSender) < MAX_INFLIGHT_PER_SENDER
 end
 
+local function BumpSync(reason)
+    local revisions = Nexus and Nexus.Revisions
+    if revisions and type(revisions.Advance) == "function" then
+        pcall(revisions.Advance, revisions.SYNC_CHANGED, reason)
+    end
+end
+
 local function MarkPeer(name, version)
     if not name or name == "" then return false end
     local me = MyName and MyName() or ""
@@ -197,11 +249,16 @@ local function MarkPeer(name, version)
         end
         if count >= MAX_KNOWN_PEERS then return false end
     end
+    local wasKnown = knownPeers[key] ~= nil
     local peer = knownPeers[key] or {}
+    local oldName, oldVersion = peer.name, peer.version
     peer.name = tostring(name):match("^([^%-]+)") or tostring(name)
     if version and version ~= "" then peer.version = tostring(version) end
     peer.lastSeen = now
     knownPeers[key] = peer
+    if not wasKnown or oldName ~= peer.name or oldVersion ~= peer.version then
+        BumpSync(not wasKnown and "peer added" or "peer identity updated")
+    end
     return true
 end
 
@@ -232,6 +289,7 @@ local stats = {
     malformedRejected=0, ignoredOutsideWindow=0,
     oversizeDropped=0, updated=0, skippedUpToDate=0,
     queueOverflowRejected=0, pendingOverflowRejected=0,
+    baselineSkipped=0, overlaySent=0,
 }
 
 function Sync.WorkState()
@@ -287,31 +345,41 @@ end
 -- Diagnostic log
 ------------------------------------------------------------------------
 
-local eventLog = {}
-local LOG_CAP  = 160
-local LOG_TRIM_AT = 200
-local logSeq   = 0
-
-local function LogEvent(cat, fmt, ...)
-    logSeq = logSeq + 1
-    local ok, text = pcall(string.format, fmt, ...)
-    if not ok then text = tostring(fmt) end
-    eventLog[#eventLog+1] = { seq=logSeq, t=(GetTime and GetTime()) or 0,
-        cat=cat, text=text }
-    -- Trim in one occasional batch instead of shifting the table on every
-    -- sync message once the cap is reached. Large peer syncs stay smooth.
-    if #eventLog > LOG_TRIM_AT then
-        local keep = {}
-        local first = #eventLog - LOG_CAP + 1
-        for i = first, #eventLog do keep[#keep + 1] = eventLog[i] end
-        eventLog = keep
+local LogEvent
+do
+    local DiagnosticHistory = Nexus.DiagnosticHistory
+    if not (DiagnosticHistory and type(DiagnosticHistory.New) == "function") then
+        error("Nexus DiagnosticHistory must load before Sync")
     end
+    local LOG_CAP, LOG_TRIM_AT, LOG_TEXT_BYTES = 160, 200, 2048
+    local eventHistory = DiagnosticHistory.New({
+        cap=LOG_CAP, trimAt=LOG_TRIM_AT, maxTextBytes=LOG_TEXT_BYTES,
+    })
+    local logSeq = 0
+
+    LogEvent = function(cat, fmt, ...)
+        logSeq = logSeq + 1
+        local stamp = 0
+        if GetTime then
+            local okTime, current = pcall(GetTime)
+            if okTime and type(current) == "number" then stamp = current end
+        end
+        eventHistory.Append({
+            seq=logSeq,
+            t=stamp,
+            cat=DiagnosticHistory.SafeText(cat, 32),
+            text=DiagnosticHistory.Format(LOG_TEXT_BYTES, fmt, ...),
+        })
+    end
+    Sync.LogEvent = LogEvent
+    function Sync.EventLog() return eventHistory.Snapshot() end
+    function Sync.ClearLog() eventHistory.Clear(); logSeq = 0 end
+    function Sync.LogRaw(e)
+        LogEvent("RX", "%s", DiagnosticHistory.SafeText(e, LOG_TEXT_BYTES))
+    end
+    function Sync.RawLog() return eventHistory.Snapshot() end
+    function Sync.LogStats() return eventHistory.Stats() end
 end
-Sync.LogEvent  = LogEvent
-function Sync.EventLog()  return eventLog end
-function Sync.ClearLog()  eventLog = {}; logSeq = 0 end
-function Sync.LogRaw(e)   LogEvent("RX", "%s", tostring(e)) end
-function Sync.RawLog()    return eventLog end
 
 ------------------------------------------------------------------------
 -- Helpers
@@ -365,8 +433,12 @@ local function ValidHash(value)
 end
 
 local function ValidVersion(value)
-    return ValidField(value, MAX_VERSION_BYTES, false)
-        and value:match("^[%w%.%+%-]+$") ~= nil
+    if not ValidField(value, MAX_VERSION_BYTES, false)
+        or value:match("^[%w%.%+%-]+$") == nil then return false end
+    local parser = Nexus and Nexus.Version and Nexus.Version.Parse
+    if type(parser) ~= "function" then return false end
+    local ok, parsed = pcall(parser, value)
+    return ok and parsed ~= nil
 end
 
 local function ValidIntegerText(value, minimum)
@@ -416,7 +488,7 @@ local function BucketContainsTombstone(bucket)
     return false
 end
 
-local function LibraryHash(builds)
+local function LibraryHash(builds, tombstoneSource)
     local buckets = {}
     for i = 1, BUILD_BUCKETS do buckets[i] = {} end
     for id, b in pairs(builds or {}) do
@@ -425,7 +497,7 @@ local function LibraryHash(builds)
         local fp = tostring(b.fingerprintHash or b.fingerprint or "0")
         buckets[bucket][#buckets[bucket]+1] = id..":"..tostring(b.lastModified or b.postedAt or 0)..":"..complete..":"..fp
     end
-    for id, tomb in pairs(tombstones or {}) do
+    for id, tomb in pairs(tombstoneSource or tombstones or {}) do
         local bucket = BuildBucket(id)
         buckets[bucket][#buckets[bucket]+1] = "!"..id..":"..tostring(TombStamp(tomb))..":"..TombAuthor(tomb)
     end
@@ -441,8 +513,29 @@ local function LibraryHash(builds)
     return table.concat(hashes, ",")
 end
 
+local function CatalogToken()
+    local text = tostring(CatalogVersion())
+    local encoded = {}
+    for i = 1, #text do
+        encoded[i] = string.format("%02x", text:byte(i))
+    end
+    return table.concat(encoded)
+end
+
+local function DeltaBuildHash()
+    local cache = Nexus and Nexus.BuildHashCache
+    return cache and cache.Delta and cache.Delta()
+        or LibraryHash(CatalogDelta())
+end
+
+local function LegacyBuildHash()
+    local cache = Nexus and Nexus.BuildHashCache
+    return cache and cache.Legacy and cache.Legacy()
+        or LibraryHash(CatalogAll())
+end
+
 local function CurrentBuildHash()
-    return LibraryHash(NexusDB and NexusDB.communityBuilds or {})
+    return DeltaBuildHash() .. "," .. CatalogToken()
 end
 
 local function CurrentDpsHash()
@@ -458,6 +551,29 @@ end
 -- It exposes the exact hashes placed on WLRQ without mutating sync state.
 function Sync.GetCompatibilityHashes()
     return CurrentBuildHash(), CurrentDpsHash()
+end
+
+-- Explicit diagnostic surfaces. Normal Sync never calls the canonical path;
+-- it exists so tests and exports can prove cache compatibility against the
+-- established whole-collection algorithm.
+function Sync.GetCanonicalBuildHashes()
+    local canonicalTombstones = tombstones
+    local catalog = Catalog()
+    if catalog and type(catalog.TombstoneSnapshot) == "function" then
+        local ok, snapshot = pcall(catalog.TombstoneSnapshot)
+        if ok and type(snapshot) == "table" then canonicalTombstones = snapshot end
+    end
+    return LibraryHash(CatalogDelta(), canonicalTombstones) .. "," .. CatalogToken(),
+        LibraryHash(CatalogAll(), canonicalTombstones)
+end
+
+function Sync.GetLegacyBuildHash()
+    return LegacyBuildHash()
+end
+
+function Sync.HashCacheStats()
+    local cache = Nexus and Nexus.BuildHashCache
+    return cache and cache.Stats and cache.Stats() or {available=false}
 end
 
 local function StableDelay(text)
@@ -948,6 +1064,18 @@ local function PumpPendingDeletes(elapsed)
     end
 end
 
+Sync._pendingDeleteScheduled = false
+
+function Sync.RequestDataViewRefresh()
+    local refresh = Nexus and Nexus.ViewRefresh
+    if refresh and type(refresh.Request) == "function" then
+        return refresh.Request()
+    end
+    if Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then
+        return pcall(Nexus.CommunityBuilds.Refresh)
+    end
+end
+
 local QueueLegacyRecovery
 
 local function StoreSummary(data, transportSender)
@@ -967,9 +1095,8 @@ local function StoreSummary(data, transportSender)
         or not OwnerKeyMatchesAuthor(data.o or data.ownerKey, data.a) then
         return false, false
     end
-    NexusDB.communityBuilds = NexusDB.communityBuilds or {}
     local id = tostring(data.id)
-    local old = NexusDB.communityBuilds[id]
+    local old, oldSource = CatalogGet(id)
     if old and old.isMine then return false, false end
     if old and old.ownerVerified ~= false
         and not SamePeer(old.author, data.a) then return false, false end
@@ -979,6 +1106,12 @@ local function StoreSummary(data, transportSender)
         LogEvent("RX","skip summary '%s': tombstoned", tostring(data.t))
         return true, false
     end
+    if tomb and (TombAuthor(tomb) == ""
+        or not SamePeer(TombAuthor(tomb), data.a)) then
+        LogEvent("RX", "REJECT summary resurrection of '%s': tombstone belongs to %s",
+            tostring(id), tostring(TombAuthor(tomb)))
+        return false, false
+    end
     local oldStamp = old and (tonumber(old.lastModified) or tonumber(old.postedAt) or 0) or nil
     if oldStamp and stamp < oldStamp then
         LogEvent("RX","skip summary '%s': older than local copy", tostring(data.t))
@@ -986,6 +1119,9 @@ local function StoreSummary(data, transportSender)
     end
     if oldStamp and stamp == oldStamp then
         stats.duplicatesSkipped = stats.duplicatesSkipped + 1
+        if oldSource == "bundled" then
+            stats.baselineSkipped = (stats.baselineSkipped or 0) + 1
+        end
         if old and (type(old.echoes) ~= "table" or #old.echoes == 0) then
             QueueLegacyRecovery(id)
             LogEvent("RX","DUPLICATE legacy summary '%s'; queued missing full loadout", tostring(data.t))
@@ -999,7 +1135,7 @@ local function StoreSummary(data, transportSender)
     local oldLinkHash = old and (old.linkHash or HashText(old.link)) or nil
     local linkChanged = old ~= nil and newLinkHash ~= oldLinkHash
     local keepEchoes = old and old.fingerprintHash == newHash and old.echoes or nil
-    NexusDB.communityBuilds[id] = {
+    local record = {
         id=id, title=tostring(data.t):sub(1,120), author=tostring(data.a or "Unknown"):sub(1,80),
         ownerKey=type(data.o)=="string" and data.o:lower() or nil,
         class=data.c, description=old and old.description or "",
@@ -1010,6 +1146,11 @@ local function StoreSummary(data, transportSender)
         linkHash=newLinkHash, needsFullBuild=linkChanged or nil,
         ownerVerified=true,
     }
+    CatalogClearTombstone(id)
+    local _, storedAs = CatalogPut(record)
+    if storedAs == "baseline" then
+        stats.baselineSkipped = (stats.baselineSkipped or 0) + 1
+    end
     seenRemoteIds[id] = stamp
     stats.received = stats.received + 1
     lastSyncNewCount = lastSyncNewCount + 1
@@ -1027,7 +1168,7 @@ end
 
 QueueLegacyRecovery = function(buildId)
     if not ValidIdentifier(buildId, MAX_BUILD_ID_BYTES) then return false end
-    local build = NexusDB and NexusDB.communityBuilds and NexusDB.communityBuilds[buildId]
+    local build = CatalogGet(buildId)
     if build and type(build.echoes) == "table" and #build.echoes > 0 then return false end
     local now = Now()
     if requestedLoadouts[buildId] and now - requestedLoadouts[buildId] < 120 then return false end
@@ -1102,6 +1243,18 @@ local recentBuildBroadcast = {}
 local BUILD_BROADCAST_DEDUPE = 2
 
 function Sync.BroadcastBuild(build)
+    if build and (type(build.echoes) ~= "table" or #build.echoes == 0) then
+        local evidence = Nexus and Nexus.LoadoutEvidence
+        if evidence and type(evidence.ResolveBuildRow) == "function" then
+            local ok, resolved = pcall(evidence.ResolveBuildRow, build)
+            if ok and type(resolved) == "table" then build = resolved end
+        end
+    end
+    if build and (type(build.echoes) ~= "table" or #build.echoes == 0)
+        and build.id ~= nil then
+        local stored = CatalogGet(build.id)
+        if stored then build = stored end
+    end
     if not build or type(build.echoes) ~= "table" or #build.echoes == 0 then
         return false, "no echoes"
     end
@@ -1132,7 +1285,6 @@ function Sync.BroadcastBuild(build)
 end
 
 function Sync.BroadcastMine()
-    if not (NexusDB and NexusDB.communityBuilds) then return 0 end
     local now = Now()
     -- Expire hot builds
     for id, h in pairs(hotBuilds) do
@@ -1141,7 +1293,7 @@ function Sync.BroadcastMine()
     local sent = {}   -- track by id to avoid double-sending
     local n = 0
     -- True mesh: redistribute every valid build held locally.
-    for _, b in pairs(NexusDB.communityBuilds) do
+    for _, b in pairs(CatalogAll()) do
         if BroadcastSummary(b) then n=n+1 end
         sent[b.id] = true
     end
@@ -1158,13 +1310,19 @@ end
 -- Only send builds the requester doesn't already have.
 -- peerHash: djb2 hash of peer's library (from their WLRQ).
 -- If hash matches ours, peer is fully up to date → send nothing.
-local function BroadcastMineFiltered(peerHash, onlyBucket, progress)
-    local myDB = NexusDB and NexusDB.communityBuilds or {}
+local function BroadcastMineFiltered(peerHash, onlyBucket, progress, mode)
+    mode = mode == "delta" and "delta" or "legacy"
+    local myDB = mode == "delta" and CatalogDelta() or CatalogAll()
     local myMine = {}
     progress = type(progress) == "table" and progress or {}
     for id, b in pairs(myDB) do myMine[id] = b end
     for id, h in pairs(hotBuilds) do
-        if not myMine[id] and (Now()-h.t) <= HOT_WINDOW then myMine[id] = h.build end
+        if not myMine[id] and (Now()-h.t) <= HOT_WINDOW then
+            local _, source = CatalogGet(id)
+            if mode == "legacy" or source == "overlay" then
+                myMine[id] = h.build
+            end
+        end
     end
     if not next(myMine) and not next(tombstones or {}) then
         LogEvent("TX","nothing to share")
@@ -1233,6 +1391,9 @@ local function BroadcastMineFiltered(peerHash, onlyBucket, progress)
                     ClearPendingDelete(item.id, item.tomb)
                 end
                 n = n + 1
+                if mode == "delta" and item.kind == "build" then
+                    stats.overlaySent = (stats.overlaySent or 0) + 1
+                end
             elseif why == "sync queue full"
                 or why == "duplicate suppressed" then
                 -- Preserve admitted progress. The next attempt resumes with
@@ -1295,6 +1456,12 @@ end
 -- Broadcast a validated exact-set DPS record. The JSON/base64 payload is
 -- chunked using the same 255-byte-safe discipline as build sync.
 function Sync.BroadcastDpsRecord(record)
+    local D = Nexus.DpsCapture
+    if type(record) == "table" and D
+        and type(D.MaterializeRecord) == "function" then
+        local ok, resolved = pcall(D.MaterializeRecord, record)
+        if ok and type(resolved) == "table" then record = resolved end
+    end
     if type(record) ~= "table" or type(record.fingerprint) ~= "string"
         or type(record.echoes) ~= "table" then return false end
     local dps = tonumber(record.dps)
@@ -1309,7 +1476,6 @@ function Sync.BroadcastDpsRecord(record)
         or playerClass == "PRIEST" or playerClass == "DEATHKNIGHT"
         or playerClass == "SHAMAN" or playerClass == "MAGE"
         or playerClass == "WARLOCK" or playerClass == "DRUID"
-    local D = Nexus.DpsCapture
     local computed = D and D.GetEchoKey and D.GetEchoKey(record.echoes) or nil
     if not FiniteNumber(dps) or dps <= 0 or dps > 500000000
         or not FiniteNumber(duration) or duration < 30
@@ -1440,8 +1606,7 @@ local function HandleDps2(parts)
             -- Also relay the exact echo list if we have it locally —
             -- the original player may be offline so we carry the data forward.
             local buildId = record.b or record.buildId
-            local build = buildId and NexusDB and NexusDB.communityBuilds
-                and NexusDB.communityBuilds[buildId]
+            local build = buildId and CatalogGet(buildId)
             if build and type(build.echoes) == "table" and #build.echoes > 0 then
                 pcall(Sync.BroadcastBuild, build)
             end
@@ -1458,7 +1623,9 @@ function Sync.BroadcastDelete(build)
     local author = tostring(build.author or MyName())
     if not SamePeer(author, MyName()) then return false end
     local tomb = { stamp=tonumber(stamp) or 0, author=author }
+    CatalogSetTombstone(build.id, tomb)
     tombstones[build.id] = tomb
+    hotBuilds[build.id] = nil
     local queued, why = Enqueue(DeleteWireMessage(build.id, tomb))
     if queued then
         ClearPendingDelete(build.id, tomb)
@@ -1500,10 +1667,14 @@ local function ValidatePayload(data)
     return CompactDecode(data)
 end
 
-local function ShouldStore(id, lastMod)
+local function ShouldStore(id, lastMod, author)
     local tomb = tombstones[id]
     if tomb and (tonumber(lastMod) or 0) <= TombStamp(tomb) then return false, "deleted" end
-    local existing = NexusDB and NexusDB.communityBuilds and NexusDB.communityBuilds[id]
+    if tomb and (TombAuthor(tomb) == ""
+        or not SamePeer(TombAuthor(tomb), author)) then
+        return false, "tombstone owner"
+    end
+    local existing = CatalogGet(id)
     local known = seenRemoteIds[id]
     if known == nil and existing then
         known = tonumber(existing.lastModified) or tonumber(existing.postedAt) or 0
@@ -1519,12 +1690,11 @@ local function ShouldStore(id, lastMod)
 end
 
 local function StoreReceivedBuild(payload, ownerVerified, relaySender)
-    NexusDB.communityBuilds = NexusDB.communityBuilds or {}
-    local existing = NexusDB.communityBuilds[payload.id]
+    local existing = CatalogGet(payload.id)
     local mine = (existing and existing.isMine) or false
     -- Preserve an existing local link if the incoming payload has no link
     local link = payload.link or (existing and existing.link) or nil
-    NexusDB.communityBuilds[payload.id] = {
+    local record = {
         id=payload.id, title=payload.title, description=payload.description,
         author=payload.author,
         ownerKey=ownerVerified and payload.ownerKey or nil,
@@ -1538,6 +1708,11 @@ local function StoreReceivedBuild(payload, ownerVerified, relaySender)
         ownerVerified=ownerVerified and true or false,
         relaySender=ownerVerified and nil or relaySender,
     }
+    CatalogClearTombstone(payload.id)
+    local _, storedAs = CatalogPut(record)
+    if storedAs == "baseline" then
+        stats.baselineSkipped = (stats.baselineSkipped or 0) + 1
+    end
     seenRemoteIds[payload.id] = payload.lastModified
     requestedLoadouts[payload.id] = nil
     stats.received = stats.received + 1
@@ -1576,21 +1751,27 @@ local function HandleComplete(buildId, lastMod, fullData, transportSender)
         return false
     end
     local directOwner = SamePeer(payload.author, transportSender)
-    local existing = NexusDB and NexusDB.communityBuilds
-        and NexusDB.communityBuilds[payload.id]
+    local existing, existingSource = CatalogGet(payload.id)
     local replacingUnverified = existing and existing.ownerVerified == false
         and directOwner
     local allowed, why
     if replacingUnverified then
         allowed, why = true, "owner-verified"
     else
-        allowed, why = ShouldStore(payload.id, payload.lastModified)
+        allowed, why = ShouldStore(payload.id, payload.lastModified,
+            payload.author)
     end
     if not allowed then
         if why == "deleted" then
             LogEvent("RX","skip '%s': tombstoned", tostring(payload.title))
+        elseif why == "tombstone owner" then
+            LogEvent("RX", "REJECT resurrection of '%s': tombstone belongs to %s",
+                tostring(payload.id), tostring(TombAuthor(tombstones[payload.id])))
         else
             stats.duplicatesSkipped = stats.duplicatesSkipped + 1
+            if existingSource == "bundled" then
+                stats.baselineSkipped = (stats.baselineSkipped or 0) + 1
+            end
             LogEvent("RX","skip '%s': DUPLICATE (have stamp %s)",
                 tostring(payload.title), tostring(seenRemoteIds[payload.id]))
         end
@@ -1624,9 +1805,7 @@ local function HandleComplete(buildId, lastMod, fullData, transportSender)
             tostring(payload.title), tostring(payload.author), #payload.echoes)
     end
     StoreReceivedBuild(payload, directOwner, transportSender)
-    if Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then
-        pcall(Nexus.CommunityBuilds.Refresh)
-    end
+    Sync.RequestDataViewRefresh()
     return true
 end
 
@@ -1635,7 +1814,8 @@ local function SendBucketResponse(entry, kind, bucket, bucketState)
     bucketState.progress = bucketState.progress or {}
     if kind == "B" then
         n, complete, claimSafe = BroadcastMineFiltered(
-            entry.peerBuildHash, bucket, bucketState.progress)
+            entry.peerBuildHash, bucket, bucketState.progress,
+            entry.buildMode)
         if claimSafe == false then bucketState.claimSafe = false end
     else
         local D = Nexus.DpsCapture
@@ -1667,7 +1847,8 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
     local key=tostring(requester)..":"..tostring(requestId)
     local prior = pendingResponses[key]
     if prior then
-        if tostring(prior.peerBuildHash) ~= tostring(peerBuildHash)
+        if tostring(prior.peerBuildWireHash or prior.peerBuildHash)
+                ~= tostring(peerBuildHash)
             or tostring(prior.peerDpsHash) ~= tostring(peerDpsHash) then
             LogEvent("RX", "REJECT conflicting request metadata for %s", key)
             return false
@@ -1680,11 +1861,40 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
             tostring(requester), MAX_PENDING_RESPONSES)
         return false
     end
-    local peerB,myB=SplitHashes(peerBuildHash),SplitHashes(myBuildHash)
+    local peerWireBuckets = SplitHashes(peerBuildHash)
+    local localToken = CatalogToken()
+    local buildMode, comparablePeerHash, comparableMineHash
+    if #peerWireBuckets == BUILD_BUCKETS + 1
+        and tostring(peerWireBuckets[BUILD_BUCKETS + 1]) == localToken then
+        buildMode = "delta"
+        local peerDelta = {}
+        for i = 1, BUILD_BUCKETS do peerDelta[i] = peerWireBuckets[i] end
+        comparablePeerHash = table.concat(peerDelta, ",")
+        comparableMineHash = DeltaBuildHash()
+    elseif #peerWireBuckets == BUILD_BUCKETS then
+        buildMode = "legacy"
+        comparablePeerHash = peerBuildHash
+        comparableMineHash = LegacyBuildHash()
+    else
+        -- A new peer on a different catalog version advertises delta buckets
+        -- that cannot be compared with our baseline. Force the conservative
+        -- legacy/full response so either side can still recover exact rows.
+        buildMode = "legacy"
+        comparablePeerHash = "0"
+        comparableMineHash = LegacyBuildHash()
+    end
+    if comparablePeerHash == comparableMineHash and myDpsHash == peerDpsHash then
+        stats.skippedUpToDate = (stats.skippedUpToDate or 0) + 1
+        LogEvent("RX", "request from %s skipped: comparable state hashes match",
+            tostring(requester))
+        return true
+    end
+    local peerB,myB=SplitHashes(comparablePeerHash),SplitHashes(comparableMineHash)
     local peerD,myD=SplitHashes(peerDpsHash),SplitHashes(myDpsHash)
     local peerBuildBuckets = #peerB == BUILD_BUCKETS
     local entry={key=key,requester=requester,requestId=requestId,
-        peerBuildHash=peerBuildHash,peerDpsHash=peerDpsHash,buckets={},
+        peerBuildHash=comparablePeerHash,peerBuildWireHash=peerBuildHash,
+        buildMode=buildMode,peerDpsHash=peerDpsHash,buckets={},
         createdAt=Now(),lastActiveAt=Now()}
     for i=1,BUILD_BUCKETS do
         if tostring(peerB[i] or "") ~= tostring(myB[i] or "") then
@@ -1792,7 +2002,7 @@ local function ProcessPendingResponses(elapsed)
     end
     table.sort(loadoutReady,function(a,b)return tostring(a.key)<tostring(b.key) end)
     for _,entry in ipairs(loadoutReady) do
-        local b=NexusDB and NexusDB.communityBuilds and NexusDB.communityBuilds[entry.buildId]
+        local b=CatalogGet(entry.buildId)
         if b and type(b.echoes)=="table" and #b.echoes>0 then
             -- Queue the payload before publishing the prioritized claim. If
             -- bulk backpressure rejects the build, keep this response pending
@@ -1828,8 +2038,7 @@ end
 
 local function HandleDelete(sender, buildId, stamp, originAuthor)
     autoConverge.lastInbound = Now()
-    local db = NexusDB and NexusDB.communityBuilds
-    local existing = db and db[buildId]
+    local existing = CatalogGet(buildId)
     -- originAuthor is an optional 5th field; treat empty string same as nil
     local author = tostring((originAuthor and originAuthor ~= "")
         and originAuthor or sender or "")
@@ -1856,14 +2065,12 @@ local function HandleDelete(sender, buildId, stamp, originAuthor)
             tostring(existing.title), author, tostring(existing.author))
         return false
     end
-    db[buildId] = nil
+    CatalogSetTombstone(buildId, tomb)
     tombstones[buildId] = tomb
     seenRemoteIds[buildId] = nil
     LogEvent("RX","DELETED '%s' from origin %s (relay %s)",
         tostring(existing.title), author, tostring(sender))
-    if Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then
-        pcall(Nexus.CommunityBuilds.Refresh)
-    end
+    Sync.RequestDataViewRefresh()
     return true
 end
 
@@ -1891,7 +2098,12 @@ local function RejectIncoming(reason)
 end
 
 local function AcceptPeer(sender, version)
-    MarkPeer(sender, version)
+    local parsed = version and Nexus.Version and Nexus.Version.Parse
+        and Nexus.Version.Parse(version) or nil
+    local marked = MarkPeer(sender, parsed and parsed.normalized or nil)
+    if marked and parsed and Nexus.Updates and Nexus.Updates.Observe then
+        pcall(Nexus.Updates.Observe, parsed, sender)
+    end
     return true
 end
 
@@ -1993,10 +2205,7 @@ function Sync.HandleIncoming(text, sender)
         local accepted, changed = StoreSummary(data, protocolSender)
         if not accepted then return RejectIncoming("rejected build summary") end
         autoConverge.lastInbound = Now()
-        if changed and Nexus.CommunityBuilds
-            and Nexus.CommunityBuilds.Refresh then
-            pcall(Nexus.CommunityBuilds.Refresh)
-        end
+        if changed then Sync.RequestDataViewRefresh() end
         return AcceptPeer(protocolSender)
     end
 
@@ -2007,8 +2216,7 @@ function Sync.HandleIncoming(text, sender)
         end
         local requester, buildId = protocolSender, parts[3]
         if requester ~= MyName() then
-            local b = NexusDB and NexusDB.communityBuilds
-                and NexusDB.communityBuilds[buildId]
+            local b = CatalogGet(buildId)
             if b and type(b.echoes)=="table" and #b.echoes>0 then
                 local key = tostring(requester)..":"..tostring(buildId)
                 if not pendingLoadouts[key] then
@@ -2134,7 +2342,7 @@ local function PumpLegacyRecovery(elapsed)
         end
         return
     end
-    local build = NexusDB and NexusDB.communityBuilds and NexusDB.communityBuilds[buildId]
+    local build = CatalogGet(buildId)
     if not (build and type(build.echoes) == "table" and #build.echoes > 0) then
         local queued = Enqueue(string.format("%s|%s|%s",
             CODE_LOADOUT_REQ, MyName(), tostring(buildId)))
@@ -2271,7 +2479,7 @@ function Sync.OnUpdate(elapsed)
     CleanExpiredInflight()
     ProcessPendingResponses(elapsed)
     PumpLegacyRecovery(elapsed)
-    PumpPendingDeletes(elapsed)
+    if not Sync._pendingDeleteScheduled then PumpPendingDeletes(elapsed) end
     PumpQueue(elapsed)
     if Sync.FlushStatusReply then Sync.FlushStatusReply() end
     if autoSyncPending then
@@ -2323,10 +2531,8 @@ local function BuildStatusToken()
     local wl = A and A.Wishlist and A.Wishlist() or nil
     local me = UnitName and UnitName("player") or "?"
     local lv = UnitLevel and UnitLevel("player") or 0
-    local nb = 0
-    if NexusDB and NexusDB.communityBuilds then
-        for _ in pairs(NexusDB.communityBuilds) do nb = nb + 1 end
-    end
+    local catalog = Catalog()
+    local nb = catalog and catalog.Count and catalog.Count() or 0
     local pi = D and D.GetPlayerInfo and D.GetPlayerInfo(me) or nil
     local p = {
         v  = Nexus and Nexus.VERSION or "?",
@@ -2387,11 +2593,27 @@ function Sync.Init(codec, adapter)
     stats.malformedRejected, stats.ignoredOutsideWindow = 0, 0
     stats.oversizeDropped, stats.updated, stats.skippedUpToDate = 0, 0, 0
     stats.queueOverflowRejected, stats.pendingOverflowRejected = 0, 0
+    stats.baselineSkipped, stats.overlaySent = 0, 0
     hotBuilds    = {}  -- clear on init
+    local evidence = Nexus and Nexus.LoadoutEvidence
+    if evidence and type(evidence.RegisterReferenceProvider) == "function" then
+        evidence.RegisterReferenceProvider("sync.hot-builds", function()
+            local references = {}
+            for _, hot in pairs(hotBuilds) do
+                local build = hot and hot.build
+                if type(build) == "table"
+                    and type(build.evidenceKey) == "string" then
+                    references[#references + 1] = build.evidenceKey
+                end
+            end
+            return references
+        end)
+    end
     pendingResponses = {}
     pendingLoadouts = {}
     pendingDeletes = {}
     pendingDeleteTicker = 0
+    Sync._pendingDeleteScheduled = false
     requestedLoadouts = {}
     legacyRecoveryQueue = {}
     legacyRecoveryHead = 1
@@ -2403,6 +2625,9 @@ function Sync.Init(codec, adapter)
     -- during PLAYER_ENTERING_WORLD.
     seenRemoteIds = {}
     NexusDB = NexusDB or {}
+    if Catalog() and Catalog().Init then
+        Catalog().Init(NexusDB, Nexus.BundledBuilds)
+    end
     NexusDB.syncTombstones = NexusDB.syncTombstones or {}
     tombstones = NexusDB.syncTombstones
     for id, tomb in pairs(tombstones) do
@@ -2412,6 +2637,14 @@ function Sync.Init(codec, adapter)
     end
     autoSyncPending = true
     autoSyncElapsed = 0
+    local scheduler = Nexus and Nexus.Scheduler
+    if scheduler and scheduler.IsInitialized and scheduler.IsInitialized()
+        and type(scheduler.Every) == "function" then
+        local scheduled = scheduler.Every("sync.pending-deletes", 1, function()
+            PumpPendingDeletes(1)
+        end)
+        Sync._pendingDeleteScheduled = scheduled == true
+    end
     InstallTransportFilters()
     Sync.EnsureChannel()
 end

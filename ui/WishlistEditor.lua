@@ -1865,6 +1865,7 @@ local function EnsureFrame()
     autoLockCheck:SetScript("OnClick", function(self)
         NexusDB.settings = NexusDB.settings or {}
         NexusDB.settings.autoLockEchoes = self:GetChecked() and true or false
+        if Nexus.RequestRecompute then Nexus.RequestRecompute() end
     end)
     autoLockCheck:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")

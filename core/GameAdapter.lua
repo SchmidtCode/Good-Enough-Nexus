@@ -17,6 +17,13 @@ A.DIAGNOSTIC_PASSIVE = false
 local Store
 local callbacks
 local catalogCache, playerMaskCache
+local catalogObservedRef, catalogObservedHint
+local catalogPublishedCanonical, catalogPublishedHash
+local catalogFailureMessage
+local catalogStatus = {
+    checks=0, fastHits=0, equivalent=0, rebuilds=0,
+    failures=0, familyBlocks=0, scheduled=false,
+}
 local boardDirty, slotsDirty, dataDirty = true, true, true
 local lastBoardSig
 local inFlightKind, inFlightSig, pendingOwnPick
@@ -41,6 +48,7 @@ local tomeMutationPausedUntil = 0
 local latchSince, deadLatch = {}, {}
 local slotsRetryAt, slotsRetries = nil, 0
 local slotsRefreshAt = 0
+local lastAutoAcceptState, lastRivalState = nil, nil
 
 local CORRECTED_CLASS_MASKS = {
     -- PerkClassMasks.DRUID is a client bug (0x200); every Druid DB row uses
@@ -72,94 +80,169 @@ local function SafeCall(fn, ...)
 end
 
 ------------------------------------------------------------------------
--- Catalog (built once; DBC name lookups are synchronous)
+-- Revision-aware catalog. Ordinary reads are O(1); the keyed noncritical
+-- scheduler performs the slower canonical source check for in-place edits.
 ------------------------------------------------------------------------
 
-local function EchoName(row, spellId)
-    local n = GetSpellInfo(spellId)
-    if n then return n end
-    -- comment carries "Name - Rarity"
-    local c = tostring(row.comment or "")
-    return (c:gsub(" %- %a+$", ""))
+local CATALOG_CHECK_INTERVAL = 30
+
+local function CatalogText(value)
+    local safe = Nexus.DiagnosticHistory and Nexus.DiagnosticHistory.SafeText
+    if type(safe) == "function" then return safe(value, 512) end
+    local ok, text = pcall(tostring, value)
+    return ok and tostring(text or "") or "unprintable catalog error"
 end
 
-function A.Catalog()
-    if catalogCache then return catalogCache end
+local function SourceVersionHint(pe)
+    if type(pe) ~= "table" then return "" end
+    for _, key in ipairs({"catalogVersion", "databaseVersion", "VERSION", "Version", "version"}) do
+        local value = rawget(pe, key)
+        local kind = type(value)
+        if kind == "string" or kind == "number" then return tostring(value) end
+    end
+    if type(GetAddOnMetadata) == "function" then
+        local ok, value = pcall(GetAddOnMetadata, "ProjectEbonhold", "Version")
+        local kind = ok and type(value) or "nil"
+        if kind == "string" or kind == "number" then return tostring(value) end
+    end
+    return ""
+end
+
+local function CaptureCatalogSource()
     local pe = PE()
-    local db = pe and pe.PerkDatabase
-    if type(db) ~= "table" then return nil end
+    if type(pe) ~= "table" then return nil, "" end
+    return pe.PerkDatabase, SourceVersionHint(pe)
+end
 
-    local rows, groupCount = {}, {}
-    for spellId, row in pairs(db) do
-        if type(spellId) == "number" and type(row) == "table" and row.maxStack then
-            rows[spellId] = {
-                spellId = spellId,
-                name = EchoName(row, spellId),
-                maxStack = tonumber(row.maxStack) or 1,
-                classMask = tonumber(row.classMask) or 0,
-                minLevel = tonumber(row.minLevel) or 1,
-                quality = tonumber(row.quality) or 0,
-                groupId = tonumber(row.groupId) or 0,
-                requiredSpell = tonumber(row.requiredSpell) or 0,
-            }
-            local g = rows[spellId].groupId
-            if g and g > 0 then groupCount[g] = (groupCount[g] or 0) + 1 end
+local function RecordCatalogFailure(message, familyBlock)
+    message = CatalogText(message)
+    catalogStatus.failures = catalogStatus.failures + 1
+    if familyBlock then catalogStatus.familyBlocks = catalogStatus.familyBlocks + 1 end
+    catalogStatus.lastResult = familyBlock and "family-blocked" or "failed"
+    catalogStatus.lastError = message
+    if message ~= catalogFailureMessage then
+        catalogFailureMessage = message
+        local errors = Nexus and Nexus.Errors
+        if errors and type(errors.Record) == "function" then
+            pcall(errors.Record, "GameAdapter.Catalog", message)
         end
     end
+end
 
-    local familyOf, familyMembers, familyName = {}, {}, {}
-    for spellId, row in pairs(rows) do
-        local fam
-        if row.groupId > 0 and (groupCount[row.groupId] or 0) > 1 then
-            fam = "g" .. row.groupId
-        else
-            fam = "s" .. spellId
-        end
-        familyOf[spellId] = fam
-        familyMembers[fam] = familyMembers[fam] or {}
-        local m = familyMembers[fam]
-        m[#m + 1] = spellId
-        familyName[fam] = familyName[fam] or row.name
-    end
-    for _, members in pairs(familyMembers) do table.sort(members) end
-
-    -- Tome levers: keyed by requiredSpell (the actual wire key -- many-to-one).
-    -- Conformant iff EVERY member's gate spell is named exactly
-    -- "Tome of <member name>" (the proven v3.5.0 filter). The garbage
-    -- requiredSpell=9 cohort fails this and is NEVER toggled.
-    local levers = {}
-    for spellId, row in pairs(rows) do
-        if row.requiredSpell ~= 0 then
-            local lv = levers[row.requiredSpell]
-            if not lv then
-                lv = { lever = row.requiredSpell, members = {}, conformant = true,
-                       tomeName = GetSpellInfo(row.requiredSpell) }
-                levers[row.requiredSpell] = lv
-            end
-            lv.members[#lv.members + 1] = spellId
-            if lv.tomeName ~= ("Tome of " .. row.name) then
-                lv.conformant = false
-            end
-        end
-    end
-    for _, lv in pairs(levers) do table.sort(lv.members) end
+local function InspectCatalogSource(database, sourceHint)
+    catalogStatus.checks = catalogStatus.checks + 1
+    catalogObservedRef, catalogObservedHint = database, sourceHint
 
     local _, classToken = UnitClass("player")
     local mask = CORRECTED_CLASS_MASKS[classToken or ""]
     if not mask then
-        -- class not resolved yet (pre-PLAYER_ENTERING_WORLD / loading
-        -- screen): DO NOT cache -- a 0 mask would permanently empty the
-        -- draw support. Return nil so callers wait and we rebuild once the
-        -- class is known (addendum B5).
-        return nil
+        -- Do not mark an unresolved login-time class as a durable source
+        -- failure. A first build retries once the player is known.
+        catalogStatus.lastResult = "waiting-for-class"
+        return catalogCache
     end
-    playerMaskCache = mask
+    if type(database) ~= "table" then
+        if catalogCache then RecordCatalogFailure("Project Ebonhold catalog source unavailable") end
+        return catalogCache
+    end
 
-    catalogCache = {
-        rows = rows, familyOf = familyOf, familyMembers = familyMembers,
-        familyName = familyName, levers = levers, playerMask = playerMaskCache,
-    }
+    local source = Nexus and Nexus.EchoCatalogSource
+    if not source or type(source.Materialize) ~= "function" then
+        RecordCatalogFailure("EchoCatalogSource module unavailable")
+        return catalogCache
+    end
+    local candidate, canonicalOrError, hash = source.Materialize(
+        database, function(spellId) return GetSpellInfo(spellId) end)
+    if not candidate then
+        RecordCatalogFailure(canonicalOrError)
+        return catalogCache
+    end
+    local canonical = canonicalOrError
+    catalogStatus.sourceVersion = sourceHint ~= "" and sourceHint or nil
+    catalogStatus.observedHash = hash
+
+    if catalogCache and canonical == catalogPublishedCanonical then
+        catalogStatus.equivalent = catalogStatus.equivalent + 1
+        catalogStatus.lastResult = "unchanged"
+        catalogStatus.lastError = nil
+        catalogFailureMessage = nil
+        return catalogCache
+    end
+
+    if catalogCache and type(source.FamilyDrift) == "function" then
+        local drift = source.FamilyDrift(catalogCache, candidate)
+        if drift then
+            RecordCatalogFailure(string.format(
+                "family migration required for spell %s (%s -> %s)",
+                tostring(drift.spellId), tostring(drift.before), tostring(drift.after)), true)
+            return catalogCache
+        end
+    end
+
+    candidate.playerMask = mask
+    playerMaskCache = mask
+    catalogCache = candidate
+    catalogPublishedCanonical = canonical
+    catalogPublishedHash = hash
+    catalogStatus.rebuilds = catalogStatus.rebuilds + 1
+    catalogStatus.lastResult = "rebuilt"
+    catalogStatus.lastError = nil
+    catalogStatus.publishedHash = hash
+    catalogStatus.rows = candidate.rowCount
+    catalogFailureMessage = nil
+
+    local revisions = Nexus and Nexus.Revisions
+    if revisions and type(revisions.Advance) == "function" then
+        pcall(revisions.Advance, revisions.CATALOG_CHANGED,
+            catalogStatus.rebuilds == 1 and "Echo catalog built" or "Echo catalog source changed")
+    end
     return catalogCache
+end
+
+function A.Catalog()
+    local ok, database, sourceHint = pcall(CaptureCatalogSource)
+    if not ok then
+        RecordCatalogFailure(database)
+        return catalogCache
+    end
+    if catalogCache and database == catalogObservedRef
+        and sourceHint == catalogObservedHint then
+        catalogStatus.fastHits = catalogStatus.fastHits + 1
+        return catalogCache
+    end
+    return InspectCatalogSource(database, sourceHint)
+end
+
+function A.CheckCatalogSource()
+    local ok, database, sourceHint = pcall(CaptureCatalogSource)
+    if not ok then
+        RecordCatalogFailure(database)
+        return false, CatalogText(database)
+    end
+    local before = catalogCache
+    local result = InspectCatalogSource(database, sourceHint)
+    local completed = result ~= nil and catalogStatus.lastResult ~= "failed"
+        and catalogStatus.lastResult ~= "family-blocked"
+        and catalogStatus.lastResult ~= "waiting-for-class"
+    return completed, catalogStatus.lastResult, result ~= before
+end
+
+function A.CatalogStatus()
+    return {
+        checks=catalogStatus.checks,
+        fastHits=catalogStatus.fastHits,
+        equivalent=catalogStatus.equivalent,
+        rebuilds=catalogStatus.rebuilds,
+        failures=catalogStatus.failures,
+        familyBlocks=catalogStatus.familyBlocks,
+        scheduled=catalogStatus.scheduled,
+        lastResult=catalogStatus.lastResult,
+        lastError=catalogStatus.lastError,
+        sourceVersion=catalogStatus.sourceVersion,
+        observedHash=catalogStatus.observedHash,
+        publishedHash=catalogPublishedHash,
+        rows=catalogStatus.rows or 0,
+    }
 end
 
 -- True only once the client can answer per-character getters safely: PEW
@@ -1221,6 +1304,7 @@ local function WatchLatches()
                 end
             end
         else
+            if latchSince[kind] ~= nil then boardDirty = true end
             latchSince[kind] = nil
             if deadLatch[kind] then deadLatch[kind] = nil end  -- late reply: recover
         end
@@ -1252,6 +1336,7 @@ local function ResolveInFlight()
             end
             -- failure (SS-1000 "0"): latch cleared, same board -> just release
             inFlightKind, inFlightSig, pendingOwnPick = nil, nil, nil
+            boardDirty = true
         end
     elseif inFlightKind == "banish" then
         if not (p and p.pendingBanishIndex) then
@@ -1261,9 +1346,11 @@ local function ResolveInFlight()
     elseif inFlightKind == "reroll" then
         if not (p and p.pendingReroll) then
             inFlightKind, inFlightSig = nil, nil
+            boardDirty = true
         end
     else
         inFlightKind, inFlightSig = nil, nil
+        boardDirty = true
     end
 end
 
@@ -1735,6 +1822,15 @@ function A.Init(cb, store)
     callbacks = cb or {}
     Store = store
     InstallHooks()
+    lastAutoAcceptState = A.AutoAcceptOn()
+    lastRivalState = A.RivalDetected()
+    local scheduler = Nexus and Nexus.Scheduler
+    if scheduler and scheduler.IsInitialized and scheduler.IsInitialized()
+        and type(scheduler.Every) == "function" then
+        local scheduled = scheduler.Every("catalog.source-check",
+            CATALOG_CHECK_INTERVAL, function() A.CheckCatalogSource() end)
+        catalogStatus.scheduled = scheduled == true
+    end
 end
 
 function A.OnEvent(event)
@@ -1752,6 +1848,15 @@ end
 -- Main drives this from its OnUpdate (~0.2s cadence)
 function A.Poll()
     InstallHooks()
+    local autoAcceptState = A.AutoAcceptOn()
+    local rivalState = A.RivalDetected()
+    if lastAutoAcceptState ~= nil and autoAcceptState ~= lastAutoAcceptState then
+        boardDirty = true
+    end
+    if lastRivalState ~= nil and rivalState ~= lastRivalState then
+        boardDirty = true
+    end
+    lastAutoAcceptState, lastRivalState = autoAcceptState, rivalState
     ResolveInFlight()
     WatchLatches()
     ReconcileTomePending()

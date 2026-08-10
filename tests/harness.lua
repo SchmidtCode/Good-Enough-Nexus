@@ -219,6 +219,13 @@ function UnitLevel() return H.playerLevel end
 function UnitClass() return "Boganic", "MAGE" end
 function UnitName() return "Boganic" end
 function GetNormalizedRealmName() return "Ebonhold" end
+H.projectVersion = nil
+function GetAddOnMetadata(addon, field)
+    if addon == "ProjectEbonhold" and field == "Version" then
+        return H.projectVersion
+    end
+    return nil
+end
 
 -- Catalog fixture ----------------------------------------------------------
 -- comment carries "Name - Rarity"; GetSpellInfo serves echo + tome names.
@@ -541,5 +548,32 @@ ProjectEbonholdOptionsService = {
     SetSetting = function(self, k, v) optSettings[k] = v end,
 }
 H.optSettings = optSettings
+
+-- Runtime modules now consume the merged build catalog. Most focused suites do
+-- not need to parse the multi-megabyte release baseline, so give them the same
+-- schema with an empty test baseline; export/runtime-catalog suites load or
+-- replace the real bundle explicitly. Each module Init call rebinds the facade
+-- after a fixture replaces NexusDB.
+Nexus = Nexus or {}
+Nexus.BundledBuilds = {
+    schemaVersion=1, catalogVersion="test-empty", sourceVersion="test",
+    generatedAt=0, builds={},
+}
+dofile("core/Revisions.lua")
+dofile("core/ViewProjections.lua")
+dofile("ui/VirtualList.lua")
+dofile("core/LoadoutEvidence.lua")
+dofile("core/DataCompaction.lua")
+dofile("core/BuildCatalog.lua")
+dofile("data/Release.lua")
+dofile("logic/Version.lua")
+dofile("core/Performance.lua")
+dofile("core/EchoCatalogSource.lua")
+dofile("core/Errors.lua")
+dofile("core/Scheduler.lua")
+dofile("core/DiagnosticHistory.lua")
+dofile("core/DiagnosticLogs.lua")
+dofile("core/ViewRefresh.lua")
+dofile("core/Updates.lua")
 
 return H

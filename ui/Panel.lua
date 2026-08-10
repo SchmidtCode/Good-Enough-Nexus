@@ -27,8 +27,106 @@ local completeBadge, completeSubtext
 local setupText, setupHint, setupGetStartedBtn, setupImportBtn
 local autoBtn, buildsBtn, leaderboardBtn, menuBtn, versionText, worldStatusBox, worldStatusText, worldStatusAsh, worldStatusGain, worldStatusHit, bestDpsText, bestDpsHit
 local showPerformance = false
+local lastSignatures = nil
+local renderStats = {
+    calls=0, layouts=0, skipped=0, statusOnly=0,
+    performancePasses=0, noticePasses=0, themeTreeWalks=0,
+}
+
+StaticPopupDialogs["NEXUS_UPDATE_RELEASES"] = {
+    text = "Nexus %s was reported as available. Installation is manual. Copy the releases page below:",
+    button1 = "Close",
+    hasEditBox = true,
+    editBoxWidth = 380,
+    OnShow = function(self)
+        local url = Nexus.Updates and Nexus.Updates.ReleaseUrl
+            and Nexus.Updates.ReleaseUrl() or "https://github.com/Viscerals/Better-Nexus/releases"
+        if self.editBox then
+            self.editBox:SetText(url)
+            self.editBox:HighlightText()
+            self.editBox:SetFocus()
+        end
+    end,
+    EditBoxOnEnterPressed = function(self) self:HighlightText() end,
+    EditBoxOnEscapePressed = function(self) self:ClearFocus() end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
 
 local function SafeText(v) return v ~= nil and tostring(v) or "" end
+
+local function DefensiveCopy(value, seen)
+    if type(value) ~= "table" then return value end
+    seen = seen or {}
+    if seen[value] then return seen[value] end
+    local out = {}
+    seen[value] = out
+    for key, child in pairs(value) do
+        out[DefensiveCopy(key, seen)] = DefensiveCopy(child, seen)
+    end
+    return out
+end
+
+local function Signature(value, seen)
+    local kind = type(value)
+    if kind ~= "table" then
+        local text = SafeText(value)
+        return kind .. ":" .. tostring(#text) .. ":" .. text
+    end
+    seen = seen or { _nextId=0 }
+    if seen[value] then return "cycle:" .. tostring(seen[value]) end
+    seen._nextId = seen._nextId + 1
+    seen[value] = seen._nextId
+    local keys = {}
+    for key in pairs(value) do keys[#keys + 1] = key end
+    table.sort(keys, function(left, right)
+        return type(left) .. ":" .. tostring(left)
+            < type(right) .. ":" .. tostring(right)
+    end)
+    local out = {"{"}
+    for _, key in ipairs(keys) do
+        out[#out + 1] = Signature(key, seen)
+        out[#out + 1] = "="
+        out[#out + 1] = Signature(value[key], seen)
+        out[#out + 1] = ";"
+    end
+    out[#out + 1] = "}"
+    return table.concat(out)
+end
+
+local function ModelSignatures(model)
+    local source = type(model.progress) == "table" and model.progress or {}
+    local progress = {
+        wishlistName=source.wishlistName,
+        owned=source.owned,
+        total=source.total,
+        missing=source.missing,
+        shed=source.shed,
+        unknownTomes=source.unknownTomes,
+        toLock=source.toLock,
+        activeSlot=source.activeSlot,
+        isCommunityPreview=source.isCommunityPreview,
+    }
+    return {
+        layout = Signature({
+            progress=progress,
+            cards=model.cards,
+            recommendation=model.recommendation,
+            level=model.level,
+            serverStatus=model.serverStatus,
+            showPerformance=showPerformance,
+        }),
+        performance = Signature({
+            performance=type(model.progress) == "table" and model.progress.performance or nil,
+            bestDps=model.bestDps,
+        }),
+        notice = Signature(model.updateNotice),
+        status = Signature(model.status),
+        auto = Signature(model.auto),
+    }
+end
 
 local function ShortName(v, maxChars)
     local s = SafeText(v)
@@ -338,7 +436,7 @@ local function EnsureFrame()
         end
     end)
     worldStatusHit:SetScript("OnEnter", function(self)
-        local ss = Nexus.ServerStatus and Nexus.ServerStatus.GetSummary and Nexus.ServerStatus.GetSummary() or {}
+        local ss = worldStatusBox._summary or {}
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:AddLine(ss.tier or ss.mode or "Difficulty", 1, 0.25, 0.25)
         if ss.ash then GameTooltip:AddLine("Soul Ash: " .. tostring(ss.ash):gsub(",",""), 1, 1, 1) end
@@ -657,6 +755,7 @@ local function EnsureFrame()
     menuBtn:SetSize(30, 20)
     menuBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", 7, -6)
     menuBtn:SetText("...")
+    frame._menuBtn = menuBtn
     menuBtn:SetFrameLevel(frame:GetFrameLevel() + 8)
     menuBtn:SetScript("OnClick", function(self)
         if type(EasyMenu) ~= "function" then return end
@@ -669,6 +768,34 @@ local function EnsureFrame()
             end
         end
         local items = {
+            {
+                text = (Nexus.Updates and Nexus.Updates.GetVisibleNotice
+                    and Nexus.Updates.GetVisibleNotice())
+                    and ("Update available: v" .. tostring(Nexus.Updates.GetVisibleNotice().version))
+                    or "No published update reported",
+                notCheckable = true,
+                disabled = not (Nexus.Updates and Nexus.Updates.GetVisibleNotice
+                    and Nexus.Updates.GetVisibleNotice()),
+                func = MenuAction(function()
+                    local notice = Nexus.Updates and Nexus.Updates.GetVisibleNotice
+                        and Nexus.Updates.GetVisibleNotice()
+                    if notice then
+                        StaticPopup_Show("NEXUS_UPDATE_RELEASES", notice.version,
+                            Nexus.Updates.ReleaseUrl())
+                    end
+                end),
+            },
+            {
+                text = (Nexus.Updates and Nexus.Updates.IsEnabled
+                    and Nexus.Updates.IsEnabled())
+                    and "Disable Update Notices" or "Enable Update Notices",
+                notCheckable = true,
+                func = MenuAction(function()
+                    if Nexus.Updates and Nexus.Updates.SetEnabled then
+                        Nexus.Updates.SetEnabled(not Nexus.Updates.IsEnabled())
+                    end
+                end),
+            },
             {
                 text = showPerformance and "Hide Performance" or "Show Performance",
                 notCheckable = true,
@@ -728,6 +855,12 @@ local function EnsureFrame()
             GameTooltip:AddLine(" ")
             GameTooltip:AddLine("Status: " .. tostring(st), 0.6, 0.85, 1, true)
         end
+        local notice = M._lastModel and M._lastModel.updateNotice
+        if notice then
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddLine("Update available: v" .. tostring(notice.version), 1, 0.82, 0, true)
+            GameTooltip:AddLine("Click to copy the manual releases-page link.", 0.8, 0.8, 0.8, true)
+        end
         GameTooltip:Show()
     end)
     menuBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -739,7 +872,8 @@ local function EnsureFrame()
     bestDpsText:SetText("|cff888888Best DPS: hit a training dummy to record|r")
     bestDpsHit = HitFrame(frame, bestDpsText)
     bestDpsHit:SetScript("OnEnter", function(self)
-        local info = Nexus.DpsCapture and Nexus.DpsCapture.GetPlayerInfo and Nexus.DpsCapture.GetPlayerInfo(UnitName("player"))
+        local info = M._lastModel and M._lastModel.bestDps
+            and M._lastModel.bestDps.info
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:AddLine("Character Best DPS", 1, 1, 1)
         if info then
@@ -895,16 +1029,11 @@ local function PositionPerformance(topY, completed)
 end
 
 local function RenderPerformance(pr, completed)
-    local D = Nexus.DpsCapture
-    local echoes = pr.dpsEchoes
-    local myDummy, myLK, topDummy, topLK
-    if D and type(echoes) == "table" then
-        myDummy = D.GetPersonalBestForEchoes and D.GetPersonalBestForEchoes(echoes, "dummy") or nil
-        myLK = D.GetPersonalBestForEchoes and D.GetPersonalBestForEchoes(echoes, "lk") or nil
-        local dRows = D.GetLeaderboardForEchoes and D.GetLeaderboardForEchoes(echoes, "dummy") or {}
-        local lRows = D.GetLeaderboardForEchoes and D.GetLeaderboardForEchoes(echoes, "lk") or {}
-        topDummy, topLK = dRows and dRows[1], lRows and lRows[1]
-    end
+    local performance = type(pr.performance) == "table" and pr.performance or {}
+    local dummy = type(performance.dummy) == "table" and performance.dummy or {}
+    local lk = type(performance.lk) == "table" and performance.lk or {}
+    local myDummy, myLK = dummy.personal, lk.personal
+    local topDummy, topLK = dummy.global, lk.global
 
     local count = tonumber(pr.total) or 0
     if completed then
@@ -1074,11 +1203,80 @@ local function LayoutFooter(showAuto, completed)
     leaderboardBtn:Show()
 end
 
+local function RenderBestDps(model, complete, noBuild, activeRoll, statusVisible)
+    local best = type(model.bestDps) == "table" and model.bestDps or {}
+    local dummyBest, lkBest = best.dummy, best.lk
+    if dummyBest or lkBest then
+        local dummyText = dummyBest and ("|cff4dff80" .. FmtDps(dummyBest.dps) .. "|r") or "|cff777777—|r"
+        local lkText = lkBest and ("|cff4dff80" .. FmtDps(lkBest.dps) .. "|r") or "|cff777777—|r"
+        bestDpsText:SetText("|cffb8b8b8Best DPS:|r  Dummy " .. dummyText .. "  |cff666666•|r  Lich King " .. lkText)
+    else
+        bestDpsText:SetText("|cff888888Best DPS: hit a training dummy to record|r")
+    end
+    bestDpsText:ClearAllPoints()
+    if complete and not noBuild and not activeRoll and not showPerformance then
+        bestDpsText:SetPoint("TOP", frame, "TOP", 0, statusVisible and -111 or -52)
+    else
+        bestDpsText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 32)
+    end
+    if not noBuild then
+        bestDpsText:Show()
+        bestDpsHit:Show()
+    else
+        bestDpsText:Hide()
+        bestDpsHit:Hide()
+    end
+end
+
 function M.Render(model)
     if type(model) ~= "table" then return end
-    M._lastModel = model
+    model = DefensiveCopy(model)
+    local signatures = ModelSignatures(model)
+    renderStats.calls = renderStats.calls + 1
     EnsureFrame()
     if not frame.toLockLabel then CreateToLockWidgets(frame) end
+    if lastSignatures and signatures.layout == lastSignatures.layout then
+        local changed = false
+        M._lastModel = model
+        if signatures.notice ~= lastSignatures.notice then
+            menuBtn:SetText(model.updateNotice and "!" or "...")
+            renderStats.noticePasses = renderStats.noticePasses + 1
+            changed = true
+        end
+        if signatures.performance ~= lastSignatures.performance then
+            local pr = type(model.progress) == "table" and model.progress or {}
+            local total, owned = tonumber(pr.total) or 0, tonumber(pr.owned) or 0
+            local complete = total > 0 and owned >= total
+                and #(type(pr.toLock) == "table" and pr.toLock or {}) == 0
+            local cards = type(model.cards) == "table" and model.cards or {}
+            local activeRoll = #cards > 0 or SafeText(model.recommendation) ~= ""
+            local noBuild = total <= 0 or not pr.wishlistName
+            local ss = type(model.serverStatus) == "table" and model.serverStatus or nil
+            local statusVisible = ss and (ss.tier or ss.mode or ss.ash
+                or ss.gain or ss.intensity ~= nil) and true or false
+            RenderPerformanceState(pr, complete, not noBuild and showPerformance)
+            RenderBestDps(model, complete, noBuild, activeRoll, statusVisible)
+            renderStats.performancePasses = renderStats.performancePasses + 1
+            changed = true
+        end
+        if signatures.auto ~= lastSignatures.auto and autoBtn:IsShown() then
+            autoBtn:SetText(AutoLabel(model.auto))
+            changed = true
+        end
+        if signatures.status ~= lastSignatures.status then
+            renderStats.statusOnly = renderStats.statusOnly + 1
+            changed = true
+        end
+        if not changed then renderStats.skipped = renderStats.skipped + 1 end
+        lastSignatures = signatures
+        if not userHidden and not menuSuppressed then frame:Show() else frame:Hide() end
+        return true
+    end
+    M._lastModel = model
+    renderStats.layouts = renderStats.layouts + 1
+    if menuBtn then
+        menuBtn:SetText(model.updateNotice and "!" or "...")
+    end
 
     local pr = type(model.progress) == "table" and model.progress or {}
     local name = pr.wishlistName
@@ -1093,10 +1291,9 @@ function M.Render(model)
     local recommendation = SafeText(model.recommendation)
     local activeRoll = #cards > 0 or recommendation ~= ""
     local noBuild = total <= 0 or not name
-    local usingNexusStatus = Nexus.ServerStatus and Nexus.ServerStatus.IsUsingNexusHud and Nexus.ServerStatus.IsUsingNexusHud()
-    local ss = usingNexusStatus and Nexus.ServerStatus.GetSummary and Nexus.ServerStatus.GetSummary() or nil
+    local ss = type(model.serverStatus) == "table" and model.serverStatus or nil
     local statusVisible = ss and (ss.tier or ss.mode or ss.ash or ss.gain or ss.intensity ~= nil) and true or false
-    local playerLevel = tonumber(model.level) or (UnitLevel and tonumber(UnitLevel("player"))) or 0
+    local playerLevel = tonumber(model.level) or 0
     -- Auto controls are useful only while actively progressing a build. At level
     -- 80 or once the destination is complete, the button is removed entirely
     -- instead of presenting an action that can no longer help the player.
@@ -1300,6 +1497,7 @@ function M.Render(model)
     if not noBuild then RenderPerformanceState(pr, complete, showPerformance) end
 
     LayoutServerStatus(complete and not noBuild)
+    worldStatusBox._summary = DefensiveCopy(ss)
     if ss and (ss.tier or ss.mode or ss.ash or ss.gain or ss.intensity ~= nil) then
         local difficulty = ss.tier or ss.mode or "Difficulty"
         -- Parse and format the ash number for compact display
@@ -1339,50 +1537,38 @@ function M.Render(model)
         worldStatusBox:Hide()
     end
 
-    -- Keep both encounter records visible. Showing only the larger of the
-    -- two made a Lich King result hide a valid Training Dummy capture.
-    local capture = Nexus.DpsCapture
-    local dummyBest = capture and capture.GetCharacterBest and capture.GetCharacterBest("dummy", UnitName("player")) or nil
-    local lkBest = capture and capture.GetCharacterBest and capture.GetCharacterBest("lk", UnitName("player")) or nil
-    if dummyBest or lkBest then
-        local dummyText = dummyBest and ("|cff4dff80" .. FmtDps(dummyBest.dps) .. "|r") or "|cff777777—|r"
-        local lkText = lkBest and ("|cff4dff80" .. FmtDps(lkBest.dps) .. "|r") or "|cff777777—|r"
-        bestDpsText:SetText("|cffb8b8b8Best DPS:|r  Dummy " .. dummyText .. "  |cff666666•|r  Lich King " .. lkText)
-    else
-        bestDpsText:SetText("|cff888888Best DPS: hit a training dummy to record|r")
-    end
-    bestDpsText:ClearAllPoints()
-    if complete and not noBuild and not activeRoll and not showPerformance then
-        bestDpsText:SetPoint("TOP", frame, "TOP", 0, statusVisible and -111 or -52)
-    else
-        bestDpsText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 32)
-    end
-    -- The compact Best DPS prompt stays visible in every configured HUD state.
-    -- The Performance setting only controls the expanded Dummy/Lich King table.
-    if not noBuild then
-        bestDpsText:Show()
-        bestDpsHit:Show()
-    else
-        bestDpsText:Hide()
-        bestDpsHit:Hide()
-    end
+    RenderBestDps(model, complete, noBuild, activeRoll, statusVisible)
     if autoBtn:IsShown() then autoBtn:SetText(AutoLabel(model.auto)) end
     if not userHidden and not menuSuppressed then frame:Show() else frame:Hide() end
+    lastSignatures = signatures
+    if frame and Nexus.Theme and Nexus.Theme.StyleTree
+        and not frame._nexusHudTreeStyled then
+        Nexus.Theme.StyleTree(frame)
+        frame._nexusHudTreeStyled = true
+        renderStats.themeTreeWalks = renderStats.themeTreeWalks + 1
+    end
+    return true
 end
 
-function M.Refresh() if M._lastModel then M.Render(M._lastModel) end end
+function M.Refresh()
+    if callbacks and type(callbacks.RefreshDisplay) == "function" then
+        return callbacks.RefreshDisplay()
+    end
+    if M._lastModel then return M.Render(M._lastModel) end
+    return false
+end
+function M.SetStatus(status)
+    if not M._lastModel then return false end
+    local nextStatus = SafeText(status)
+    if SafeText(M._lastModel.status) == nextStatus then return false end
+    M._lastModel.status = nextStatus
+    if lastSignatures then lastSignatures.status = Signature(nextStatus) end
+    renderStats.statusOnly = renderStats.statusOnly + 1
+    return true
+end
+function M.RenderStats() return DefensiveCopy(renderStats) end
 function M.Show() userHidden = false; if not menuSuppressed then EnsureFrame():Show() end end
 function M.Hide() if frame then frame:Hide() end; userHidden = true end
 function M.IsShown() return frame and frame:IsShown() or false end
-
--- Apply the shared dark theme after every adaptive HUD render.
-do
-    local originalRender = M.Render
-    M.Render = function(...)
-        local result = originalRender(...)
-        if frame and Nexus.Theme then Nexus.Theme.StyleTree(frame) end
-        return result
-    end
-end
 
 return M

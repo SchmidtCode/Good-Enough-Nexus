@@ -46,8 +46,8 @@ end
 
 local function IsCommunityAuthor(name)
     if not name or name == "" then return false end
-    local builds = NexusDB and NexusDB.communityBuilds
-    if not builds then return false end
+    local catalog = Nexus and Nexus.BuildCatalog
+    local builds = catalog and catalog.All and catalog.All() or {}
     local lname = NormalizeName(name)
     for _, build in pairs(builds) do
         if NormalizeName(build.author) == lname then return true end
