@@ -654,6 +654,71 @@ local function WishlistIdentity(echoes)
     return table.concat(parts, ",")
 end
 
+local function CopyWishlistEchoes(echoes)
+    local out = {}
+    if type(echoes) ~= "table" then return out end
+    for i = 1, #echoes do
+        local e = echoes[i]
+        local id = type(e) == "table" and tonumber(e.spellId)
+        if id then
+            out[#out + 1] = {
+                spellId = id,
+                quality = tonumber(e.quality) or 0,
+                stacks = math.max(1, tonumber(e.stacks) or 1),
+                locked = e.locked and true or false,
+            }
+        end
+    end
+    return out
+end
+
+-- Association fingerprints already contain the complete ordinary wishlist
+-- (spellId:stacks pairs).  Decode that bounded snapshot when Project
+-- Ebonhold briefly reports no designed slots so a transient empty response
+-- cannot make an existing target disappear.
+local function WishlistEchoesFromIdentity(key)
+    local out = {}
+    if type(key) ~= "string" or key == "" then return out end
+    for part in string.gmatch(key, "[^,]+") do
+        local idText, stacksText = string.match(part, "^(%d+):(%d+)$")
+        local id, stacks = tonumber(idText), tonumber(stacksText)
+        if id and id > 0 and stacks and stacks > 0 then
+            out[#out + 1] = {
+                spellId = id, quality = 0, stacks = math.max(1, stacks),
+                locked = false,
+            }
+        end
+    end
+    return out
+end
+
+local function StoredWishlistRecord(candidate)
+    local echoes = CopyWishlistEchoes(type(candidate) == "table" and candidate.echoes)
+    local key = type(candidate) == "table" and candidate.key or nil
+    if (not key or key == "") and #echoes > 0 then key = WishlistIdentity(echoes) end
+    local record = {
+        slot = type(candidate) == "table" and tonumber(candidate.slot) or nil,
+        key = key,
+        name = type(candidate) == "table" and tostring(candidate.name or "") or "",
+    }
+    if #echoes > 0 then record.echoes = echoes end
+    return record
+end
+
+local function CandidateFromStoredRecord(saved)
+    if type(saved) ~= "table" then return nil end
+    local echoes = CopyWishlistEchoes(saved.echoes)
+    if #echoes == 0 then echoes = WishlistEchoesFromIdentity(saved.key) end
+    if #echoes == 0 then return nil end
+    local key = tostring(saved.key or "")
+    if key == "" then key = WishlistIdentity(echoes) end
+    return {
+        slot = tonumber(saved.slot), name = tostring(saved.name or ""),
+        count = #echoes, echoes = echoes, key = key, active = false,
+        stored = true,
+    }
+end
+
 -- Public wrapper: a stable, content-based wishlist identity (spellId:stacks
 -- pairs, sorted) usable outside this file. See LockDesignTargetsFor/
 -- LockDesignTargets (core/Main.lua, ui/WishlistEditor.lua) -- this is what
@@ -666,7 +731,7 @@ function A.WishlistKey(echoes)
     return WishlistIdentity(echoes)
 end
 
-function A.GetWishlistCandidates()
+local function LiveWishlistCandidates()
     local slots = A.Slots()
     if not slots then return {} end
     local maxSlots = slots.maxSlots or 5
@@ -718,6 +783,31 @@ function A.GetWishlistCandidates()
     return out
 end
 
+function A.GetWishlistCandidates()
+    local out = LiveWishlistCandidates()
+    if #out > 0 then return out end
+
+    -- Emergency/offline fallback: retain only identities the user explicitly
+    -- associated before.  This does not resurrect Community Builds or Sync;
+    -- it keeps the core wishlist usable while the server slot mirror is empty.
+    local state = Store and Store.State and Store.State()
+    if not state then return out end
+    local seen = {}
+    local function Add(saved)
+        local candidate = CandidateFromStoredRecord(saved)
+        if not candidate or not candidate.slot then return end
+        local identity = candidate.key ~= "" and ("key:" .. candidate.key)
+            or ("slot:" .. tostring(candidate.slot) .. ":" .. candidate.name)
+        if seen[identity] then return end
+        seen[identity] = true
+        out[#out + 1] = candidate
+    end
+    Add(state.firstRunWishlist)
+    for _, saved in pairs(state.loadoutWishlists or {}) do Add(saved) end
+    table.sort(out, function(a, b) return (tonumber(a.slot) or 0) < (tonumber(b.slot) or 0) end)
+    return out
+end
+
 local function ResolveAssociation(loadoutSlot)
     loadoutSlot = tonumber(loadoutSlot)
     if not loadoutSlot then return nil end
@@ -737,11 +827,9 @@ local function ResolveAssociation(loadoutSlot)
                 return c
             end
         end
-        links[loadoutSlot] = nil
         return nil
     end
     if type(saved) ~= "table" then
-        links[loadoutSlot] = nil
         return nil
     end
 
@@ -794,7 +882,11 @@ local function ResolveAssociation(loadoutSlot)
             end
         end
     end
-    links[loadoutSlot] = nil
+    -- A missing candidate is not proof that the user deleted a wishlist.
+    -- GetServerBuildSlots is eventually consistent and can be nil/empty
+    -- during login and run transitions.  Keep the association so a later
+    -- authoritative snapshot can resolve it instead of deleting user state
+    -- from a read path.
     return nil
 end
 
@@ -805,7 +897,19 @@ end
 local function ResolveFirstRunWishlist()
     local state = Store and Store.State and Store.State()
     local saved = state and state.firstRunWishlist
-    if type(saved) ~= "table" then return nil end
+    if type(saved) ~= "table" then
+        -- activeSlot=0 also occurs during run/login transitions.  If exactly
+        -- one numbered loadout association exists, it is the only safe target
+        -- to carry through that temporary no-active-slot window.
+        local only, count = nil, 0
+        for _, linked in pairs((state and state.loadoutWishlists) or {}) do
+            if CandidateFromStoredRecord(linked) then
+                only, count = linked, count + 1
+            end
+        end
+        if count ~= 1 then return nil end
+        saved = only
+    end
     local candidates = A.GetWishlistCandidates()
     local wantedKey, wantedName = tostring(saved.key or ""), tostring(saved.name or "")
     if wantedKey ~= "" then
@@ -833,16 +937,19 @@ function A.GetFirstRunWishlist()
     return ResolveFirstRunWishlist()
 end
 
-function A.SetFirstRunWishlist(wishlistSlot)
+function A.SetFirstRunWishlist(wishlistSlot, candidate)
     wishlistSlot = tonumber(wishlistSlot)
-    local selected
-    for _, c in ipairs(A.GetWishlistCandidates()) do
-        if tonumber(c.slot) == wishlistSlot then selected = c; break end
+    local selected = type(candidate) == "table"
+        and tonumber(candidate.slot) == wishlistSlot and candidate or nil
+    if not selected then
+        for _, c in ipairs(A.GetWishlistCandidates()) do
+            if tonumber(c.slot) == wishlistSlot then selected = c; break end
+        end
     end
     if not selected then return false, "invalid wishlist" end
     local state = Store and Store.State and Store.State()
     if not state then return false, "store unavailable" end
-    state.firstRunWishlist = { slot = selected.slot, key = selected.key, name = selected.name }
+    state.firstRunWishlist = StoredWishlistRecord(selected)
     dataDirty = true
     return true
 end
@@ -850,7 +957,7 @@ end
 function A.SetFirstRunWishlistIdentity(name, echoes)
     local state = Store and Store.State and Store.State()
     if not state then return false end
-    state.firstRunWishlist = { name = tostring(name or ""), key = WishlistIdentity(echoes) }
+    state.firstRunWishlist = StoredWishlistRecord({ name=name, echoes=echoes })
     dataDirty = true
     return true
 end
@@ -895,10 +1002,7 @@ function A.SetLoadoutWishlistIdentity(loadoutSlot, name, echoes)
     local state = Store and Store.State and Store.State()
     if not state then return false, "store unavailable" end
     state.loadoutWishlists = state.loadoutWishlists or {}
-    state.loadoutWishlists[loadoutSlot] = {
-        name = tostring(name or ""),
-        key = WishlistIdentity(echoes),
-    }
+    state.loadoutWishlists[loadoutSlot] = StoredWishlistRecord({ name=name, echoes=echoes })
     dataDirty = true
     return true
 end
@@ -926,15 +1030,14 @@ end
 function A.SetFirstLoadoutWishlistIdentity(name, echoes)
     local state = Store and Store.State and Store.State()
     if not state then return false, "store unavailable" end
-    local key = WishlistIdentity(echoes)
     state.loadoutWishlists = state.loadoutWishlists or {}
-    state.loadoutWishlists[1] = { name = tostring(name or ""), key = key }
-    state.firstRunWishlist = { name = tostring(name or ""), key = key }
+    state.loadoutWishlists[1] = StoredWishlistRecord({ name=name, echoes=echoes })
+    state.firstRunWishlist = StoredWishlistRecord({ name=name, echoes=echoes })
     dataDirty = true
     return true
 end
 
-function A.SetLoadoutWishlist(loadoutSlot, wishlistSlot)
+function A.SetLoadoutWishlist(loadoutSlot, wishlistSlot, candidate)
     if A.DIAGNOSTIC_PASSIVE then return false, "internal.6 passive diagnostic: write blocked" end
     loadoutSlot, wishlistSlot = tonumber(loadoutSlot), tonumber(wishlistSlot)
     local slots = A.Slots()
@@ -948,17 +1051,18 @@ function A.SetLoadoutWishlist(loadoutSlot, wishlistSlot)
     if not IsPopulatedLoadout(loadoutSlot, slots) then
         return false, "that loadout slot is empty or unavailable"
     end
-    local selected
-    for _, c in ipairs(A.GetWishlistCandidates()) do
-        if tonumber(c.slot) == wishlistSlot then selected = c; break end
+    local selected = type(candidate) == "table"
+        and tonumber(candidate.slot) == wishlistSlot and candidate or nil
+    if not selected then
+        for _, c in ipairs(A.GetWishlistCandidates()) do
+            if tonumber(c.slot) == wishlistSlot then selected = c; break end
+        end
     end
     if not selected then return false, "invalid wishlist" end
     local state = Store and Store.State and Store.State()
     if not state then return false, "store unavailable" end
     state.loadoutWishlists = state.loadoutWishlists or {}
-    state.loadoutWishlists[loadoutSlot] = {
-        slot = selected.slot, key = selected.key, name = selected.name,
-    }
+    state.loadoutWishlists[loadoutSlot] = StoredWishlistRecord(selected)
     dataDirty = true
     return true
 end
@@ -970,10 +1074,9 @@ function A.UpdateWishlistAssociationAfterSave(loadoutSlot, wishlistSlot, name, e
     local state = Store and Store.State and Store.State()
     if not state then return false end
     state.loadoutWishlists = state.loadoutWishlists or {}
-    state.loadoutWishlists[loadoutSlot] = {
-        slot = wishlistSlot, name = tostring(name or ""),
-        key = WishlistIdentity(echoes),
-    }
+    state.loadoutWishlists[loadoutSlot] = StoredWishlistRecord({
+        slot=wishlistSlot, name=name, echoes=echoes,
+    })
     dataDirty = true
     return true
 end

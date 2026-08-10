@@ -1109,9 +1109,9 @@ local function ShowWishlistPicker(anchor, wishes, linked, active, loadoutName, A
             local function AssociateWishlistOnly()
                 local ok, err
                 if tonumber(active) and tonumber(active) > 0 then
-                    ok, err = A.SetLoadoutWishlist(active, cSlot)
+                    ok, err = A.SetLoadoutWishlist(active, cSlot, c)
                 else
-                    ok, err = A.SetFirstRunWishlist and A.SetFirstRunWishlist(cSlot)
+                    ok, err = A.SetFirstRunWishlist and A.SetFirstRunWishlist(cSlot, c)
                 end
                 if not ok then
                     print("|cffff6060Nexus:|r " .. tostring(err or "could not select wishlist"))

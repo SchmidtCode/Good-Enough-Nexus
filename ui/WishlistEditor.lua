@@ -1473,13 +1473,13 @@ function M.AssignWishlistCandidate(candidate)
         if not (Adapter and Adapter.SetLoadoutWishlist) then
             return false, "loadout association unavailable"
         end
-        local ok, err = Adapter.SetLoadoutWishlist(active, wishlistSlot)
+        local ok, err = Adapter.SetLoadoutWishlist(active, wishlistSlot, candidate)
         return ok, err, active, false
     end
     if not (Adapter and Adapter.SetFirstRunWishlist) then
         return false, "first-run association unavailable"
     end
-    local ok, err = Adapter.SetFirstRunWishlist(wishlistSlot)
+    local ok, err = Adapter.SetFirstRunWishlist(wishlistSlot, candidate)
     return ok, err, nil, true
 end
 

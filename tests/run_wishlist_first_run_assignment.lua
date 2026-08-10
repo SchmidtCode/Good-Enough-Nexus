@@ -20,13 +20,41 @@ local wishlist = {
 H.DeliverSlots({[7]=wishlist}, 0)
 local candidate = assert(A.GetWishlistCandidates()[1],
     "first-run wishlist candidate was unavailable")
+
+-- The server slot mirror may disappear between drawing the candidate button
+-- and handling its click.  Selection must use the already validated candidate
+-- instead of performing a second fragile lookup.
+local getCandidates = A.GetWishlistCandidates
+A.GetWishlistCandidates = function() return {} end
 local ok, err, target, firstRun = E.AssignWishlistCandidate(candidate)
+A.GetWishlistCandidates = getCandidates
 assert(ok and err == nil and target == nil and firstRun == true,
     "activeSlot=0 did not use the first-run association: " .. tostring(err))
 local selected = A.Wishlist()
 assert(selected and selected.name == "First Run Mage"
     and selected.source == "first-run-wishlist",
     "first-run selection was not immediately resolvable")
+
+-- A transient empty SS-540 snapshot must not erase or hide the target.  The
+-- stored identity is enough to retain the ordinary wishlist until live rows
+-- return.
+H.DeliverSlots({}, 0)
+selected = A.Wishlist()
+assert(selected and selected.name == "First Run Mage"
+    and selected.source == "first-run-wishlist",
+    "transient empty slots hid the selected first-run wishlist")
+
+-- Existing users may only have the historical numbered association.  During
+-- an activeSlot=0 transition, a sole stored link is the unambiguous fallback.
+local state = Nexus.Store.State()
+state.firstRunWishlist = nil
+state.loadoutWishlists = {
+    [1] = { slot=7, name="First Run Mage", key=A.WishlistKey(wishlist.echoes) },
+}
+selected = A.Wishlist()
+assert(selected and selected.name == "First Run Mage"
+    and selected.source == "first-run-wishlist",
+    "sole historical loadout association was not retained at activeSlot=0")
 
 H.DeliverSlots({
     [1]={slot=1,name="Saved Mage",verified=true,
