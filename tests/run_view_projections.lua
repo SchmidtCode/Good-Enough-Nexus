@@ -75,6 +75,8 @@ assert(#first == 493 and first[1].lastModified == 1000
     and firstSummary.total == 1000 and firstSummary.pending == 0,
     "build projection changed established scope/class/recent behavior")
 local afterFirst = P.Stats()
+assert(afterFirst.builds.defensiveCopies == 1,
+    "build projection rebuild copied the full result more than once")
 local second, secondSummary = P.Builds({scope="all",classFilter="MAGE",sortMode="recent"})
 local afterSecond = P.Stats()
 assert(#second == #first and secondSummary.filtered == #first
@@ -82,6 +84,7 @@ assert(#second == #first and secondSummary.filtered == #first
     and afterSecond.builds.catalogWalks == afterFirst.builds.catalogWalks
     and afterSecond.builds.dpsReads == afterFirst.builds.dpsReads
     and afterSecond.builds.sorts == afterFirst.builds.sorts
+    and afterSecond.builds.defensiveCopies == afterFirst.builds.defensiveCopies + 1
     and afterSecond.builds.hits == afterFirst.builds.hits + 1,
     "unchanged build projection walked or sorted after warm-up")
 second[1].title = "mutated"
@@ -94,10 +97,19 @@ assert(mineSummary.savedLoadouts == 15 and mineSummary.uploaded == 99
     "owner/scope/search projection summary changed")
 local beforeStatus = P.Stats().builds.rebuilds
 Revisions.Advance(Revisions.SYNC_CHANGED, {scope="status"})
+assert(P.BuildsCurrent({scope="mine",search="needle",sortMode="title"}),
+    "status-only revision made the current build projection look dirty")
 P.Builds({scope="mine",search="needle",sortMode="title"})
 assert(P.Stats().builds.rebuilds == beforeStatus,
     "status-only revision invalidated build projection")
+local beforeDirtyProbe = P.Stats().builds
 Revisions.Advance(Revisions.DPS_CHANGED, {scope="all"})
+assert(not P.BuildsCurrent({scope="mine",search="needle",sortMode="title"})
+    and P.Stats().builds.catalogWalks == beforeDirtyProbe.catalogWalks
+    and P.Stats().builds.dpsReads == beforeDirtyProbe.dpsReads
+    and P.Stats().builds.sorts == beforeDirtyProbe.sorts
+    and P.Stats().builds.defensiveCopies == beforeDirtyProbe.defensiveCopies,
+    "dirty probe performed projection work")
 P.Builds({scope="mine",search="needle",sortMode="title"})
 assert(P.Stats().builds.rebuilds == beforeStatus + 1,
     "DPS revision did not invalidate DPS-sorted build metadata")

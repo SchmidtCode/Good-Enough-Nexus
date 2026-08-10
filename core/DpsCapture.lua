@@ -864,11 +864,105 @@ local function GlobalForBuild(buildId, key, category)
     return best
 end
 
-local function GlobalForIdentity(buildId, key, hash, category)
+-- Community projections ask for two categories for every visible catalog
+-- candidate. Scanning every character row for each of those lookups made one
+-- refresh O(builds * DPS rows). Keep a revision-scoped identity index instead:
+-- one bounded store walk after represented DPS changes, then only exact
+-- candidate checks until the next revision.
+local identityIndex = {
+    initialized=false, revisionSource=nil, observedRevision=nil,
+    categories={dummy=nil,lk=nil},
+    stats={rebuilds=0,rowsScanned=0,indexedRows=0,lookups=0,candidateChecks=0},
+}
+
+local function IdentityPart(value)
+    if value == nil then return nil end
+    return type(value) .. ":" .. tostring(value)
+end
+
+local function AddIdentityRow(map, value, row)
+    local key = IdentityPart(value)
+    if not key then return end
+    local rows = map[key]
+    if not rows then rows = {}; map[key] = rows end
+    rows[#rows + 1] = row
+end
+
+local function NewIdentityCategory()
+    return {buildId={},fingerprint={},hash={}}
+end
+
+local function CurrentDpsRevision()
+    local revisions = Nexus and Nexus.Revisions
+    local revision = revisions and type(revisions.Get) == "function"
+        and revisions.Get(revisions.DPS_CHANGED) or nil
+    return revisions, revision
+end
+
+local function RebuildIdentityIndex()
     MigrateLegacyLeaderboard()
+    local categories = {dummy=NewIdentityCategory(),lk=NewIdentityCategory()}
+    local scanned, indexed = 0, 0
+    local store = CharacterBestStore()
+    for _, category in ipairs({"dummy", "lk"}) do
+        local target = categories[category]
+        for _, row in pairs(store[category] or {}) do
+            scanned = scanned + 1
+            if type(row) == "table" then
+                local fingerprint = row.fingerprint
+                local hash = row.loadoutHash
+                    or (fingerprint and EchoHashFromKey(fingerprint))
+                AddIdentityRow(target.buildId, row.buildId, row)
+                AddIdentityRow(target.fingerprint, fingerprint, row)
+                AddIdentityRow(target.hash, hash, row)
+                indexed = indexed + 1
+            end
+        end
+    end
+    identityIndex.categories = categories
+    identityIndex.initialized = true
+    identityIndex.revisionSource, identityIndex.observedRevision =
+        CurrentDpsRevision()
+    identityIndex.stats.rebuilds = identityIndex.stats.rebuilds + 1
+    identityIndex.stats.rowsScanned = identityIndex.stats.rowsScanned + scanned
+    identityIndex.stats.indexedRows = indexed
+end
+
+local function EnsureIdentityIndex()
+    local revisionSource, revision = CurrentDpsRevision()
+    if not identityIndex.initialized
+        or identityIndex.revisionSource ~= revisionSource
+        or revision == nil
+        or identityIndex.observedRevision ~= revision then
+        RebuildIdentityIndex()
+    end
+end
+
+local function AddIdentityCandidates(out, seen, rows)
+    for _, row in ipairs(type(rows) == "table" and rows or {}) do
+        if not seen[row] then
+            seen[row] = true
+            out[#out + 1] = row
+        end
+    end
+end
+
+local function GlobalForIdentity(buildId, key, hash, category)
+    EnsureIdentityIndex()
+    identityIndex.stats.lookups = identityIndex.stats.lookups + 1
     local best
-    local bucket = CharacterBestStore()[category] or {}
-    for _, row in pairs(bucket) do
+    local index = identityIndex.categories[category]
+        or NewIdentityCategory()
+    local candidates, seen = {}, {}
+    AddIdentityCandidates(candidates, seen,
+        index.buildId[IdentityPart(buildId)])
+    AddIdentityCandidates(candidates, seen,
+        index.fingerprint[IdentityPart(key)])
+    AddIdentityCandidates(candidates, seen,
+        index.hash[IdentityPart(hash)])
+    for _, row in ipairs(candidates) do
+        identityIndex.stats.candidateChecks =
+            identityIndex.stats.candidateChecks + 1
         if RowMatchesBuild(row, buildId, key, hash)
             and BetterRow(row, best) then
             best = row
@@ -927,6 +1021,15 @@ function DPS.GetLeaderboardForIdentity(buildId, fingerprint, fingerprintHash, ca
     local hash = fingerprintHash ~= nil and tostring(fingerprintHash) or nil
     if not key and not hash then return {} end
     return SortedEntries(GlobalForIdentity(buildId, key, hash, category))
+end
+
+function DPS.IdentityLookupStats()
+    local stats = identityIndex.stats
+    return {
+        rebuilds=stats.rebuilds, rowsScanned=stats.rowsScanned,
+        indexedRows=stats.indexedRows, lookups=stats.lookups,
+        candidateChecks=stats.candidateChecks,
+    }
 end
 
 -- A build is Details-verified only when a valid public record exists for its

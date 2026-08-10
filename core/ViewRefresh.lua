@@ -22,9 +22,30 @@ local function SafeRefresh(source, callback)
     if not ok then RecordError(source, err) end
 end
 
+local function RefreshCommunity()
+    local community = Nexus.CommunityBuilds
+    if not community then return end
+    local sync = Nexus.Sync
+    local receiving = false
+    if sync and type(sync.IsReceiving) == "function" then
+        local ok, result = pcall(sync.IsReceiving)
+        if ok then receiving = result and true or false
+        else RecordError("ViewRefresh.Sync.IsReceiving", result) end
+    end
+    if receiving and type(community.MarkDataDirty) == "function" then
+        SafeRefresh("ViewRefresh.CommunityBuilds.MarkDataDirty",
+            community.MarkDataDirty)
+        return
+    end
+    SafeRefresh("ViewRefresh.CommunityBuilds", community.Refresh)
+end
+
 local function RefreshViews()
-    SafeRefresh("ViewRefresh.CommunityBuilds",
-        Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh)
+    -- A sync burst may commit many individually valid build/DPS revisions.
+    -- Keep the cheap status path live, but publish Community data once after
+    -- the receive window closes instead of rebuilding the same library for
+    -- every packet group.
+    RefreshCommunity()
     SafeRefresh("ViewRefresh.Leaderboard",
         Nexus.Leaderboard and Nexus.Leaderboard.Refresh)
     SafeRefresh("ViewRefresh.Panel",

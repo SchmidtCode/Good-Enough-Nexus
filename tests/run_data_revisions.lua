@@ -128,6 +128,20 @@ local identityRows = DPS.GetLeaderboardForIdentity(
     "unrelated-id", fingerprint, DPS.GetEchoHash(echoes), "dummy")
 assert(identityRows[1] and identityRows[1].dps == 25000,
     "lightweight DPS identity lookup changed exact fingerprint matching")
+local identityStats = DPS.IdentityLookupStats()
+assert(identityStats.rebuilds == 1 and identityStats.rowsScanned == 1
+    and identityStats.lookups == 1 and identityStats.candidateChecks <= 1,
+    "first DPS identity lookup did not build one bounded revision index")
+for _ = 1, 100 do
+    local repeated = DPS.GetLeaderboardForIdentity(
+        "unrelated-id", fingerprint, DPS.GetEchoHash(echoes), "dummy")
+    assert(repeated[1] and repeated[1].dps == 25000)
+end
+local repeatedStats = DPS.IdentityLookupStats()
+assert(repeatedStats.rebuilds == identityStats.rebuilds
+    and repeatedStats.rowsScanned == identityStats.rowsScanned
+    and repeatedStats.lookups == identityStats.lookups + 100,
+    "repeated DPS identity lookups rescanned the leaderboard store")
 assert(not DPS.ReceiveRecord(record, "Peer")
     and R.Get(R.DPS_CHANGED) == 1,
     "duplicate DPS record advanced the revision")
@@ -138,6 +152,13 @@ enriched.lk = {{spellId=200999,stacks=1}}
 assert(DPS.ReceiveRecord(enriched, "Peer")
     and R.Get(R.DPS_CHANGED) == 2,
     "same-record metadata enrichment did not advance once")
+local enrichedRows = DPS.GetLeaderboardForIdentity(
+    "unrelated-id", fingerprint, DPS.GetEchoHash(echoes), "dummy")
+local enrichedStats = DPS.IdentityLookupStats()
+assert(enrichedRows[1] and enrichedRows[1].dps == 25000
+    and enrichedStats.rebuilds == repeatedStats.rebuilds + 1
+    and enrichedStats.rowsScanned == repeatedStats.rowsScanned + 1,
+    "DPS identity index did not invalidate exactly once after a revision")
 assert(not DPS.ReceiveRecord(enriched, "Peer")
     and R.Get(R.DPS_CHANGED) == 2,
     "duplicate enriched DPS record advanced the revision")

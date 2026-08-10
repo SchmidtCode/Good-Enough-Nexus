@@ -70,9 +70,11 @@ local pendingLockIn = nil
 local IsOwnBuild
 local lastSavedLoadoutImport = 0
 local renderBuildWindow, virtualBinding = nil, false
+local refreshDirty = false
 local virtualStats = {
     created=0, peakActive=0, active=0, results=0,
     dataBinds=0, scrollBinds=0, resizeBinds=0,
+    dirtyMarks=0, deferredRefreshes=0, periodicSkips=0,
     first=1, last=0, offset=0, maxOffset=0,
 }
 
@@ -1951,7 +1953,7 @@ local function EnsureFrame()
     frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
 
     local retryTicker, statusTicker, dataTicker = 0, 0, 0
-    local lastReceiveCount, lastReceiving = -1, false
+    local lastReceiving = false
     frame:SetScript("OnUpdate",function(_,elapsed)
         retryTicker = retryTicker + elapsed
         if retryTicker >= 0.5 then
@@ -1977,19 +1979,40 @@ local function EnsureFrame()
                 if syncBtn then syncBtn:SetText(receiving and "Listening..." or "Sync Now") end
             end
 
-            -- Only rebuild when the sync state or received-build count changes.
-            if receiving ~= lastReceiving or receiveCount ~= lastReceiveCount then
-                lastReceiving, lastReceiveCount = receiving, receiveCount
-                dataTicker = 99
+            -- Build/DPS revisions mark the view dirty while Sync is active.
+            -- Publish once when that burst ends; changing the live count alone
+            -- is status work and must not rebuild the catalog.
+            local receiveEnded = lastReceiving and not receiving
+            lastReceiving = receiving
+            if receiveEnded and refreshDirty then
+                virtualStats.deferredRefreshes =
+                    virtualStats.deferredRefreshes + 1
+                M.Refresh()
             end
         end
 
-        -- Safety refresh for external saved-variable changes. Normal UI actions
-        -- and sync callbacks already call M.Refresh directly.
+        -- Cheap safety probe for missed invalidations. An unchanged tick does
+        -- not request/copy the cached projection or sort/rebind any rows.
         dataTicker = dataTicker + elapsed
         if dataTicker >= 8.0 then
             dataTicker = 0
-            M.Refresh()
+            local projections = Nexus and Nexus.ViewProjections
+            local current = nil
+            if projections and type(projections.BuildsCurrent) == "function" then
+                local ok, result = pcall(projections.BuildsCurrent,
+                    FilterSettings())
+                if ok then current = result end
+            end
+            local receiving = Nexus.Sync and Nexus.Sync.IsReceiving
+                and Nexus.Sync.IsReceiving() or false
+            -- A missing/failing dirty probe must retain the old safe behavior:
+            -- attempt the refresh instead of treating an unknown state as
+            -- current forever.
+            if not receiving and (refreshDirty or current ~= true) then
+                M.Refresh()
+            else
+                virtualStats.periodicSkips = virtualStats.periodicSkips + 1
+            end
         end
     end)
     frame:Hide()
@@ -2408,7 +2431,16 @@ function M.VirtualStats()
     local out = {}
     for key, value in pairs(virtualStats) do out[key] = value end
     out.selectedId = selectedId
+    out.refreshDirty = refreshDirty
     return out
+end
+
+function M.MarkDataDirty()
+    if not refreshDirty then
+        refreshDirty = true
+        virtualStats.dirtyMarks = virtualStats.dirtyMarks + 1
+    end
+    return true
 end
 
 function M.ScrollTo(offset)
@@ -2705,6 +2737,7 @@ function M.Refresh()
         local lbl = searchBox:GetParent() and searchBox:GetParent().searchLabel
         -- just handle via the text directly: show placeholder if empty
     end
+    refreshDirty = false
 end
 
 ------------------------------------------------------------------------

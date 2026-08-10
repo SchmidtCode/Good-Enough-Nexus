@@ -80,8 +80,13 @@ assert(Scheduler.Init() and Scheduler.IsInitialized(),
 dofile("core/Revisions.lua")
 dofile("core/ViewRefresh.lua")
 local Revisions = Nexus.Revisions
-local communityRefreshes, leaderboardRefreshes, panelRefreshes, statusRefreshes = 0, 0, 0, 0
-Nexus.CommunityBuilds = {Refresh=function() communityRefreshes = communityRefreshes + 1 end}
+local communityRefreshes, communityDirtyMarks = 0, 0
+local leaderboardRefreshes, panelRefreshes, statusRefreshes = 0, 0, 0
+Nexus.Sync = {IsReceiving=function() return true end}
+Nexus.CommunityBuilds = {
+    Refresh=function() communityRefreshes = communityRefreshes + 1 end,
+    MarkDataDirty=function() communityDirtyMarks = communityDirtyMarks + 1 end,
+}
 Nexus.Leaderboard = {Refresh=function() leaderboardRefreshes = leaderboardRefreshes + 1 end}
 Nexus.Panel = {Refresh=function() panelRefreshes = panelRefreshes + 1 end}
 assert(Nexus.ViewRefresh.Init())
@@ -95,14 +100,23 @@ local pending = Scheduler.Pending()
 assert(#pending == 1 and pending[1].key == Nexus.ViewRefresh.Key(),
     "data-view invalidations did not coalesce by key")
 assert(Scheduler.Tick(H.now + 0.05) == 1)
-assert(communityRefreshes == 1 and leaderboardRefreshes == 1 and panelRefreshes == 1,
-    "coalesced data views did not refresh exactly once")
+assert(communityRefreshes == 0 and communityDirtyMarks == 1
+    and leaderboardRefreshes == 1 and panelRefreshes == 1,
+    "active Sync burst rebuilt Community data instead of marking it dirty")
+
+-- Outside the receive window the same revision path publishes immediately.
+Nexus.Sync.IsReceiving = function() return false end
+assert(Revisions.Advance(Revisions.DPS_CHANGED, "post-sync publish"))
+assert(Scheduler.Tick(H.now + 0.10) == 1
+    and communityRefreshes == 1 and leaderboardRefreshes == 2
+    and panelRefreshes == 2,
+    "post-Sync data views did not refresh exactly once")
 
 -- One view failure is recorded without suppressing the other view.
 Nexus.CommunityBuilds.Refresh = function() error("community repaint failure") end
 assert(Revisions.Advance(Revisions.DPS_CHANGED, "failure probe"))
-assert(Scheduler.Tick(H.now + 0.10) == 1
-    and leaderboardRefreshes == 2 and panelRefreshes == 2)
+assert(Scheduler.Tick(H.now + 0.15) == 1
+    and leaderboardRefreshes == 3 and panelRefreshes == 3)
 latest = Nexus.Errors.Latest()
 assert(latest and latest.source == "ViewRefresh.CommunityBuilds"
     and latest.message:find("community repaint failure", 1, true),

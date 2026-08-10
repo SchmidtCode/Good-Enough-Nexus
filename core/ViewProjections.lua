@@ -10,8 +10,10 @@ Nexus.ViewProjections = Projections
 
 local caches = {builds={}, leaderboard={}}
 local counters = {
-    builds={hits=0,rebuilds=0,failures=0,catalogWalks=0,dpsReads=0,sorts=0},
-    leaderboard={hits=0,rebuilds=0,failures=0,boardReads=0,sorts=0},
+    builds={hits=0,rebuilds=0,failures=0,catalogWalks=0,dpsReads=0,
+        sorts=0,defensiveCopies=0},
+    leaderboard={hits=0,rebuilds=0,failures=0,boardReads=0,sorts=0,
+        defensiveCopies=0},
 }
 
 local function DeepCopy(value, seen)
@@ -118,6 +120,7 @@ local function Cached(kind, keyBuilder, builder)
     local initialKey = keyBuilder()
     if cache.key == initialKey and type(cache.rows) == "table" then
         stats.hits = stats.hits + 1
+        stats.defensiveCopies = stats.defensiveCopies + 1
         return DeepCopy(cache.rows), DeepCopy(cache.summary)
     end
     for _ = 1, 2 do
@@ -131,8 +134,12 @@ local function Cached(kind, keyBuilder, builder)
         end
         if beforeKey == afterKey then
             cache.key = afterKey
-            cache.rows = DeepCopy(rows)
-            cache.summary = DeepCopy(summary)
+            -- Builders return private snapshots. Keep that object as the
+            -- immutable cache and make exactly one defensive copy for the
+            -- caller; the old path copied every row three times on rebuild.
+            cache.rows = rows
+            cache.summary = summary
+            stats.defensiveCopies = stats.defensiveCopies + 1
             return DeepCopy(cache.rows), DeepCopy(cache.summary)
         end
     end
@@ -236,7 +243,10 @@ local function BuildProjection(filters)
                 or tostring(build.author or ""):lower():find(filters.search, 1, true)
                 or tostring(build.description or ""):lower():find(filters.search, 1, true)
             if classMatch and scopeMatch and searchMatch then
-                local copy = DeepCopy(build)
+                -- BuildCatalog readers return fresh public snapshots. This
+                -- projection owns the row and may attach derived DPS fields
+                -- without another full-table copy.
+                local copy = build
                 copy._nexusDps = BuildDpsSummary(copy)
                 copy._nexusBestDps = copy._nexusDps.best
                 out[#out + 1] = copy
@@ -362,6 +372,15 @@ function Projections.Builds(filters)
     local normalized = NormalizeBuildFilters(filters)
     return Cached("builds", function() return BuildKey(normalized) end,
         function() return BuildProjection(normalized) end)
+end
+
+-- Cheap dirty probe for view timers. It intentionally returns no cached rows,
+-- so an unchanged safety tick cannot copy the full projection merely to learn
+-- that the already rendered data is current.
+function Projections.BuildsCurrent(filters)
+    local normalized = NormalizeBuildFilters(filters)
+    return type(caches.builds.rows) == "table"
+        and caches.builds.key == BuildKey(normalized)
 end
 
 function Projections.Leaderboard(category, filters)
