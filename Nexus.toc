@@ -2,7 +2,7 @@
 ## Title: Nexus
 ## Notes: Nexus — emergency automation hotfix with Community, Sync, Leaderboard, and DPS features temporarily disabled.
 ## Author: Boganic
-## Version: 1.20.0-beta.2.co-test.1
+## Version: 1.20.0-beta.3.community-off
 ## OptionalDeps: ProjectEbonhold
 ## SavedVariables: NexusDB WishlistRealizerDB
 
