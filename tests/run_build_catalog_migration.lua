@@ -138,4 +138,76 @@ assert(NexusDB.communityBuilds.one and NexusDB.communityBuilds.two,
 assert(Nexus.BuildCatalog.Count() == 2,
     "empty bundled catalog did not expose all legacy builds")
 
+-- Downgrading across a newer catalog schema must not erase fields this build
+-- cannot understand or stamp the SavedVariables back to schema 1.
+local futureMeta = {
+    schemaVersion=99, catalogVersion="future-catalog",
+    sourceVersion="future-source", futureOwner={marker="keep"},
+}
+local futureRow = {
+    id="future", title="Future", author="Alice", postedAt=10,
+    lastModified=10, echoes={{spellId=90,stacks=1}},
+    futureOnly={marker="keep"},
+}
+local futureOverlay = {future=futureRow}
+local futureTombstones = {gone={stamp=50,author="Alice",futureOnly=true}}
+local futureDb = {
+    buildCatalog=futureMeta,
+    communityBuilds=futureOverlay,
+    syncTombstones=futureTombstones,
+}
+local futureBundle = {
+    schemaVersion=1, catalogVersion="downgrade-catalog", sourceVersion="old",
+    builds={
+        future={id="future",title="Future",author="Alice",postedAt=10,
+            lastModified=10,echoes={{spellId=90,stacks=1}}},
+    },
+}
+NexusDB = futureDb
+Nexus.BundledBuilds = futureBundle
+local compactionCalls = 0
+Nexus.DataCompaction = {Init=function(database)
+    compactionCalls = compactionCalls + 1
+    database.communityBuilds.future = nil
+end}
+Nexus.Store.Init()
+local futureSummary = Nexus.BuildCatalog.Init(futureDb, futureBundle)
+assert(futureSummary.readOnly and not futureSummary.migrated
+    and futureSummary.schemaVersion == 99
+    and futureSummary.redundantRemoved == 0,
+    "future catalog schema was not bound read-only")
+assert(futureDb.buildCatalog == futureMeta
+    and futureMeta.catalogVersion == "future-catalog"
+    and futureMeta.futureOwner.marker == "keep",
+    "future catalog metadata was rewritten during downgrade")
+assert(futureDb.communityBuilds == futureOverlay
+    and futureOverlay.future == futureRow
+    and futureRow.futureOnly.marker == "keep",
+    "future overlay row was pruned or rewritten during downgrade")
+assert(compactionCalls == 0,
+    "startup compaction mutated a future catalog overlay")
+local ok, reason = Nexus.BuildCatalog.Put({id="blocked",title="Blocked"})
+assert(not ok and reason == "future build catalog schema is read-only"
+    and futureOverlay.blocked == nil,
+    "future catalog accepted an overlay write")
+ok, reason = Nexus.BuildCatalog.RemoveOverlay("future")
+assert(not ok and reason == "future build catalog schema is read-only"
+    and futureOverlay.future == futureRow,
+    "future catalog accepted an overlay removal")
+ok, reason = Nexus.BuildCatalog.SetTombstone("future", {stamp=99})
+assert(not ok and reason == "future build catalog schema is read-only"
+    and futureTombstones.future == nil,
+    "future catalog accepted a tombstone write")
+ok, reason = Nexus.BuildCatalog.ClearTombstone("gone")
+assert(not ok and reason == "future build catalog schema is read-only"
+    and futureTombstones.gone.futureOnly,
+    "future catalog accepted a tombstone removal")
+
+local writableDb = {communityBuilds={},syncTombstones={}}
+NexusDB = writableDb
+Nexus.BuildCatalog.Init(writableDb, futureBundle)
+assert(Nexus.BuildCatalog.Put({id="writable",title="Writable"})
+    and writableDb.communityBuilds.writable,
+    "read-only guard survived rebinding to a supported schema")
+
 print("BuildCatalog migration preserved data and is idempotent -- OK")

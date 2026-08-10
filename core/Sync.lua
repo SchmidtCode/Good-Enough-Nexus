@@ -1878,7 +1878,9 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
     else
         -- A new peer on a different catalog version advertises delta buckets
         -- that cannot be compared with our baseline. Force the conservative
-        -- legacy/full response so either side can still recover exact rows.
+        -- legacy/full response so either side can still recover missing exact
+        -- rows. Catalog tokens are compatibility hints, not ownership proof;
+        -- an existing identity still requires an author-originated update.
         buildMode = "legacy"
         comparablePeerHash = "0"
         comparableMineHash = LegacyBuildHash()

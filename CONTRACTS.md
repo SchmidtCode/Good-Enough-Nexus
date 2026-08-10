@@ -411,15 +411,19 @@ cutover, `NexusDB.communityBuilds` is the canonical overlay backing table.
 Overlay writes establish `evidenceKey`; after compaction is enabled, only an
 exact deep round trip removes the inline duplicate. Merged and snapshot reads
 hydrate a missing inline array from `LoadoutEvidence` without mutating
-SavedVariables.
+SavedVariables. A newer `buildCatalog.schemaVersion` binds the catalog read-only:
+metadata, overlay rows, and tombstones are preserved without migration, and all
+catalog mutation APIs reject writes until a supported database is rebound.
 
 ## core/Sync.lua — release-aware build reconciliation
 
 Current `WLRQ` build hashes contain eight overlay/tombstone bucket hashes followed
 by a hex encoding of `BuildCatalog.CatalogVersion()`. Peers with the same catalog token send
 only selected overlay rows and authorized tombstones. Legacy eight-bucket peers
-and peers advertising another catalog token retain full merged-catalog recovery,
-including exact bundled loadouts. A baseline-equivalent legacy payload is accepted
+and peers advertising another catalog token retain full merged-catalog recovery
+for missing IDs, including exact bundled loadouts. Existing identities still
+require an author-originated update: catalog tokens are compatibility hints, not
+ownership authentication. A baseline-equivalent legacy payload is accepted
 without copying it into `NexusDB.communityBuilds`. `Sync.Stats()` exposes
 `baselineSkipped` and `overlaySent` for this boundary. Normal build and DPS hash
 reads use revision caches; `Sync.GetCanonicalBuildHashes()` and

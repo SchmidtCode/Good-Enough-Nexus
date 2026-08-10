@@ -356,7 +356,7 @@ local function BindRows(reason)
             r.build:SetText(tostring((row.build or {}).title or "Record Loadout"))
             if category=="combined" then
                 r.dps:SetText("|cff4dff80"..DpsText(row.average).." avg|r")
-                r.extra:SetText("Dummy "..DpsText(row.dummyDps).."  â€¢  LK "..DpsText(row.lkDps))
+                r.extra:SetText("Dummy "..DpsText(row.dummyDps).."  •  LK "..DpsText(row.lkDps))
             else
                 r.dps:SetText("|cff4dff80"..DpsText(row.dps).." DPS|r")
                 r.extra:SetText(DurationText(row.duration))

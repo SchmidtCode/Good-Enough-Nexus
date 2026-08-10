@@ -10,6 +10,7 @@ local db
 local bundled
 local baseline = {}
 local initialized = false
+local catalogReadOnly = false
 local lastInitSummary
 local libraryGeneration = 0
 local authorIndex, authorIndexGeneration = {}, -1
@@ -168,15 +169,17 @@ end
 
 local function Overlay()
     EnsureBound()
-    db.communityBuilds = type(db.communityBuilds) == "table"
-        and db.communityBuilds or {}
+    if type(db.communityBuilds) == "table" then return db.communityBuilds end
+    if catalogReadOnly then return {} end
+    db.communityBuilds = {}
     return db.communityBuilds
 end
 
 local function Tombstones()
     EnsureBound()
-    db.syncTombstones = type(db.syncTombstones) == "table"
-        and db.syncTombstones or {}
+    if type(db.syncTombstones) == "table" then return db.syncTombstones end
+    if catalogReadOnly then return {} end
+    db.syncTombstones = {}
     return db.syncTombstones
 end
 
@@ -370,20 +373,33 @@ function Catalog.Init(database, bundle)
     debugStats.rebinds = debugStats.rebinds + 1
     local before = initialized and RevisionSnapshot() or nil
     db, bundled, baseline = nextDb, nextBundled, nextBaseline
+    local existingMeta = type(db.buildCatalog) == "table"
+        and db.buildCatalog or nil
+    local storedSchemaVersion = existingMeta
+        and tonumber(existingMeta.schemaVersion) or nil
+    catalogReadOnly = storedSchemaVersion ~= nil
+        and storedSchemaVersion > STORAGE_SCHEMA_VERSION
 
-    db.communityBuilds = type(db.communityBuilds) == "table"
-        and db.communityBuilds or {}
-    db.syncTombstones = type(db.syncTombstones) == "table"
-        and db.syncTombstones or {}
-    db.buildCatalog = type(db.buildCatalog) == "table" and db.buildCatalog or {}
+    -- A future schema may attach meaning to fields this build does not know.
+    -- Keep its metadata and overlay byte-for-byte and expose only read access;
+    -- downgrading must never prune or restamp data owned by a newer client.
+    if not catalogReadOnly then
+        db.communityBuilds = type(db.communityBuilds) == "table"
+            and db.communityBuilds or {}
+        db.syncTombstones = type(db.syncTombstones) == "table"
+            and db.syncTombstones or {}
+        db.buildCatalog = type(db.buildCatalog) == "table"
+            and db.buildCatalog or {}
+    end
     if Nexus.LoadoutEvidence and Nexus.LoadoutEvidence.Init then
         Nexus.LoadoutEvidence.Init(db)
     end
 
-    local meta = db.buildCatalog
+    local meta = type(db.buildCatalog) == "table" and db.buildCatalog or {}
     local catalogVersion = tostring(bundled.catalogVersion or "unversioned")
-    local needsMigration = tonumber(meta.schemaVersion) ~= STORAGE_SCHEMA_VERSION
-        or tostring(meta.catalogVersion or "") ~= catalogVersion
+    local needsMigration = not catalogReadOnly
+        and (tonumber(meta.schemaVersion) ~= STORAGE_SCHEMA_VERSION
+            or tostring(meta.catalogVersion or "") ~= catalogVersion)
     local redundant = 0
     if needsMigration then
         redundant = PruneOverlay(db.communityBuilds)
@@ -392,9 +408,13 @@ function Catalog.Init(database, bundle)
         meta.sourceVersion = tostring(bundled.sourceVersion or "unknown")
     end
 
+    local overlay = type(db.communityBuilds) == "table"
+        and db.communityBuilds or {}
+    local tombstones = type(db.syncTombstones) == "table"
+        and db.syncTombstones or {}
     local bundledCount = Count(baseline)
-    local overlayCount = Count(db.communityBuilds)
-    local tombstoneCount = Count(db.syncTombstones)
+    local overlayCount = Count(overlay)
+    local tombstoneCount = Count(tombstones)
     local merged = MergedCountRaw()
     initialized = true
     if before then
@@ -409,8 +429,10 @@ function Catalog.Init(database, bundle)
         tombstones = tombstoneCount,
         merged = merged,
         redundantRemoved = redundant,
-        schemaVersion = STORAGE_SCHEMA_VERSION,
+        schemaVersion = catalogReadOnly
+            and meta.schemaVersion or STORAGE_SCHEMA_VERSION,
         catalogVersion = catalogVersion,
+        readOnly = catalogReadOnly,
     }
     return DeepCopy(lastInitSummary)
 end
@@ -502,6 +524,9 @@ end
 
 function Catalog.Put(record)
     EnsureBound()
+    if catalogReadOnly then
+        return false, "future build catalog schema is read-only"
+    end
     if type(record) ~= "table" or record.id == nil then
         return false, "build id required"
     end
@@ -545,6 +570,9 @@ end
 
 function Catalog.RemoveOverlay(id)
     EnsureBound()
+    if catalogReadOnly then
+        return false, "future build catalog schema is read-only"
+    end
     local before = RevisionRecord(id)
     local existed = Overlay()[id] ~= nil
     Overlay()[id] = nil
@@ -554,6 +582,9 @@ end
 
 function Catalog.SetTombstone(id, tombstone)
     EnsureBound()
+    if catalogReadOnly then
+        return false, "future build catalog schema is read-only"
+    end
     if id == nil or tombstone == nil then return false end
     local before = RevisionRecord(id)
     Tombstones()[id] = DeepCopy(tombstone)
@@ -564,6 +595,9 @@ end
 
 function Catalog.ClearTombstone(id)
     EnsureBound()
+    if catalogReadOnly then
+        return false, "future build catalog schema is read-only"
+    end
     local before = RevisionRecord(id)
     local existed = Tombstones()[id] ~= nil
     Tombstones()[id] = nil

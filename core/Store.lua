@@ -153,10 +153,12 @@ function Store.Init()
     -- staged cutover, communityBuilds remains the single canonical overlay
     -- table so existing runtime consumers keep working without duplicating the
     -- same records under two SavedVariables keys.
+    local catalogSummary
     if Nexus.BuildCatalog and Nexus.BuildCatalog.Init then
-        Nexus.BuildCatalog.Init(db, Nexus.BundledBuilds)
+        catalogSummary = Nexus.BuildCatalog.Init(db, Nexus.BundledBuilds)
     end
-    if Nexus.DataCompaction and Nexus.DataCompaction.Init then
+    if Nexus.DataCompaction and Nexus.DataCompaction.Init
+        and not (catalogSummary and catalogSummary.readOnly) then
         Nexus.DataCompaction.Init(db)
     end
 end
