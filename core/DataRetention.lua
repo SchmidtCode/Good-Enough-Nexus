@@ -1,7 +1,7 @@
 -- Bounded retention for durable Community and DPS mesh state.
 --
 -- Local/imported builds are never removed automatically. Remote overlay rows
--- are bounded globally and per author, current leaderboard pages are retained,
+-- are bounded globally, per class, and per author; referenced pages rank first,
 -- and orphaned automatic DPS pages are reclaimed. Old exact tombstones are
 -- replaced by a monotonic acceptance floor so a stale peer cannot resurrect a
 -- deleted remote build after compaction.
@@ -11,8 +11,9 @@ local Retention = {}
 Nexus.DataRetention = Retention
 
 local SCHEMA_VERSION = 1
-local LIMITS = {
-    remoteOverlay = 768,
+local DEFAULT_LIMITS = {
+    remoteOverlay = 300,
+    remotePerClass = 50,
     remotePerAuthor = 24,
     characterBestPerCategory = 256,
     personalFingerprints = 128,
@@ -21,6 +22,15 @@ local LIMITS = {
     evictionMarkerAge = 30 * 24 * 60 * 60,
     exactTombstones = 2048,
     tombstoneAge = 180 * 24 * 60 * 60,
+}
+
+local CONFIGURED_LIMITS = {
+    remoteOverlay={ key="communityRetentionMaxTotal", min=25, max=5000 },
+    remotePerClass={ key="communityRetentionMaxPerClass", min=1, max=500 },
+    remotePerAuthor={ key="communityRetentionMaxPerAuthor", min=1, max=250 },
+    characterBestPerCategory={ key="communityRetentionCharacterBest", min=25, max=2000 },
+    personalFingerprints={ key="communityRetentionPersonalFingerprints", min=16, max=1000 },
+    buildBestFingerprints={ key="communityRetentionBuildFingerprints", min=16, max=1000 },
 }
 
 local function Count(source)
@@ -37,6 +47,21 @@ local function Copy(source)
         out[key] = value
     end
     return out
+end
+
+local function ResolveLimits(database)
+    local limits = Copy(DEFAULT_LIMITS)
+    local settings = type(database) == "table" and database.settings or nil
+    for name, spec in pairs(CONFIGURED_LIMITS) do
+        local value = type(settings) == "table" and tonumber(settings[spec.key]) or nil
+        if value and value == value and value < math.huge and value > -math.huge then
+            value = math.floor(value)
+            limits[name] = math.max(spec.min, math.min(spec.max, value))
+        end
+    end
+    limits.remotePerClass = math.min(limits.remotePerClass, limits.remoteOverlay)
+    limits.remotePerAuthor = math.min(limits.remotePerAuthor, limits.remoteOverlay)
+    return limits
 end
 
 local function EpochNow()
@@ -104,7 +129,7 @@ local function BetterRow(left, right)
     return tostring(left.key) < tostring(right.key)
 end
 
-local function TrimCharacterBest(dps)
+local function TrimCharacterBest(dps, limits)
     local removed = 0
     local source = type(dps) == "table" and dps.characterBest or nil
     if type(source) ~= "table" then return removed end
@@ -121,7 +146,7 @@ local function TrimCharacterBest(dps)
             table.sort(rows, BetterRow)
             local kept = 0
             for _, entry in ipairs(rows) do
-                if entry.protected or kept < LIMITS.characterBestPerCategory then
+                if entry.protected or kept < limits.characterBestPerCategory then
                     kept = kept + 1
                 else
                     bucket[entry.key] = nil
@@ -203,6 +228,7 @@ local function CompleteBuild(build)
 end
 
 local function BetterBuild(left, right)
+    if left.referenced ~= right.referenced then return left.referenced end
     if left.complete ~= right.complete then return left.complete end
     if left.stamp ~= right.stamp then return left.stamp > right.stamp end
     return tostring(left.id) < tostring(right.id)
@@ -211,6 +237,11 @@ end
 local function AuthorKey(value)
     local key = PlayerKey(value)
     return key ~= "" and key or "<unknown>"
+end
+
+local function ClassKey(value)
+    local key = tostring(value or "UNKNOWN"):upper():gsub("%s+", "")
+    return key ~= "" and key or "UNKNOWN"
 end
 
 local function RemoveOverlayIds(database, ids)
@@ -244,7 +275,7 @@ local function MarkEvictions(database, overlay, ids)
     return changed
 end
 
-local function PruneOverlay(database, referenced)
+local function PruneOverlay(database, referenced, limits)
     local overlay = type(database.communityBuilds) == "table"
         and database.communityBuilds or {}
     local marked, orphaned = {}, 0
@@ -260,49 +291,72 @@ local function PruneOverlay(database, referenced)
         end
     end
 
+    -- First prevent a single class from crowding out the rest of the library.
+    -- Referenced builds rank first but are not exempt: maxTotal remains a hard
+    -- cap even if a corrupt/hostile dataset creates thousands of references.
+    local classes = {}
+    for id, build in pairs(overlay) do
+        if not marked[id] and not IsLocalBuild(build) then
+            local class = ClassKey(type(build) == "table" and build.class)
+            classes[class] = classes[class] or {}
+            classes[class][#classes[class] + 1] = {
+                id=id, referenced=referenced[id] == true,
+                stamp=BuildStamp(build), complete=CompleteBuild(build),
+            }
+        end
+    end
+    local perClassRemoved = 0
+    for _, rows in pairs(classes) do
+        table.sort(rows, BetterBuild)
+        for index = limits.remotePerClass + 1, #rows do
+            local id = rows[index].id
+            if not marked[id] then
+                marked[id] = true
+                perClassRemoved = perClassRemoved + 1
+            end
+        end
+    end
+
     local groups = {}
     for id, build in pairs(overlay) do
         if not marked[id] and not IsLocalBuild(build) then
             local author = AuthorKey(type(build) == "table" and build.author)
-            local group = groups[author]
-            if not group then group = { protected=0, rows={} }; groups[author] = group end
-            if referenced[id] then
-                group.protected = group.protected + 1
-            else
-                group.rows[#group.rows + 1] = {
-                    id=id, stamp=BuildStamp(build), complete=CompleteBuild(build),
-                }
-            end
+            groups[author] = groups[author] or {}
+            groups[author][#groups[author] + 1] = {
+                id=id, referenced=referenced[id] == true,
+                stamp=BuildStamp(build), complete=CompleteBuild(build),
+            }
         end
     end
     local perAuthorRemoved = 0
-    for _, group in pairs(groups) do
-        table.sort(group.rows, BetterBuild)
-        local allowance = math.max(0, LIMITS.remotePerAuthor - group.protected)
-        for index = allowance + 1, #group.rows do
-            local id = group.rows[index].id
+    for _, rows in pairs(groups) do
+        table.sort(rows, BetterBuild)
+        for index = limits.remotePerAuthor + 1, #rows do
+            local id = rows[index].id
             if not marked[id] then marked[id] = true; perAuthorRemoved = perAuthorRemoved + 1 end
         end
     end
 
-    local protectedCount, candidates = 0, {}
+    local candidates = {}
     for id, build in pairs(overlay) do
         if not marked[id] and not IsLocalBuild(build) then
-            if referenced[id] then
-                protectedCount = protectedCount + 1
-            else
-                candidates[#candidates + 1] = {
-                    id=id, stamp=BuildStamp(build), complete=CompleteBuild(build),
-                }
-            end
+            candidates[#candidates + 1] = {
+                id=id, referenced=referenced[id] == true,
+                stamp=BuildStamp(build), complete=CompleteBuild(build),
+            }
         end
     end
     table.sort(candidates, BetterBuild)
     local globalRemoved = 0
-    local allowance = math.max(0, LIMITS.remoteOverlay - protectedCount)
-    for index = allowance + 1, #candidates do
+    for index = limits.remoteOverlay + 1, #candidates do
         local id = candidates[index].id
         if not marked[id] then marked[id] = true; globalRemoved = globalRemoved + 1 end
+    end
+
+    local referencedKept = 0
+    for id in pairs(referenced) do
+        if not marked[id] and not IsLocalBuild(overlay[id])
+            and overlay[id] ~= nil then referencedKept = referencedKept + 1 end
     end
 
     local ids = {}
@@ -314,9 +368,10 @@ local function PruneOverlay(database, referenced)
         after=math.max(0, remoteBefore - removed),
         removed=removed,
         orphaned=orphaned,
+        perClass=perClassRemoved,
         perAuthor=perAuthorRemoved,
         global=globalRemoved,
-        protected=protectedCount,
+        referencedKept=referencedKept,
         markersAdded=markersAdded,
     }
 end
@@ -326,8 +381,8 @@ local function PruneEvictionMarkers(database, now)
         and database.communityRetentionEvictions or {}
     local before = Count(source)
     local floor = tonumber(database.communityBuildRetentionFloor) or 0
-    local cutoff = now > LIMITS.evictionMarkerAge
-        and now - LIMITS.evictionMarkerAge or 0
+    local cutoff = now > DEFAULT_LIMITS.evictionMarkerAge
+        and now - DEFAULT_LIMITS.evictionMarkerAge or 0
     local rows = {}
     for id, value in pairs(source) do
         local stamp = tonumber(value) or 0
@@ -348,9 +403,9 @@ local function PruneEvictionMarkers(database, now)
             floor = math.max(floor, row.stamp)
         end
     end
-    if remaining > LIMITS.evictionMarkers then
+    if remaining > DEFAULT_LIMITS.evictionMarkers then
         for _, row in ipairs(rows) do
-            if remaining <= LIMITS.evictionMarkers then break end
+            if remaining <= DEFAULT_LIMITS.evictionMarkers then break end
             if source[row.id] ~= nil then
                 source[row.id] = nil
                 removed, remaining = removed + 1, remaining - 1
@@ -375,7 +430,8 @@ local function PruneTombstones(database, now)
         and database.syncTombstones or {}
     local exactBefore = Count(source)
     local floor = tonumber(database.syncTombstoneFloor) or 0
-    local cutoff = now > LIMITS.tombstoneAge and now - LIMITS.tombstoneAge or 0
+    local cutoff = now > DEFAULT_LIMITS.tombstoneAge
+        and now - DEFAULT_LIMITS.tombstoneAge or 0
     local candidates = {}
     local catalog = Nexus and Nexus.BuildCatalog
     for id, tomb in pairs(source) do
@@ -403,9 +459,9 @@ local function PruneTombstones(database, now)
             floor = math.max(floor, entry.stamp)
         end
     end
-    if countAfter > LIMITS.exactTombstones then
+    if countAfter > DEFAULT_LIMITS.exactTombstones then
         for _, entry in ipairs(candidates) do
-            if countAfter <= LIMITS.exactTombstones then break end
+            if countAfter <= DEFAULT_LIMITS.exactTombstones then break end
             if not marked[entry.id] then
                 marked[entry.id] = true
                 countAfter = countAfter - 1
@@ -492,15 +548,16 @@ function Retention.Enforce(database, reason)
     database.dataRetention = priorMeta or {}
     database.dataRetention.schemaVersion = SCHEMA_VERSION
 
+    local limits = ResolveLimits(database)
     local dps = type(database.dpsCapture) == "table" and database.dpsCapture or nil
-    local characterRemoved = TrimCharacterBest(dps)
+    local characterRemoved = TrimCharacterBest(dps, limits)
     local fingerprints = CharacterFingerprints(dps)
     local personalRemoved = dps and TrimFingerprintMap(
-        dps.personalBest, LIMITS.personalFingerprints, fingerprints) or 0
+        dps.personalBest, limits.personalFingerprints, fingerprints) or 0
     local buildBestRemoved = dps and TrimFingerprintMap(
-        dps.buildBest, LIMITS.buildBestFingerprints, nil) or 0
+        dps.buildBest, limits.buildBestFingerprints, nil) or 0
     local referenced = CollectBuildReferences(dps)
-    local overlay = PruneOverlay(database, referenced)
+    local overlay = PruneOverlay(database, referenced, limits)
     local now = EpochNow()
     local evictions = PruneEvictionMarkers(database, now)
     local tombstones = PruneTombstones(database, now)
@@ -521,9 +578,11 @@ function Retention.Enforce(database, reason)
         overlayAfter=overlay.after,
         overlayRemoved=overlay.removed,
         orphanAutoBuildsRemoved=overlay.orphaned,
+        perClassRemoved=overlay.perClass,
         perAuthorRemoved=overlay.perAuthor,
         globalRemoved=overlay.global,
-        protectedBuilds=overlay.protected,
+        referencedBuildsKept=overlay.referencedKept,
+        limits=Copy(limits),
         evictionMarkersAdded=overlay.markersAdded,
         evictionMarkersBefore=evictions.before,
         evictionMarkersAfter=evictions.after,
@@ -595,8 +654,9 @@ function Retention.ReleaseSupersededAutoBuild(buildId, database)
     return false
 end
 
-function Retention.Limits()
-    return Copy(LIMITS)
+function Retention.Limits(database)
+    database = type(database) == "table" and database or NexusDB
+    return ResolveLimits(database)
 end
 
 function Retention.Stats(database)

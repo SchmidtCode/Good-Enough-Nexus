@@ -43,6 +43,23 @@ DefaultProfile.defaultSettings = {
     -- exactly as falsy as `false` -- no SETTINGS_VERSION bump needed.
     autoLockEchoes = false,
     updateNotifications = true, -- chat + persistent panel notice; manual install only
+    -- Community transport defaults to background convergence only while the
+    -- character is resting (cities/inns), out of combat, and outside gameplay
+    -- instances. Manual and Off remain persistent user choices.
+    syncMode = "automatic", -- "off", "manual", or "automatic"
+    syncOnlyWhileResting = true,
+    syncSuspendInCombat = true,
+    syncSuspendedInstanceTypes = {
+        party=true, raid=true, pvp=true, arena=true, scenario=true,
+    },
+    -- Durable remote Community data. Owned/imported builds are never counted
+    -- against or removed by these limits.
+    communityRetentionMaxTotal = 300,
+    communityRetentionMaxPerClass = 50,
+    communityRetentionMaxPerAuthor = 24,
+    communityRetentionCharacterBest = 256,
+    communityRetentionPersonalFingerprints = 128,
+    communityRetentionBuildFingerprints = 128,
     anchorSpellId = nil, -- explicit override; honored only when on the wishlist
     -- Diversity-anchor auto-detection: if no explicit anchorSpellId, the
     -- anchor is the wishlist echo whose name matches one of these. Adaptive

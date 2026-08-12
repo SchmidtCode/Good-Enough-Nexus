@@ -44,6 +44,8 @@ is different from the runtime addon identity by design.
 - `/nexus leaderboard` — open the DPS Leaderboard
 - `/nexus editor` — open the Wishlist Editor
 - `/nexus sync` — request builds and records
+- `/nexus syncmode <automatic|manual|off>` — select persistent Sync behavior
+- `/nexus synclimits <total> <class> <author>` — set remote build retention limits
 - `/nexus dps` — show DPS capture status
 - `/nexus auto` — toggle automation
 - `/nexus panel` — toggle the HUD

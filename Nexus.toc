@@ -30,6 +30,7 @@ core\DiagnosticLogs.lua
 core\ViewRefresh.lua
 core\Updates.lua
 core\Codec.lua
+core\SyncPolicy.lua
 core\Sync.lua
 core\DpsCapture.lua
 core\ViewProjections.lua

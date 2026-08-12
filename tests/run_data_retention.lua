@@ -17,6 +17,11 @@ Nexus.BundledBuilds = {
 }
 
 NexusDB = {
+    settings={
+        communityRetentionMaxTotal=120,
+        communityRetentionMaxPerClass=10,
+        communityRetentionMaxPerAuthor=8,
+    },
     communityBuilds={},
     syncTombstones={},
     dpsCapture={
@@ -26,6 +31,10 @@ NexusDB = {
 }
 
 local overlay = NexusDB.communityBuilds
+local classes = {
+    "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST",
+    "DEATHKNIGHT", "SHAMAN", "MAGE", "WARLOCK", "DRUID",
+}
 for i = 1, 30 do
     local id = string.format("local-%03d", i)
     overlay[id] = {
@@ -43,13 +52,14 @@ for i = 1, 900 do
     local id = string.format("remote-%04d", i)
     overlay[id] = {
         id=id, title=id, author="Peer" .. tostring((i - 1) % 60 + 1),
+        class=classes[(i - 1) % #classes + 1],
         lastModified=1000 + i, loadoutAvailable=true,
     }
 end
 for i = 1, 40 do
     local id = string.format("flood-%03d", i)
     overlay[id] = {
-        id=id, title=id, author="Flood", lastModified=5000 + i,
+        id=id, title=id, author="Flood", class="MAGE", lastModified=5000 + i,
         loadoutAvailable=true,
     }
 end
@@ -63,6 +73,7 @@ for i = 1, 300 do
     local id = string.format("remote-char-%03d", i)
     overlay[id] = {
         id=id, title=id, author="DpsPeer" .. tostring(i), autoDps=true,
+        class=classes[(i - 1) % #classes + 1],
         lastModified=10000 + i, loadoutAvailable=true,
     }
     dummy[string.format("player-%03d", i)] = {
@@ -96,15 +107,21 @@ NexusDB.syncTombstones.pending = {
 Nexus.LoadoutEvidence.Init(NexusDB)
 Nexus.BuildCatalog.Init(NexusDB, Nexus.BundledBuilds)
 local limits = Nexus.DataRetention.Limits()
+assert(limits.remoteOverlay == 120 and limits.remotePerClass == 10
+    and limits.remotePerAuthor == 8,
+    "configured retention limits were not resolved")
 local summary = assert(Nexus.DataRetention.Enforce(NexusDB, "focused test"))
 
 local remoteCount, floodCount, localCount = 0, 0, 0
+local classCounts = {}
 for _, build in pairs(NexusDB.communityBuilds) do
     if build.isMine or build.importedSavedBuild
         or build.ownerKey == "boganic@ebonhold" then
         localCount = localCount + 1
     else
         remoteCount = remoteCount + 1
+        local class = tostring(build.class or "UNKNOWN")
+        classCounts[class] = (classCounts[class] or 0) + 1
         if tostring(build.author):lower() == "flood" then
             floodCount = floodCount + 1
         end
@@ -115,6 +132,10 @@ assert(remoteCount <= limits.remoteOverlay,
     "remote overlay exceeded its global retention cap")
 assert(floodCount <= limits.remotePerAuthor,
     "one remote author exceeded the per-author cap")
+for class, count in pairs(classCounts) do
+    assert(count <= limits.remotePerClass,
+        tostring(class) .. " exceeded the per-class cap")
+end
 assert(overlay["remote-char-300"] ~= nil,
     "current leaderboard build was removed")
 assert(summary.orphanAutoBuildsRemoved >= 45,

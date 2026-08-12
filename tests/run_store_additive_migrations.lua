@@ -84,12 +84,14 @@ assert(NexusDB == legacy and WishlistRealizerDB == nil,
 assert(NexusDB.settings == settings and NexusDB.chars.Hero == state,
     "migration replaced live settings or character tables")
 assert(NexusDB.settingsVersion == Store.SettingsVersion()
-    and NexusDB.settingsVersion == 2, "ordered migration version was not recorded")
+    and NexusDB.settingsVersion == 3, "ordered migration version was not recorded")
 assert(settings.autoPick == false and settings.autoActivate == false
     and settings.updateNotifications == false,
     "existing false preferences were overwritten by defaults")
 assert(settings.autoSave == true and settings.autoBanish == true
-    and settings.anchorNames[1] == "Adaptive Power",
+    and settings.anchorNames[1] == "Adaptive Power"
+    and settings.syncMode == "automatic"
+    and settings.communityRetentionMaxTotal == 300,
     "missing defaults were not filled additively")
 assert(settings.leverOptOut.futureLeverValue == "keep"
     and settings.futurePreference.nested == "preserve",

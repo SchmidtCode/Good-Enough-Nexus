@@ -11,7 +11,7 @@ Nexus.Store = Store
 -- Versioned shape changes are additive and ordered. User preferences,
 -- per-character safety state, and unknown/future fields are never rebuilt
 -- merely because the shipped defaults or schema version changed.
-local SETTINGS_VERSION = 2
+local SETTINGS_VERSION = 3
 
 local function DeepCopy(t)
     if type(t) ~= "table" then return t end
@@ -87,9 +87,36 @@ local function MigratePendingToggleRecords(db)
     end
 end
 
+local function MigrateSyncAndRetentionSettings(db)
+    local settings = type(db.settings) == "table" and db.settings or {}
+    db.settings = settings
+    local mode = type(settings.syncMode) == "string"
+        and settings.syncMode:lower() or nil
+    if mode == "auto" then mode = "automatic" end
+    if mode ~= "off" and mode ~= "manual" and mode ~= "automatic" then
+        settings.syncMode = nil -- filled from the additive shipped default
+    else
+        settings.syncMode = mode
+    end
+    for _, key in ipairs({
+        "communityRetentionMaxTotal", "communityRetentionMaxPerClass",
+        "communityRetentionMaxPerAuthor", "communityRetentionCharacterBest",
+        "communityRetentionPersonalFingerprints",
+        "communityRetentionBuildFingerprints",
+    }) do
+        local value = tonumber(settings[key])
+        if value == nil or value ~= value or value < 0 or value >= math.huge then
+            settings[key] = nil
+        else
+            settings[key] = math.floor(value)
+        end
+    end
+end
+
 local MIGRATIONS = {
     [1] = function() end, -- baseline for previously unversioned saves
     [2] = MigratePendingToggleRecords,
+    [3] = MigrateSyncAndRetentionSettings,
 }
 
 local function ApplyMigrations(db)

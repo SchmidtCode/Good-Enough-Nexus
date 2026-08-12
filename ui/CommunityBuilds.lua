@@ -62,7 +62,7 @@ local CLASS_ICON = {
 local frame, scrollChild, scrollFrame, scrollBar
 local detailPanel
 local postPopup, editPopup
-local searchBox, classDropBtn, dropPanel, sortToggle, sortPanel, scopeBtn, myBuildsBtn, syncStatusText, syncBtn, dropdownShield
+local searchBox, classDropBtn, dropPanel, sortToggle, sortPanel, scopeBtn, myBuildsBtn, syncStatusText, syncBtn, syncModeBtn, dropdownShield
 local leaderboardBtn, wishlistBtn, resultText
 local Adapter, Model
 local selectedId  = nil
@@ -1986,8 +1986,26 @@ local function EnsureFrame()
                     syncStatusText:SetText(string.format(
                         "|cff4dff80Listening for builds... %ds|r  (%d new so far)",
                         math.ceil(Nexus.Sync.ReceiveTimeLeft()), receiveCount))
+                elseif Nexus.Sync.GetEffectiveState then
+                    local state = Nexus.Sync.GetEffectiveState()
+                    syncStatusText:SetText(string.format(
+                        "|cff888888%s%s|r",
+                        tostring(state.label or "Sync"),
+                        state.reason and (" - " .. tostring(state.reason)) or ""))
                 end
-                if syncBtn then syncBtn:SetText(receiving and "Listening..." or "Sync Now") end
+                local state = Nexus.Sync.GetEffectiveState
+                    and Nexus.Sync.GetEffectiveState() or nil
+                if syncBtn then
+                    syncBtn:SetText(receiving and "Listening..."
+                        or state and state.key == "off" and "Sync Off"
+                        or state and state.key == "suspended" and "Waiting..."
+                        or "Sync Now")
+                end
+                if syncModeBtn and state then
+                    syncModeBtn:SetText(state.mode == "automatic" and "Mode: Auto"
+                        or state.mode == "manual" and "Mode: Manual"
+                        or "Mode: Off")
+                end
             end
 
             -- Build/DPS revisions mark the view dirty while Sync is active.
@@ -2345,6 +2363,30 @@ local function EnsureFrame()
     end)
     syncBtn:SetScript("OnLeave",function() GameTooltip:Hide() end)
 
+    syncModeBtn = CreateFrame("Button",nil,frame,"UIPanelButtonTemplate")
+    syncModeBtn:SetSize(94,22)
+    syncModeBtn:SetPoint("TOPRIGHT",-232,-78)
+    frame._syncModeBtn = syncModeBtn
+    syncModeBtn:SetText("Mode: Auto")
+    syncModeBtn:SetScript("OnClick",function()
+        CloseDropdowns()
+        if not (Nexus.Sync and Nexus.Sync.SetMode) then return end
+        local current = Nexus.Sync.Mode and Nexus.Sync.Mode() or "automatic"
+        local nextMode = current == "automatic" and "manual"
+            or current == "manual" and "off" or "automatic"
+        local mode = Nexus.Sync.SetMode(nextMode)
+        print("|cff7fd5ffNexus:|r Sync mode set to " .. tostring(mode) .. ".")
+        M.Refresh()
+    end)
+    syncModeBtn:SetScript("OnEnter",function(self)
+        GameTooltip:SetOwner(self,"ANCHOR_TOP")
+        GameTooltip:AddLine("Community Sync mode",1,1,1)
+        GameTooltip:AddLine("Click to cycle Automatic, Manual, and Off.",0.8,0.8,0.8,true)
+        GameTooltip:AddLine("Sync runs only while resting, out of combat, and outside configured instances.",0.8,0.8,0.8,true)
+        GameTooltip:Show()
+    end)
+    syncModeBtn:SetScript("OnLeave",function() GameTooltip:Hide() end)
+
     local postBtn = CreateFrame("Button",nil,frame,"UIPanelButtonTemplate")
     postBtn:SetSize(110,22)
     postBtn:SetPoint("TOPRIGHT",-15,-78)
@@ -2500,7 +2542,7 @@ function M.Refresh()
                 math.ceil(s.ReceiveTimeLeft()), s.LastSyncNewCount()))
         elseif s.Stats().received > 0 then
             syncStatusText:SetText(string.format(
-                "|cff888888%d build(s) in library. Updated on login; last sync added %d.  Sync Now checks again.|r",
+                "|cff888888%d build(s) in library. Updated while resting; last sync added %d.  Sync Now checks again.|r",
                 (function() local n=0 for _ in pairs(Store()) do n=n+1 end return n end)(),
                 s.LastSyncNewCount()))
         else

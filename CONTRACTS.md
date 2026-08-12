@@ -421,10 +421,12 @@ catalog mutation APIs reject writes until a supported database is rebound.
 `DataRetention.Init(db)` performs an idempotent startup pass and `Request(reason)`
 coalesces later noncritical passes through `Scheduler`. It never automatically
 removes `isMine`, `importedSavedBuild`, or current-character-owned builds. Remote
-overlay rows are capped globally and per author after current DPS-page references
-are protected; superseded unreferenced `autoDps` rows are removed locally without
-broadcasting a delete for another author. Personal/build-best fingerprint maps and
-each public character-best encounter bucket have fixed limits.
+overlay rows are capped globally, per class, and per author using clamped saved
+settings (defaults 300/50/24). Referenced, complete, and newer rows rank first,
+but only owned/imported rows are exempt from the hard remote cap. Superseded
+unreferenced `autoDps` rows are removed locally without broadcasting a delete for
+another author. Personal/build-best fingerprint maps and each public
+character-best encounter bucket have configurable bounded limits.
 
 Local eviction markers prevent the same stale rows from churning back through
 Sync. Markers themselves compact to a monotonic build-revision floor. Exact
@@ -433,6 +435,17 @@ compact to a monotonic delete floor so stale peers cannot resurrect removed IDs.
 `AllowsRemoteRevision(author, stamp, db, id)` is the Sync admission boundary.
 Future retention schemas are read-only. Evidence garbage collection runs only
 after represented durable rows are removed.
+
+## core/SyncPolicy.lua — saved transport policy
+
+`SyncPolicy.Mode()` normalizes the additive saved `syncMode` setting to `off`,
+`manual`, or `automatic`. `ContextBlock()` suspends transport while configured
+combat, instance, or non-resting conditions apply. `Sync` owns session state and
+clears volatile queues/partial transfers when policy becomes blocked; durable
+tombstones and local DPS/build data remain available for a later safe session.
+Off never joins or accepts protocol traffic. Manual joins only after `Sync Now`
+and leaves when convergence finishes. Automatic reconnects and converges once a
+safe resting context resumes.
 
 ## core/Sync.lua — release-aware build reconciliation
 

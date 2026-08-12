@@ -1,12 +1,12 @@
 -- Nexus: core/Sync.lua v2.1
 -- Peer-to-peer sharing for Nexus Builds.
 --
--- Login starts a slow convergence sync that repeats until the local mesh state
--- is stable. Valid build and DPS updates are always accepted; exact Echo lists
--- are included in sync responses rather than fetched only when a menu is opened.
+-- Automatic mode starts a slow convergence sync while the character is resting
+-- and gameplay is safe. Off performs no transport work; Manual starts only from
+-- an explicit user request. Exact Echo lists are included in sync responses.
 --
--- SHARING IS AUTOMATIC. Builds go out when you post or edit, and in
--- response to any peer sync request.
+-- Posting/editing shares immediately only during an active safe transport
+-- session. Otherwise the durable row is included in the next allowed sync.
 --
 -- WIRE PROTOCOL (| separated; pipe escaped to || on send):
 --   WLRQ|<sender>|<buildhash>|<dpshash>|<requestId> -- state request
@@ -78,7 +78,7 @@ local MAX_PENDING_RESPONSES = 128
 local MAX_PENDING_LOADOUTS = 128
 local MAX_KNOWN_PEERS = 512
 local SEND_INTERVAL   = 1.10   -- conservative channel pacing; avoids server chat spam/mutes
-local RECEIVE_WINDOW  = 60     -- compatibility/status timer; receiving is always enabled
+local RECEIVE_WINDOW  = 60     -- compatibility/status timer inside an allowed session
 local INFLIGHT_GRACE  = 30     -- seconds to finish an interrupted chunk transfer
 local INFLIGHT_MAX_AGE = 300   -- absolute cap even if duplicate chunks keep arriving
 local REQUEST_COOLDOWN = 6     -- min seconds between our own Sync Now presses
@@ -139,6 +139,9 @@ local lastSyncNewCount = 0
 local autoSyncPending = false
 local autoSyncElapsed = 0
 local autoConverge = { active=false, pass=0, stable=0, started=0, lastInbound=0, buildHash=nil, dpsHash=nil }
+local manualSessionActive = false
+local suspendReason = nil
+local pendingStatusReply = nil
 local Now, MyName
 local knownPeers = {} -- normalized player name -> { name, version, lastSeen }
 local CleanExpiredInflight
@@ -424,6 +427,49 @@ end
 
 Now = function() return (GetTime and GetTime()) or 0 end
 MyName = function() return (UnitName and UnitName("player")) or "?" end
+
+function Sync.Mode()
+    local policy = Nexus and Nexus.SyncPolicy
+    return policy and type(policy.Mode) == "function"
+        and policy.Mode() or "automatic"
+end
+
+function Sync._TransportAllowed()
+    local policy = Nexus and Nexus.SyncPolicy
+    if not (policy and type(policy.Allows) == "function") then return true end
+    return policy.Allows(manualSessionActive)
+end
+
+function Sync._LeaveChannel(reason)
+    local wasConnected = channelIndex ~= nil
+    if type(LeaveChannelByName) == "function" then
+        pcall(LeaveChannelByName, SYNC_CHANNEL)
+    end
+    channelIndex = nil
+    if wasConnected and LogEvent then
+        LogEvent("CHAN", "transport inactive: %s", tostring(reason or "policy"))
+    end
+end
+
+function Sync._Suspend(reason)
+    suspendReason = tostring(reason or "suspended")
+    sendQueue, sendQueueHead, sendQueueTail = {}, 1, 0
+    controlQueue, controlQueueHead, controlQueueTail = {}, 1, 0
+    inflight, dpsInflight = {}, {}
+    pendingResponses, pendingLoadouts = {}, {}
+    legacyRecoveryQueue, legacyRecoveryHead, legacyRecoveryTail = {}, 1, 0
+    receiveWindowUntil = 0
+    autoConverge.active = false
+    pendingStatusReply = nil
+    if Sync.Mode() == "automatic" then
+        autoSyncPending, autoSyncElapsed = true, 0
+    else
+        autoSyncPending = false
+        manualSessionActive = false
+    end
+    Sync._LeaveChannel(suspendReason)
+    return false, suspendReason
+end
 
 local function EscapedLen(s)
     return #s + select(2, s:gsub("|", ""))
@@ -735,6 +781,11 @@ local function HideChannelFromChat()
 end
 
 function Sync.EnsureChannel()
+    local allowed, why = Sync._TransportAllowed()
+    if not allowed then
+        channelIndex = nil
+        return false, why
+    end
     local idx = FindSyncChannel()
     if idx then
         if channelIndex ~= idx then
@@ -762,6 +813,8 @@ function Sync.IsConnected()  return channelIndex ~= nil and channelIndex > 0 end
 function Sync.Stats()        return stats end
 
 local function ResolveSendChannel()
+    local allowed = Sync._TransportAllowed()
+    if not allowed then return nil end
     -- Channel numbers are not stable: leaving/joining any channel can move
     -- wrbuildssync while the old slot is reassigned to General or Trade.
     -- Re-resolve the name immediately before each queued channel send.
@@ -837,6 +890,8 @@ local function RejectQueueOverflow(kind, need, depth, cap)
 end
 
 local function Enqueue(payload)
+    local allowed, why = Sync._TransportAllowed()
+    if not allowed then return false, why end
     if not ValidateQueuedPayload(payload) then return false, "invalid packet" end
     local depth = QueueDepth(sendQueueHead, sendQueueTail)
     if depth >= MAX_OUTBOUND_QUEUE then
@@ -848,6 +903,8 @@ local function Enqueue(payload)
 end
 
 local function EnqueueBatch(payloads)
+    local allowed, why = Sync._TransportAllowed()
+    if not allowed then return false, why end
     if type(payloads) ~= "table" or #payloads == 0 then
         return false, "empty batch"
     end
@@ -869,6 +926,8 @@ local function EnqueueBatch(payloads)
 end
 
 local function EnqueueControl(payload)
+    local allowed, why = Sync._TransportAllowed()
+    if not allowed then return false, why end
     if not ValidateQueuedPayload(payload) then return false, "invalid packet" end
     local depth = QueueDepth(controlQueueHead, controlQueueTail)
     if depth >= MAX_CONTROL_QUEUE then
@@ -938,6 +997,7 @@ local function PopQueued(isControl)
 end
 
 local function PumpQueue(elapsed)
+    if not Sync._TransportAllowed() then return end
     local now = Now()
     if now < (throttlePauseUntil or 0) then return end
     ticker = ticker + (elapsed or 0)
@@ -1090,6 +1150,7 @@ local function PendingDeleteCount()
 end
 
 local function PumpPendingDeletes(elapsed)
+    if not Sync._TransportAllowed() then return end
     if not next(pendingDeletes) then return end
     pendingDeleteTicker = pendingDeleteTicker + (tonumber(elapsed) or 0)
     if pendingDeleteTicker < 1 then return end
@@ -2494,6 +2555,12 @@ local function AcceptPeer(sender, version)
 end
 
 function Sync.HandleIncoming(text, sender)
+    local allowed, why = Sync._TransportAllowed()
+    if not allowed then
+        stats.ignoredOutsideWindow = (stats.ignoredOutsideWindow or 0) + 1
+        suspendReason = tostring(why or "policy")
+        return false
+    end
     if type(text) ~= "string" or #text > MAX_WIRE_BYTES
         or text:find("[%c]") then return RejectIncoming("invalid wire length") end
     text = text:gsub("||", "|")
@@ -2763,9 +2830,18 @@ end
 -- Manual Sync Now uses the same repeat-until-stable convergence loop as login.
 -- Existing data is deduplicated, so restarting the loop is safe.
 function Sync.RequestSync()
+    local mode = Sync.Mode()
+    if mode == "off" then return false, "sync mode is Off" end
     -- Do not interrupt a convergence already in progress. The current loop is
     -- already continuing until stable, so another click has nothing to add.
     if autoConverge.active then return true, "already syncing" end
+    manualSessionActive = mode == "manual"
+    local allowed, blocked = Sync._TransportAllowed()
+    if not allowed then
+        manualSessionActive = false
+        return false, "sync suspended: " .. tostring(blocked or "unsafe context")
+    end
+    suspendReason = nil
     autoSyncPending = false
     autoConverge.active = true
     autoConverge.pass = 0
@@ -2773,6 +2849,10 @@ function Sync.RequestSync()
     local ok, why = BeginConvergencePass()
     if not ok then
         autoConverge.active = false
+        if mode == "manual" then
+            manualSessionActive = false
+            Sync._LeaveChannel(why or "manual sync failed")
+        end
         return false, why
     end
     return true
@@ -2818,6 +2898,11 @@ end
 function Sync.GetLeaderboardSyncStatus()
     local now = Now()
     local work = SyncWorkCounts()
+    local effective = Sync.GetEffectiveState and Sync.GetEffectiveState() or nil
+    if effective and (effective.key == "off" or effective.key == "suspended"
+        or effective.key == "manual-idle") then
+        return effective.key, 0, work.total, work
+    end
     if now < (throttlePauseUntil or 0) then
         return "throttled", math.max(1, math.ceil((throttlePauseUntil or 0) - now)), work.total, work
     end
@@ -2841,6 +2926,10 @@ local function UpdateAutoConvergence()
     if autoConverge.stable >= 2 then
         autoConverge.active = false
         LogEvent("SYNC", "convergence complete after %d pass(es)", autoConverge.pass)
+        if Sync.Mode() == "manual" then
+            manualSessionActive = false
+            Sync._LeaveChannel("manual sync complete")
+        end
         return
     end
     local ok, why = BeginConvergencePass()
@@ -2879,6 +2968,67 @@ function Sync.PruneTransientState(now)
     return removed
 end
 
+function Sync.ContextChanged(reason)
+    local allowed, blocked = Sync._TransportAllowed()
+    if not allowed then
+        return Sync._Suspend(blocked or reason or "context changed")
+    end
+    suspendReason = nil
+    if Sync.Mode() == "automatic" then
+        if not autoConverge.active then
+            autoSyncPending, autoSyncElapsed = true, 0
+        end
+        if not Sync.IsConnected() then Sync.EnsureChannel() end
+    elseif manualSessionActive and not Sync.IsConnected() then
+        Sync.EnsureChannel()
+    end
+    return true
+end
+
+function Sync.SetMode(value)
+    local policy = Nexus and Nexus.SyncPolicy
+    local mode = policy and type(policy.SetMode) == "function"
+        and policy.SetMode(value) or tostring(value or "automatic"):lower()
+    manualSessionActive = false
+    autoConverge.active = false
+    if mode == "automatic" then
+        autoSyncPending, autoSyncElapsed = true, 0
+    else
+        autoSyncPending = false
+    end
+    Sync.ContextChanged("mode changed")
+    return mode
+end
+
+function Sync.GetEffectiveState()
+    local mode = Sync.Mode()
+    if mode == "off" then
+        return { key="off", mode=mode, label="Off", reason="disabled by user" }
+    end
+    local policy = Nexus and Nexus.SyncPolicy
+    local blocked = policy and type(policy.ContextBlock) == "function"
+        and policy.ContextBlock() or nil
+    if blocked then
+        return { key="suspended", mode=mode,
+            label=(mode == "manual" and "Manual" or "Automatic")
+                .. " - suspended", reason=blocked }
+    end
+    if mode == "manual" and not manualSessionActive then
+        return { key="manual-idle", mode=mode,
+            label="Manual - idle", reason="press Sync Now while resting" }
+    end
+    local work = SyncWorkCounts()
+    if autoConverge.active or (tonumber(work.total) or 0) > 0
+        or Now() < receiveWindowUntil then
+        return { key="syncing", mode=mode,
+            label=(mode == "manual" and "Manual" or "Automatic")
+                .. " - syncing" }
+    end
+    return { key="active", mode=mode,
+        label=(mode == "manual" and "Manual" or "Automatic")
+            .. " - active", reason=suspendReason }
+end
+
 function Sync.TombstoneCount()
     local n = 0; for _ in pairs(tombstones) do n=n+1 end; return n
 end
@@ -2889,6 +3039,17 @@ function Sync.OnUpdate(elapsed)
     if Sync._transientPruneTicker >= 30 then
         Sync._transientPruneTicker = 0
         Sync.PruneTransientState()
+    end
+    local allowed, blocked = Sync._TransportAllowed()
+    if not allowed then
+        suspendReason = tostring(blocked or "policy")
+        if Sync.IsConnected() or autoConverge.active
+            or sendQueue[sendQueueHead] or controlQueue[controlQueueHead]
+            or next(inflight) or next(dpsInflight)
+            or next(pendingResponses) or next(pendingLoadouts) then
+            Sync._Suspend(suspendReason)
+        end
+        return
     end
     CleanExpiredInflight()
     ProcessPendingResponses(elapsed)
@@ -2936,7 +3097,7 @@ end
 -- this and never see anything unusual.
 ------------------------------------------------------------------------
 
-local pendingStatusReply = nil   -- { target, requestId }
+pendingStatusReply = nil   -- { target, requestId }
 
 local function BuildStatusToken()
     local A  = Adapter
@@ -2964,12 +3125,14 @@ local function BuildStatusToken()
 end
 
 function Sync.HandleStatusRequest(sender, requestId)
+    if not Sync._TransportAllowed() then return false end
     if sender and sender ~= "" then
         pendingStatusReply = { target = sender, requestId = requestId or "0" }
     end
 end
 
 function Sync.FlushStatusReply()
+    if not Sync._TransportAllowed() then pendingStatusReply = nil; return end
     if not pendingStatusReply then return end
     local rep = pendingStatusReply
     pendingStatusReply = nil
@@ -2982,6 +3145,7 @@ end
 
 -- Send a status token to a specific player on demand (dev use only).
 function Sync.SendStatusTo(target)
+    if not Sync._TransportAllowed() then return false end
     if not target or target == "" then return false end
     local token = BuildStatusToken()
     if not token then return false end
@@ -3059,7 +3223,9 @@ function Sync.Init(codec, adapter)
             pendingDeletes[id] = true
         end
     end
-    autoSyncPending = true
+    manualSessionActive = false
+    suspendReason = nil
+    autoSyncPending = Sync.Mode() == "automatic"
     autoSyncElapsed = 0
     local scheduler = Nexus and Nexus.Scheduler
     if scheduler and scheduler.IsInitialized and scheduler.IsInitialized()
@@ -3070,5 +3236,5 @@ function Sync.Init(codec, adapter)
         Sync._pendingDeleteScheduled = scheduled == true
     end
     InstallTransportFilters()
-    Sync.EnsureChannel()
+    Sync.ContextChanged("initialization")
 end

@@ -1,5 +1,7 @@
 # Nexus 1.20 Beta
 
+- Adds persistent Off, Manual, and Automatic Sync modes; Automatic transport runs only while resting, out of combat, and outside configured instance types.
+- Caps remote Community storage at configurable total, per-class, and per-author limits (defaults: 300/50/24) while preserving owned and imported builds.
 - Ships a versioned baseline of community builds and synchronizes smaller incremental changes instead of repeatedly exchanging the full catalog.
 - Makes Sync response preparation incremental and queue-aware so busy sessions avoid frame stalls and resume fairly as capacity becomes available.
 - Keeps personal builds, newer revisions, filters, DPS records, and deletions intact while migrating existing data additively.

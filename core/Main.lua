@@ -3090,6 +3090,8 @@ EH:RegisterEvent("PLAYER_LEVEL_UP")
 EH:RegisterEvent("CHAT_MSG_CHANNEL")
 EH:RegisterEvent("PLAYER_REGEN_DISABLED")
 EH:RegisterEvent("PLAYER_REGEN_ENABLED")
+EH:RegisterEvent("PLAYER_UPDATE_RESTING")
+EH:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 EH:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4,
                                  arg5, arg6, arg7, arg8, arg9)
     if event == "ADDON_LOADED" and arg1 == "Nexus" then
@@ -3123,13 +3125,23 @@ EH:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4,
         end
     elseif event == "PLAYER_LEVEL_UP" then
         if initialized then Adapter.OnEvent(event) end
+    elseif event == "PLAYER_UPDATE_RESTING" or event == "ZONE_CHANGED_NEW_AREA" then
+        if initialized and Nexus.Sync and Nexus.Sync.ContextChanged then
+            pcall(Nexus.Sync.ContextChanged, event)
+        end
     elseif event == "PLAYER_REGEN_DISABLED" then
+        if initialized and Nexus.Sync and Nexus.Sync.ContextChanged then
+            pcall(Nexus.Sync.ContextChanged, event)
+        end
         if initialized and Nexus.DpsCapture then
             pcall(Nexus.DpsCapture.OnCombatStart)
         end
     elseif event == "PLAYER_REGEN_ENABLED" then
         if initialized and Nexus.DpsCapture then
             pcall(Nexus.DpsCapture.OnCombatEnd)
+        end
+        if initialized and Nexus.Sync and Nexus.Sync.ContextChanged then
+            pcall(Nexus.Sync.ContextChanged, event)
         end
     elseif event == "CHAT_MSG_WHISPER" then
         -- Dev diagnostic: a WLRQ whisper with token "dev" is a status
@@ -3411,6 +3423,47 @@ SlashCmdList["NEXUS"] = function(msg)
             Print("Current tracked Echo key: " .. tostring(D.GetCurrentEchoKey()))
         end
         Print("Open /nexus log and select DPS for the full capture trace.")
+    elseif msg:match("^syncmode") then
+        local requested = msg:match("^syncmode%s+(%S+)$")
+        if requested and requested ~= "off" and requested ~= "manual"
+            and requested ~= "automatic" and requested ~= "auto" then
+            Print("usage: /nexus syncmode <automatic|manual|off>")
+        elseif requested and Nexus.Sync and Nexus.Sync.SetMode then
+            local mode = Nexus.Sync.SetMode(requested)
+            Print("Sync mode set to " .. tostring(mode)
+                .. ". Sync runs only while resting and in a safe context.")
+        elseif Nexus.Sync and Nexus.Sync.GetEffectiveState then
+            local state = Nexus.Sync.GetEffectiveState()
+            Print("Sync: " .. tostring(state.label)
+                .. (state.reason and (" (" .. tostring(state.reason) .. ")") or ""))
+        else
+            Print("sync unavailable")
+        end
+    elseif msg:match("^synclimits") then
+        local total, perClass, perAuthor = msg:match(
+            "^synclimits%s+(%d+)%s+(%d+)%s+(%d+)$")
+        if total then
+            settings.communityRetentionMaxTotal = tonumber(total)
+            settings.communityRetentionMaxPerClass = tonumber(perClass)
+            settings.communityRetentionMaxPerAuthor = tonumber(perAuthor)
+            local limits = Nexus.DataRetention and Nexus.DataRetention.Limits
+                and Nexus.DataRetention.Limits(NexusDB) or nil
+            if limits then
+                settings.communityRetentionMaxTotal = limits.remoteOverlay
+                settings.communityRetentionMaxPerClass = limits.remotePerClass
+                settings.communityRetentionMaxPerAuthor = limits.remotePerAuthor
+                pcall(Nexus.DataRetention.Enforce, NexusDB, "settings changed")
+            end
+        end
+        local limits = Nexus.DataRetention and Nexus.DataRetention.Limits
+            and Nexus.DataRetention.Limits(NexusDB) or nil
+        if limits then
+            Print(string.format("Remote build limits: %d total, %d per class, %d per author.",
+                limits.remoteOverlay, limits.remotePerClass, limits.remotePerAuthor))
+            Print("Set with: /nexus synclimits <total> <per-class> <per-author>")
+        else
+            Print("retention settings unavailable")
+        end
     elseif msg == "sync" then
         if Nexus.Sync then
             local ok, err = Nexus.Sync.RequestSync()
@@ -3488,6 +3541,7 @@ SlashCmdList["NEXUS"] = function(msg)
         Print("v" .. Nexus.VERSION .. " -- " .. statusLine)
         Print("|cffffd200Nexus v" .. Nexus.VERSION .. "|r  --  /nexus (or /nx, /wr)")
         Print("|cffffd200Setup:|r  builds  |  leaderboard  |  editor  |  sync  |  overlay")
+        Print("|cffffd200Sync:|r   syncmode <automatic|manual|off>  |  synclimits <total> <class> <author>")
         Print("|cffffd200Run:|r    auto  |  panel  |  status  |  wishlist  |  progress")
         Print("|cffffd200Data:|r   log  |  perf  |  dps  |  nameplate  |  logclear")
         Print("|cffffd200Fixes:|r  flags  |  undemote  |  anchor <id|off>  |  restore  |  err")

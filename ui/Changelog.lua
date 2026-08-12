@@ -52,8 +52,13 @@ local function Create()
     body:SetJustifyV("TOP")
     body:SetText([[|cffffd200Community is back, with bounded storage|r
 
-- Owned/imported builds are never auto-removed; remote builds are capped globally and per author.
+- Owned/imported builds are never auto-removed; remote builds default to 300 total, 50/class, and 24/author.
 - DPS history is capped and superseded automatic record pages are reclaimed.
+
+|cffffd200Sync only when it is safe|r
+
+- Choose Automatic, Manual, or Off from Community Builds.
+- Automatic waits until you are resting, out of combat, and outside configured instances.
 
 |cffffd200Long-session safety|r
 
