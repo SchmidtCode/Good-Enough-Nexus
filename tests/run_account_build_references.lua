@@ -20,6 +20,12 @@ NexusDB = {}
 Nexus.Store.Init()
 local Adapter, Builds = Nexus.GameAdapter, Nexus.CommunityBuilds
 Builds.Init(Adapter, Nexus.Model)
+local realCatalogAll = Nexus.BuildCatalog.All
+local fullCatalogCopies = 0
+Nexus.BuildCatalog.All = function(...)
+    fullCatalogCopies = fullCatalogCopies + 1
+    return realCatalogAll(...)
+end
 
 H.DeliverSlots({
     [1]={slot=1,name="Realm One build",verified=true,
@@ -54,5 +60,7 @@ assert(not ok and why == "not your build",
     "offline-character account reference became editable")
 assert(Builds.IsOwnBuild(second) and Builds.IsAccountBuild(second),
     "current character's Saved Build lost normal ownership")
+assert(fullCatalogCopies == 0,
+    "opening Builds copied the complete catalog while importing Saved Builds")
 
 print("account-wide realm-safe Saved Build references -- OK")

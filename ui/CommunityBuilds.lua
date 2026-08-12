@@ -80,6 +80,14 @@ local virtualStats = {
     first=1, last=0, offset=0, maxOffset=0,
 }
 
+local function Measure(name, callback, ...)
+    local performance = Nexus and Nexus.Performance
+    if performance and type(performance.Measure) == "function" then
+        return performance.Measure(name, callback, ...)
+    end
+    return callback(...)
+end
+
 ------------------------------------------------------------------------
 -- Saved-variable helpers
 ------------------------------------------------------------------------
@@ -130,6 +138,24 @@ end
 local function Store()
     local catalog = Catalog()
     return catalog and catalog.All and catalog.All() or {}
+end
+
+local function SummaryStore()
+    local catalog = Catalog()
+    if catalog and type(catalog.Summaries) == "function" then
+        return catalog.Summaries()
+    end
+    return Store()
+end
+
+local function BuildCount()
+    local catalog = Catalog()
+    if catalog and type(catalog.Count) == "function" then
+        return tonumber(catalog.Count()) or 0
+    end
+    local count = 0
+    for _ in pairs(Store()) do count = count + 1 end
+    return count
 end
 
 local function FilterSettings()
@@ -282,7 +308,7 @@ local function SortedBuilds()
     local classFilter = fs.classFilter
     local scope = fs.scope or "all"
     local out = {}
-    for _, b in pairs(Store()) do
+    for _, b in pairs(SummaryStore()) do
         local classMatch = not classFilter or (b.class or ""):upper() == classFilter
         local scopeMatch
         if scope == "mine" then
@@ -446,8 +472,8 @@ end
 -- A Saved Build mirror and its leaderboard/community record can use different
 -- ids even though they describe the same loadout. Resolve the published/record
 -- copy once so class and DPS stay attached to the local mirror.
-local function FindRelatedBuild(serverTitle, echoes, old, author)
-    local store = Store()
+local function FindRelatedBuild(serverTitle, echoes, old, author, store)
+    store = type(store) == "table" and store or SummaryStore()
     local D = Nexus.DpsCapture
     local exactKey = D and D.GetEchoKey and D.GetEchoKey(echoes) or nil
     local titleKey = NormalizeTitle(serverTitle)
@@ -456,15 +482,26 @@ local function FindRelatedBuild(serverTitle, echoes, old, author)
     local wantedTotal = 0
     for _, count in pairs(wanted) do wantedTotal = wantedTotal + count end
 
-    local function CandidateScore(candidate)
+    local function CandidateScore(candidate, candidateId)
         if not candidate or candidate.importedSavedBuild then return nil end
         if authorKey ~= "" and NormalizeTitle(candidate.author) ~= authorKey then return nil end
         local currentOwner = CurrentOwnerKey()
         if candidate.ownerKey and currentOwner
             and tostring(candidate.ownerKey):lower() ~= currentOwner then return nil end
 
-        local candidateKey = D and D.GetEchoKey and D.GetEchoKey(candidate.echoes) or candidate.fingerprint
-        if exactKey and candidateKey == exactKey then return 100000 end
+        local candidateKey = candidate.fingerprint
+        if not candidateKey and D and D.GetEchoKey then
+            candidateKey = D.GetEchoKey(candidate.echoes)
+        end
+        if exactKey and candidateKey == exactKey then return 100000, candidate end
+
+        -- BuildCatalog summaries deliberately omit Echo arrays. Hydrate only a
+        -- same-author candidate that survived the cheap ownership filters and
+        -- actually needs the older partial/subset matching fallback.
+        if type(candidate.echoes) ~= "table" and candidateId ~= nil then
+            candidate = LoadBuild(candidateId)
+            if not candidate then return nil end
+        end
 
         local have, overlap = EchoPresence(candidate.echoes), 0
         for id, count in pairs(wanted) do overlap = overlap + math.min(count, have[id] or 0) end
@@ -476,26 +513,32 @@ local function FindRelatedBuild(serverTitle, echoes, old, author)
         local sameTitle = titleKey ~= "" and NormalizeTitle(candidate.title or candidate.serverTitle) == titleKey
         local required = math.min(8, math.max(1, math.floor(wantedTotal / 2)))
         if overlap < required then return nil end
-        if sameTitle then return 10000 + overlap end
-        if overlap == wantedTotal and wantedTotal >= 6 then return 1000 + overlap end
+        if sameTitle then return 10000 + overlap, candidate end
+        if overlap == wantedTotal and wantedTotal >= 6 then
+            return 1000 + overlap, candidate
+        end
         return nil
     end
 
     -- Never trust a persisted recordBuildId blindly. Saved slot numbers and
     -- mirrored records survive reloads and can otherwise keep a stale record
     -- from another class attached forever.
-    local preferred = {
-        old and old.recordBuildId and store[old.recordBuildId] or nil,
-        old and old.publishedBuildId and store[old.publishedBuildId] or nil,
-    }
+    local preferred = {}
+    if old and old.recordBuildId then preferred[#preferred + 1] = old.recordBuildId end
+    if old and old.publishedBuildId then preferred[#preferred + 1] = old.publishedBuildId end
     local best, bestScore = nil, -1
-    for _, candidate in ipairs(preferred) do
-        local score = CandidateScore(candidate)
-        if score and score > bestScore then best, bestScore = candidate, score end
+    for _, candidateId in ipairs(preferred) do
+        local candidate = store[candidateId] or LoadBuild(candidateId)
+        local score, resolved = CandidateScore(candidate, candidateId)
+        if score and score > bestScore then
+            best, bestScore = resolved or candidate, score
+        end
     end
-    for _, candidate in pairs(store) do
-        local score = CandidateScore(candidate)
-        if score and score > bestScore then best, bestScore = candidate, score end
+    for candidateId, candidate in pairs(store) do
+        local score, resolved = CandidateScore(candidate, candidateId)
+        if score and score > bestScore then
+            best, bestScore = resolved or candidate, score
+        end
     end
     return best
 end
@@ -517,6 +560,11 @@ local function ImportCurrentSavedLoadouts(force)
     if not currentOwner then return 0 end
     local ownerSlug = currentOwner:gsub("[^%w]", "_")
     local seen, changed = {}, 0
+    -- One shallow identity snapshot serves every slot association and stale
+    -- mirror check in this import. The previous implementation called All()
+    -- once per slot, deep-copying the complete 36k-Echo bundled catalog each
+    -- time the Builds screen opened.
+    local summaries = SummaryStore()
 
     for rawSlot, live in pairs(slots.bySlot) do
         local slot = tonumber(rawSlot)
@@ -546,7 +594,7 @@ local function ImportCurrentSavedLoadouts(force)
             local destinationName = linked and linked.name or nil
             local destinationEchoes = linked and linked.echoes or nil
             local progress, destinationTotal = EchoProgress(echoes, destinationEchoes)
-            local related = FindRelatedBuild(serverTitle, echoes, old, me)
+            local related = FindRelatedBuild(serverTitle, echoes, old, me, summaries)
             -- These slots belong to the character currently being viewed. The
             -- current/server class is therefore authoritative for an unpublished
             -- Saved Build. Only a verified published record may override it.
@@ -609,7 +657,7 @@ local function ImportCurrentSavedLoadouts(force)
 
     -- Remove only stale automatic mirrors for this character. Manually
     -- posted builds and imported records belonging to other characters stay.
-    for id, build in pairs(Store()) do
+    for id, build in pairs(summaries) do
         if build and build.importedSavedBuild and IsOwnBuild(build) and not seen[id] then
             RemoveOverlay(id)
             if selectedId == id then selectedId = nil end
@@ -2262,7 +2310,7 @@ local function EnsureFrame()
     actionLabel:SetText("ACTIONS")
 
     searchBox = CreateFrame("EditBox","NexusBuildsSearch",frame,"InputBoxTemplate")
-    searchBox:SetSize(250,22)
+    searchBox:SetSize(236,22)
     searchBox:SetPoint("TOPLEFT",20,-78)
     searchBox:SetAutoFocus(false)
     searchBox:SetText(FilterSettings().search or "")
@@ -2281,8 +2329,8 @@ local function EnsureFrame()
 
     -- Library scope is a direct two-button selector instead of a hidden dropdown.
     scopeBtn = CreateFrame("Button",nil,frame,"UIPanelButtonTemplate")
-    scopeBtn:SetSize(92,22)
-    scopeBtn:SetPoint("LEFT",searchBox,"RIGHT",10,0)
+    scopeBtn:SetSize(88,22)
+    scopeBtn:SetPoint("LEFT",searchBox,"RIGHT",8,0)
     scopeBtn:SetText("All Builds")
     scopeBtn:SetScript("OnClick",function()
         FilterSettings().scope = "all"
@@ -2299,7 +2347,7 @@ local function EnsureFrame()
     scopeBtn:SetScript("OnLeave",function() GameTooltip:Hide() end)
 
     myBuildsBtn = CreateFrame("Button",nil,frame,"UIPanelButtonTemplate")
-    myBuildsBtn:SetSize(92,22)
+    myBuildsBtn:SetSize(88,22)
     myBuildsBtn:SetPoint("LEFT",scopeBtn,"RIGHT",4,0)
     myBuildsBtn:SetText("My Account")
     myBuildsBtn:SetScript("OnClick",function()
@@ -2323,16 +2371,16 @@ local function EnsureFrame()
         {key="SHAMAN",label="Shaman"},{key="WARLOCK",label="Warlock"},{key="WARRIOR",label="Warrior"},
     }
     classDropBtn = CreateFrame("Button",nil,frame)
-    classDropBtn:SetSize(138,22)
+    classDropBtn:SetSize(128,22)
     classDropBtn:SetPoint("LEFT",myBuildsBtn,"RIGHT",8,0)
     frame._classDropBtn = classDropBtn
     StyleSelectorButton(classDropBtn)
     dropPanel = CreateFrame("Frame","NexusClassDropPanel",UIParent)
-    dropPanel:SetSize(138,#CLASSES_DD*24+10)
+    dropPanel:SetSize(128,#CLASSES_DD*24+10)
     StyleDropdownPanel(dropPanel)
     for i,entry in ipairs(CLASSES_DD) do
         local c = entry.key and CLASS_COLOR[entry.key] or nil
-        AddDropdownRow(dropPanel,entry,i,138,
+        AddDropdownRow(dropPanel,entry,i,128,
             function(item) return FilterSettings().classFilter == item.key end,
             function(item) FilterSettings().classFilter=item.key end,c)
     end
@@ -2340,15 +2388,15 @@ local function EnsureFrame()
 
     local sorts={{key="recent",label="Newest"},{key="title",label="Name"}}
     sortToggle = CreateFrame("Button",nil,frame)
-    sortToggle:SetSize(134,22)
+    sortToggle:SetSize(120,22)
     sortToggle:SetPoint("LEFT",classDropBtn,"RIGHT",8,0)
     frame._sortToggle = sortToggle
     StyleSelectorButton(sortToggle)
     sortPanel = CreateFrame("Frame","NexusBuildSortPanel",UIParent)
-    sortPanel:SetSize(134,#sorts*24+10)
+    sortPanel:SetSize(120,#sorts*24+10)
     StyleDropdownPanel(sortPanel)
     for i,entry in ipairs(sorts) do
-        AddDropdownRow(sortPanel,entry,i,134,
+        AddDropdownRow(sortPanel,entry,i,120,
             function(item) return (FilterSettings().sortMode or "dps") == item.key end,
             function(item) FilterSettings().sortMode=item.key end)
     end
@@ -2383,7 +2431,7 @@ local function EnsureFrame()
 
     syncModeBtn = CreateFrame("Button",nil,frame,"UIPanelButtonTemplate")
     syncModeBtn:SetSize(94,22)
-    syncModeBtn:SetPoint("TOPRIGHT",-232,-78)
+    syncModeBtn:SetPoint("RIGHT",syncBtn,"LEFT",-6,0)
     frame._syncModeBtn = syncModeBtn
     syncModeBtn:SetText("Mode: Auto")
     syncModeBtn:SetScript("OnClick",function()
@@ -2549,7 +2597,7 @@ function M.Refresh()
         end
         return true
     end
-    ImportCurrentSavedLoadouts(false)
+    Measure("community.import", ImportCurrentSavedLoadouts, false)
 
     -- Sync status
     if syncStatusText and Nexus.Sync then
@@ -2561,10 +2609,10 @@ function M.Refresh()
         elseif s.Stats().received > 0 then
             syncStatusText:SetText(string.format(
                 "|cff888888%d build(s) in library. Updated while resting; last sync added %d.  Sync Now checks again.|r",
-                (function() local n=0 for _ in pairs(Store()) do n=n+1 end return n end)(),
+                BuildCount(),
                 s.LastSyncNewCount()))
         else
-            local total = 0; for _ in pairs(Store()) do total = total + 1 end
+            local total = BuildCount()
             syncStatusText:SetText(string.format("|cff888888%d build(s) available. Sync Now checks the nearby mesh for updates.|r", total))
         end
         if syncBtn then
@@ -2595,7 +2643,7 @@ function M.Refresh()
         if fs.sortMode == "class" or not fs.sortMode then fs.sortMode = "dps" end
         local labels={dps="Highest DPS",recent="Newest",title="Name"}
         if fs.sortMode == "dps" then
-            sortToggle:SetText("Sort: Newest (safe mode)")
+            sortToggle:SetText("Sort: Newest")
         else
             sortToggle:SetText("Sort: "..(labels[fs.sortMode] or "Newest"))
         end
@@ -2609,17 +2657,18 @@ function M.Refresh()
     -- Build browser contains builds only. DPS rankings are rendered in the
     -- dedicated Leaderboard window.
     local boardRows = nil
-    local builds, projectionSummary = SortedBuilds()
+    local builds, projectionSummary = Measure(
+        "community.projection", SortedBuilds)
     if resultText then
         local total = projectionSummary and projectionSummary.total or 0
         if not projectionSummary then
-            for _ in pairs(Store()) do total=total+1 end
+            total = BuildCount()
         end
         if fs.scope == "mine" then
             local loadouts = projectionSummary and projectionSummary.savedLoadouts or 0
             local uploaded = projectionSummary and projectionSummary.uploaded or 0
             if not projectionSummary then
-                for _, b in pairs(Store()) do
+                for _, b in pairs(SummaryStore()) do
                     if b.importedSavedBuild then loadouts = loadouts + 1
                     elseif IsAccountBuild(b) then uploaded = uploaded + 1 end
                 end
@@ -2786,7 +2835,7 @@ function M.Refresh()
     if #builds == 0 then
         local total = projectionSummary and projectionSummary.total or 0
         if not projectionSummary then
-            for _ in pairs(Store()) do total=total+1 end
+            total = BuildCount()
         end
         local msg
         msg = total == 0
@@ -2838,10 +2887,11 @@ function M.Refresh()
             error(err)
         end
     end
-    renderBuildWindow("data")
+    Measure("community.bind", renderBuildWindow, "data")
 
     -- Detail panel
-    RefreshDetailPanel(selectedId and LoadBuild(selectedId))
+    Measure("community.detail", RefreshDetailPanel,
+        selectedId and LoadBuild(selectedId))
 
     -- Search placeholder visibility
     if searchBox then
@@ -3276,7 +3326,7 @@ function M.Show()
     local receiving = Nexus.Sync and Nexus.Sync.IsReceiving
         and Nexus.Sync.IsReceiving() or false
     if receiving then M.MarkDataDirty()
-    else ImportCurrentSavedLoadouts(true) end
+    else Measure("community.import", ImportCurrentSavedLoadouts, true) end
     if Nexus.Panel and Nexus.Panel.AttachMenuFrame then Nexus.Panel.AttachMenuFrame(frame) end
     if Nexus.Theme and Nexus.Theme.StyleWindow then Nexus.Theme.StyleWindow(frame, 0.96) end
     if Nexus.Panel and Nexus.Panel.CloseOtherWindows then Nexus.Panel.CloseOtherWindows("NexusCommunityBuildsFrame") end
