@@ -709,21 +709,98 @@ local function BuildSnapshot(build)
     return build and NormalizeEchoes(build.echoes)
 end
 
+-- Exact wishlist matching used to call BuildCatalog.All() on every HUD
+-- progress render. All() is intentionally defensive and deep-copies every
+-- Echo in every build, so the shipped 504-build/36k-Echo catalog made this
+-- single lookup take hundreds of milliseconds. Build lightweight identity
+-- summaries once per represented library revision, then hydrate only the one
+-- matching record.
+local buildMatchIndex = {
+    initialized=false, revisionSource=nil, observedRevision=nil,
+    byFingerprint={},
+    stats={rebuilds=0, summariesScanned=0, hydratedMissing=0, lookups=0},
+}
+
+local function CurrentBuildRevision()
+    local revisions = Nexus and Nexus.Revisions
+    local revision = revisions and type(revisions.Get) == "function"
+        and revisions.Get(revisions.BUILD_LIBRARY_CHANGED) or nil
+    return revisions, revision
+end
+
+local function PreferBuildMatch(existing, id, build)
+    local candidate = {id=id, autoDps=build and build.autoDps == true}
+    if not existing then return candidate end
+    if existing.autoDps ~= candidate.autoDps then
+        return existing.autoDps and candidate or existing
+    end
+    return tostring(candidate.id) < tostring(existing.id)
+        and candidate or existing
+end
+
+local function RebuildBuildMatchIndex()
+    local catalog = Catalog()
+    local summaries = catalog and type(catalog.Summaries) == "function"
+        and catalog.Summaries() or {}
+    local byFingerprint = {}
+    local scanned, hydrated = 0, 0
+    for id, summary in pairs(summaries) do
+        scanned = scanned + 1
+        local fingerprint = type(summary) == "table" and summary.fingerprint or nil
+        local matchShape = summary
+        -- Old local overlays can predate stored fingerprints. Hydrate only
+        -- those exceptional rows once, never the complete catalog.
+        if type(fingerprint) ~= "string" or fingerprint == "" then
+            local build = CatalogGet(id)
+            hydrated = hydrated + 1
+            fingerprint = build and (build.fingerprint
+                or EchoKey(BuildSnapshot(build))) or nil
+            matchShape = build
+        end
+        if type(fingerprint) == "string" and fingerprint ~= "" then
+            byFingerprint[fingerprint] = PreferBuildMatch(
+                byFingerprint[fingerprint], id, matchShape)
+        end
+    end
+    buildMatchIndex.byFingerprint = byFingerprint
+    buildMatchIndex.initialized = true
+    buildMatchIndex.revisionSource, buildMatchIndex.observedRevision =
+        CurrentBuildRevision()
+    buildMatchIndex.stats.rebuilds = buildMatchIndex.stats.rebuilds + 1
+    buildMatchIndex.stats.summariesScanned =
+        buildMatchIndex.stats.summariesScanned + scanned
+    buildMatchIndex.stats.hydratedMissing =
+        buildMatchIndex.stats.hydratedMissing + hydrated
+end
+
+local function EnsureBuildMatchIndex()
+    local revisionSource, revision = CurrentBuildRevision()
+    if not buildMatchIndex.initialized
+        or buildMatchIndex.revisionSource ~= revisionSource
+        or revision == nil
+        or buildMatchIndex.observedRevision ~= revision then
+        RebuildBuildMatchIndex()
+    end
+end
+
 local function FindMatchingBuild(snap)
     local key = EchoKey(snap)
     if not key then return nil, nil end
-    local builds = CatalogAll()
-    local fallbackId, fallbackBuild
-    for id, build in pairs(builds) do
-        if (build.fingerprint or EchoKey(BuildSnapshot(build))) == key then
-            -- Prefer a player-authored build with its real title/description.
-            -- Auto-generated record pages are only a fallback when no posted
-            -- build exists for the exact same Echo IDs and stack quantities.
-            if not build.autoDps then return id, build end
-            fallbackId, fallbackBuild = fallbackId or id, fallbackBuild or build
-        end
-    end
-    return fallbackId, fallbackBuild
+    EnsureBuildMatchIndex()
+    buildMatchIndex.stats.lookups = buildMatchIndex.stats.lookups + 1
+    local match = buildMatchIndex.byFingerprint[key]
+    if not match then return nil, nil end
+    return match.id, CatalogGet(match.id)
+end
+
+function DPS.BuildMatchLookupStats()
+    local stats = buildMatchIndex.stats
+    return {
+        rebuilds=stats.rebuilds,
+        summariesScanned=stats.summariesScanned,
+        hydratedMissing=stats.hydratedMissing,
+        lookups=stats.lookups,
+    }
 end
 
 local function BuildKey(buildId)
