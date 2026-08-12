@@ -12,6 +12,15 @@ Nexus.Performance = Performance
 
 local PATH_ORDER = {
     "automation.step",
+    "automation.catalog",
+    "automation.wishlist",
+    "automation.compile",
+    "automation.slots",
+    "automation.owned",
+    "automation.levers",
+    "automation.autolock",
+    "automation.progress",
+    "automation.hud",
     "decision.policy",
     "sync.update",
     "dps.update",

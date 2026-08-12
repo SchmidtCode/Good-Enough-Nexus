@@ -16,7 +16,13 @@ local autoEnabled = false          -- session-level master switch (panel button 
 local quickStartChecked = false   -- one-time-per-session guard for the quick-start check
 local pollAccum = 0
 local POLL = 0.2
+-- GameAdapter's dirty flags and explicit action deadlines are the primary
+-- invalidation path. The short heartbeat is retained while a run is active to
+-- recover a private-server event the client failed to deliver. At level 80 it
+-- is only a last-resort recovery path: running the complete automation and HUD
+-- pipeline every five seconds caused a visible 0.4-0.9s hitch while idle.
 local FALLBACK_RECOMPUTE = 5
+local IDLE_FALLBACK_RECOMPUTE = 300
 local nextStepAt = nil
 local lastFullStepAt = -math.huge
 local forceStep = true
@@ -128,6 +134,20 @@ local function RequestRecompute()
     return true
 end
 
+local function FallbackSeconds()
+    local level = Adapter and type(Adapter.Level) == "function"
+        and tonumber(Adapter.Level()) or 0
+    return level >= 80 and IDLE_FALLBACK_RECOMPUTE or FALLBACK_RECOMPUTE
+end
+
+local function Measure(name, callback, ...)
+    local performance = Nexus and Nexus.Performance
+    if performance and type(performance.Measure) == "function" then
+        return performance.Measure(name, callback, ...)
+    end
+    return callback(...)
+end
+
 Nexus.RequestRecompute = RequestRecompute
 
 function Nexus.RecomputeStats()
@@ -135,7 +155,7 @@ function Nexus.RecomputeStats()
     for key, value in pairs(recomputeStats) do out[key] = value end
     out.nextStepAt = nextStepAt
     out.lastFullStepAt = lastFullStepAt
-    out.fallbackSeconds = FALLBACK_RECOMPUTE
+    out.fallbackSeconds = FallbackSeconds()
     return out
 end
 
@@ -828,7 +848,7 @@ local function BuildProgress(plan, owned, slots, catalog, wishlistOverride, prev
 end
 
 
-local function BuildPanelProgress(activePlan, owned, slots, catalog)
+local function BuildPanelProgressUnmeasured(activePlan, owned, slots, catalog)
     local C = Nexus.CommunityBuilds
     local build = C and C.GetSelectedBuildForPanel and C.GetSelectedBuildForPanel()
     if build and type(build.echoes) == "table" and #build.echoes > 0 then
@@ -904,7 +924,12 @@ end
 
 local function RenderPanel(base)
     lastPanelInput = CopyDisplay(base)
-    return Panel.Render(BuildHudDisplayModel(lastPanelInput))
+    return Panel.Render(Measure("automation.hud", BuildHudDisplayModel,
+        lastPanelInput))
+end
+
+local function BuildPanelProgress(...)
+    return Measure("automation.progress", BuildPanelProgressUnmeasured, ...)
 end
 
 function Nexus.RefreshHudView()
@@ -912,7 +937,8 @@ function Nexus.RefreshHudView()
         return false
     end
     hudSnapshotStats.refreshes = hudSnapshotStats.refreshes + 1
-    local ok, result = pcall(Panel.Render, BuildHudDisplayModel(lastPanelInput))
+    local ok, result = pcall(Panel.Render,
+        Measure("automation.hud", BuildHudDisplayModel, lastPanelInput))
     if not ok then
         RecordError("Main.RefreshHudView", result)
         return false
@@ -2001,26 +2027,42 @@ local function Step()
         externalPauseUntil = GetTime() + 3
     end
 
-    local catalog = Adapter.Catalog()
+    local catalog = Measure("automation.catalog", Adapter.Catalog)
     if not catalog then
         SetStatus("waiting for ProjectEbonhold")
         RenderIdlePanel(nil, nil, nil, nil)
         return
     end
-    local wishlist = Adapter.Wishlist()
+    local wishlist = Measure("automation.wishlist", Adapter.Wishlist)
     if not quickStartChecked then
         quickStartChecked = true
         if Nexus.QuickStart then
             Nexus.QuickStart.ShowIfFirstTime(wishlist ~= nil)
         end
     end
-    local plan = Strategy.Compile(catalog, WishlistWithLockTargets(wishlist, catalog), Store.Settings())
-    local slots = Adapter.Slots()
-    local owned = Adapter.Owned()
-    local flags = EffectiveFlags()
-    local disabledLevers = Adapter.DisabledLevers()
+    local plan = Measure("automation.compile", Strategy.Compile,
+        catalog, WishlistWithLockTargets(wishlist, catalog), Store.Settings())
+    local slots = Measure("automation.slots", Adapter.Slots)
+    local owned = Measure("automation.owned", Adapter.Owned)
+    local flags, disabledLevers = {}, {}
+    local activeBoard = nil
+    local rolledTotal = tonumber(owned and owned.total) or 0
+    -- Tome state is consulted by level-1 arming and by a live roll board. It
+    -- cannot affect a completed, boardless level-80 character, yet querying
+    -- every member through the server API was part of the idle hot path.
+    if level < 80 then
+        flags = EffectiveFlags()
+        disabledLevers = Measure("automation.levers", Adapter.DisabledLevers)
+    elseif rolledTotal < 79 then
+        activeBoard = Adapter.Board()
+        if activeBoard then
+            flags = EffectiveFlags()
+            disabledLevers = Measure("automation.levers", Adapter.DisabledLevers)
+        end
+    end
     do
-        local okAutoLock, errAutoLock = pcall(TryAutoLock, owned, catalog, slots, wishlist)
+        local okAutoLock, errAutoLock = pcall(Measure,
+            "automation.autolock", TryAutoLock, owned, catalog, slots, wishlist)
         if not okAutoLock then
             SetStatus("error (see /nexus err)")
             RecordError("TryAutoLock", errAutoLock)
@@ -2134,11 +2176,10 @@ local function Step()
         -- server's 79-Echo capacity. Do not use an arbitrary no-board delay:
         -- board frames can disappear briefly between chained selections.
         -- Locked Echoes are not included in owned.total.
-        local rolledTotal = tonumber(owned and owned.total) or 0
         if owned and owned.synced and rolledTotal >= 79 then
             StepSave(level, plan, slots, owned)
         else
-            local board = Adapter.Board()
+            local board = activeBoard or Adapter.Board()
             if board then
                 StepRun(level, plan, slots, owned, flags, disabledLevers)
             elseif Adapter.InFlight() then
@@ -3237,7 +3278,7 @@ EH:SetScript("OnUpdate", function(_, elapsed)
     local now = GetTime()
     local isDirty = boardDirty or slotsDirty or dataDirty
     local deadlineDue = nextStepAt ~= nil and now >= nextStepAt
-    local fallbackDue = (now - lastFullStepAt) >= FALLBACK_RECOMPUTE
+    local fallbackDue = (now - lastFullStepAt) >= FallbackSeconds()
     if not (forceStep or isDirty or deadlineDue or fallbackDue) then
         recomputeStats.skipped = recomputeStats.skipped + 1
         return

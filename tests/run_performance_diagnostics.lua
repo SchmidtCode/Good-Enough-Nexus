@@ -4,8 +4,10 @@ local H = dofile("tests/harness.lua")
 local Performance = Nexus.Performance
 
 local definitions = Performance.Definitions()
-assert(#definitions == 8 and definitions[1] == "automation.step"
-    and definitions[8] == "overlay.refresh",
+assert(#definitions == 17 and definitions[1] == "automation.step"
+    and definitions[2] == "automation.catalog"
+    and definitions[10] == "automation.hud"
+    and definitions[17] == "overlay.refresh",
     "performance path registry is not fixed and ordered")
 
 Performance.Reset()
@@ -190,7 +192,10 @@ assert(Nexus.CommunityBuilds.Refresh("community") == "community"
     and optionalCalls.community == 1 and optionalCalls.leaderboard == 1
     and optionalCalls.overlay == 1,
     "installed optional UI instrumentation changed callback behavior")
-for _, name in ipairs({"automation.step", "decision.policy", "sync.update",
+for _, name in ipairs({"automation.step", "automation.catalog",
+    "automation.wishlist", "automation.compile", "automation.slots",
+    "automation.owned", "automation.levers", "automation.autolock",
+    "automation.hud", "decision.policy", "sync.update",
     "dps.update", "community.refresh", "leaderboard.refresh",
     "panel.render", "overlay.refresh"}) do
     assert(Performance.Stats(name).count > 0,
