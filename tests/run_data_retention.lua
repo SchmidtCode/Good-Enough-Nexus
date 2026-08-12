@@ -18,9 +18,16 @@ Nexus.BundledBuilds = {
 
 NexusDB = {
     settings={
-        communityRetentionMaxTotal=120,
-        communityRetentionMaxPerClass=10,
+        communityRetentionTopPerCategory=120,
+        communityRetentionMinPerClassPerCategory=10,
+        communityRetentionTopAverage=40,
+        communityRetentionMinAveragePerClass=5,
+        communityRetentionOtherRemoteBuilds=60,
         communityRetentionMaxPerAuthor=8,
+    },
+    accountCharacters={
+        ["boganic@ebonhold"]={name="Boganic",realm="ebonhold"},
+        ["altanic@ebonhold"]={name="Altanic",realm="ebonhold"},
     },
     communityBuilds={},
     syncTombstones={},
@@ -28,6 +35,18 @@ NexusDB = {
         personalBest={}, buildBest={},
         characterBest={dummy={},lk={}},
     },
+}
+Nexus.Store = {
+    IsAccountOwnerKey=function(ownerKey)
+        return type(ownerKey) == "string"
+            and type(NexusDB.accountCharacters[ownerKey:lower()]) == "table"
+    end,
+    IsAccountBuild=function(build)
+        return type(build) == "table" and (build.isMine == true
+            or build.importedSavedBuild == true
+            or (type(build.ownerKey) == "string"
+                and type(NexusDB.accountCharacters[build.ownerKey:lower()]) == "table"))
+    end,
 }
 
 local overlay = NexusDB.communityBuilds
@@ -46,6 +65,10 @@ overlay["local-leader"] = {
     id="local-leader", title="Local leader", author="Boganic",
     ownerKey="boganic@ebonhold", isMine=true, autoDps=true,
     lastModified=now,
+}
+overlay["alt-reference"] = {
+    id="alt-reference", title="Alt reference", author="Altanic",
+    ownerKey="altanic@ebonhold", class="DRUID", lastModified=now,
 }
 
 for i = 1, 900 do
@@ -80,6 +103,13 @@ for i = 1, 300 do
         player="Player" .. tostring(i), buildId=id,
         fingerprint="fp-char-" .. tostring(i), dps=100000 + i, ts=10000 + i,
     }
+    if i <= 180 then
+        NexusDB.dpsCapture.characterBest.lk[string.format("player-%03d", i)] = {
+            player="Player" .. tostring(i), buildId=id,
+            fingerprint="fp-char-" .. tostring(i),
+            dps=(i <= 40 and 900000 + i or 200000 + i), ts=10000 + i,
+        }
+    end
 end
 
 for i = 1, 150 do
@@ -107,7 +137,9 @@ NexusDB.syncTombstones.pending = {
 Nexus.LoadoutEvidence.Init(NexusDB)
 Nexus.BuildCatalog.Init(NexusDB, Nexus.BundledBuilds)
 local limits = Nexus.DataRetention.Limits()
-assert(limits.remoteOverlay == 120 and limits.remotePerClass == 10
+assert(limits.topPerCategory == 120 and limits.minPerClassPerCategory == 10
+    and limits.topAverage == 40 and limits.minAveragePerClass == 5
+    and limits.otherRemoteBuilds == 60
     and limits.remotePerAuthor == 8,
     "configured retention limits were not resolved")
 local summary = assert(Nexus.DataRetention.Enforce(NexusDB, "focused test"))
@@ -116,7 +148,8 @@ local remoteCount, floodCount, localCount = 0, 0, 0
 local classCounts = {}
 for _, build in pairs(NexusDB.communityBuilds) do
     if build.isMine or build.importedSavedBuild
-        or build.ownerKey == "boganic@ebonhold" then
+        or build.ownerKey == "boganic@ebonhold"
+        or build.ownerKey == "altanic@ebonhold" then
         localCount = localCount + 1
     else
         remoteCount = remoteCount + 1
@@ -127,17 +160,14 @@ for _, build in pairs(NexusDB.communityBuilds) do
         end
     end
 end
-assert(localCount == 31, "retention removed a local build")
-assert(remoteCount <= limits.remoteOverlay,
-    "remote overlay exceeded its global retention cap")
+assert(localCount == 32 and overlay["alt-reference"] ~= nil,
+    "retention removed a current or account-character build")
 assert(floodCount <= limits.remotePerAuthor,
     "one remote author exceeded the per-author cap")
-for class, count in pairs(classCounts) do
-    assert(count <= limits.remotePerClass,
-        tostring(class) .. " exceeded the per-class cap")
-end
 assert(overlay["remote-char-300"] ~= nil,
     "current leaderboard build was removed")
+assert(overlay["remote-char-001"] ~= nil,
+    "Average selection did not preserve its lower raw-category contributor")
 assert(summary.orphanAutoBuildsRemoved >= 45,
     "superseded automatic DPS pages were not reclaimed")
 assert((NexusDB.communityBuildRetentionFloor or 0) > 0
@@ -147,8 +177,19 @@ assert((NexusDB.communityBuildRetentionFloor or 0) > 0
 
 local characterCount = 0
 for _ in pairs(dummy) do characterCount = characterCount + 1 end
-assert(characterCount <= limits.characterBestPerCategory,
-    "character-best bucket exceeded its cap")
+assert(characterCount >= limits.topPerCategory
+    and summary.selectedAverage >= limits.topAverage,
+    "ranked category selection did not keep overall/Average leaders")
+local perClass = {}
+for _, row in pairs(dummy) do
+    local build = overlay[row.buildId]
+    local class = tostring(build and build.class or "UNKNOWN")
+    perClass[class] = (perClass[class] or 0) + 1
+end
+for _, class in ipairs(classes) do
+    assert((perClass[class] or 0) >= limits.minPerClassPerCategory,
+        tostring(class) .. " lost its per-category minimum")
+end
 local personalCount, buildBestCount = 0, 0
 for _ in pairs(NexusDB.dpsCapture.personalBest) do personalCount = personalCount + 1 end
 for _ in pairs(NexusDB.dpsCapture.buildBest) do buildBestCount = buildBestCount + 1 end
@@ -184,6 +225,23 @@ assert(again.overlayRemoved == 0 and again.characterBestRemoved == 0
     and again.personalRemoved == 0 and again.buildBestRemoved == 0
     and again.tombstonesRemoved == 0,
     "retention was not idempotent")
+
+local crossRealm = {
+    settings={communityRetentionTopPerCategory=25,
+        communityRetentionMinPerClassPerCategory=1,
+        communityRetentionTopAverage=10,
+        communityRetentionMinAveragePerClass=1,
+        communityRetentionOtherRemoteBuilds=0,
+        communityRetentionMaxPerAuthor=1},
+    communityBuilds={}, syncTombstones={},
+    dpsCapture={personalBest={},buildBest={},characterBest={
+        dummy={a={player="Twin-RealmA",buildId="same",fingerprint="same",dps=10}},
+        lk={b={player="Twin-RealmB",buildId="same",fingerprint="same",dps=20}},
+    }},
+}
+local crossSummary = Nexus.DataRetention.Enforce(crossRealm, "realm identity")
+assert(crossSummary.selectedAverage == 0,
+    "same-name players from different realms were cross-paired for Average")
 
 local future = {
     dataRetention={schemaVersion=99},

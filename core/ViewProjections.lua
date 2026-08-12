@@ -156,12 +156,17 @@ end
 
 local function IsOwnBuild(build, filters)
     if type(build) ~= "table" then return false end
+    local store = Nexus and Nexus.Store
+    if store and type(store.IsAccountBuild) == "function" then
+        local ok, value = pcall(store.IsAccountBuild, build)
+        if ok then return value == true end
+    end
+    if build.isMine == true or build.importedSavedBuild == true then return true end
     if build.ownerKey then
         return filters.ownerKey ~= ""
             and tostring(build.ownerKey):lower() == filters.ownerKey
     end
-    return build.isMine == true and filters.player ~= ""
-        and tostring(build.author or ""):lower() == filters.player
+    return false
 end
 
 local function IsLoaded(build)

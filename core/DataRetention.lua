@@ -1,21 +1,22 @@
 -- Bounded retention for durable Community and DPS mesh state.
 --
--- Local/imported builds are never removed automatically. Remote overlay rows
--- are bounded globally, per class, and per author; referenced pages rank first,
--- and orphaned automatic DPS pages are reclaimed. Old exact tombstones are
--- replaced by a monotonic acceptance floor so a stale peer cannot resurrect a
--- deleted remote build after compaction.
+-- Account-owned builds are never removed automatically. Remote DPS rows are
+-- ranked per category: keep the overall leaders plus a minimum representation
+-- from every class. The derived Average board reserves both of its underlying
+-- Dummy/LK records. Unranked remote pages have a separate small recency budget.
 
 Nexus = Nexus or {}
 local Retention = {}
 Nexus.DataRetention = Retention
 
-local SCHEMA_VERSION = 1
+local SCHEMA_VERSION = 2
 local DEFAULT_LIMITS = {
-    remoteOverlay = 300,
-    remotePerClass = 50,
-    remotePerAuthor = 24,
-    characterBestPerCategory = 256,
+    topPerCategory = 100,
+    minPerClassPerCategory = 15,
+    topAverage = 50,
+    minAveragePerClass = 10,
+    otherRemoteBuilds = 75,
+    remotePerAuthor = 12,
     personalFingerprints = 128,
     buildBestFingerprints = 128,
     evictionMarkers = 2048,
@@ -25,10 +26,12 @@ local DEFAULT_LIMITS = {
 }
 
 local CONFIGURED_LIMITS = {
-    remoteOverlay={ key="communityRetentionMaxTotal", min=25, max=5000 },
-    remotePerClass={ key="communityRetentionMaxPerClass", min=1, max=500 },
+    topPerCategory={ key="communityRetentionTopPerCategory", min=25, max=1000 },
+    minPerClassPerCategory={ key="communityRetentionMinPerClassPerCategory", min=1, max=100 },
+    topAverage={ key="communityRetentionTopAverage", min=10, max=1000 },
+    minAveragePerClass={ key="communityRetentionMinAveragePerClass", min=1, max=100 },
+    otherRemoteBuilds={ key="communityRetentionOtherRemoteBuilds", min=0, max=1000 },
     remotePerAuthor={ key="communityRetentionMaxPerAuthor", min=1, max=250 },
-    characterBestPerCategory={ key="communityRetentionCharacterBest", min=25, max=2000 },
     personalFingerprints={ key="communityRetentionPersonalFingerprints", min=16, max=1000 },
     buildBestFingerprints={ key="communityRetentionBuildFingerprints", min=16, max=1000 },
 }
@@ -59,8 +62,12 @@ local function ResolveLimits(database)
             limits[name] = math.max(spec.min, math.min(spec.max, value))
         end
     end
-    limits.remotePerClass = math.min(limits.remotePerClass, limits.remoteOverlay)
-    limits.remotePerAuthor = math.min(limits.remotePerAuthor, limits.remoteOverlay)
+    limits.minPerClassPerCategory = math.min(
+        limits.minPerClassPerCategory, limits.topPerCategory)
+    limits.minAveragePerClass = math.min(
+        limits.minAveragePerClass, limits.topAverage)
+    limits.remotePerAuthor = math.min(
+        limits.remotePerAuthor, math.max(1, limits.otherRemoteBuilds))
     return limits
 end
 
@@ -72,9 +79,7 @@ local function EpochNow()
 end
 
 local function PlayerKey(value)
-    local name = tostring(value or ""):gsub("%s+", "")
-    name = name:match("^([^%-]+)") or name
-    return name:lower()
+    return tostring(value or ""):lower():gsub("%s+", "")
 end
 
 local function CurrentOwnerKey()
@@ -88,6 +93,11 @@ end
 
 local function IsLocalBuild(build)
     if type(build) ~= "table" then return false end
+    local store = Nexus and Nexus.Store
+    if store and type(store.IsAccountBuild) == "function" then
+        local ok, value = pcall(store.IsAccountBuild, build)
+        if ok and value then return true end
+    end
     if build.isMine == true or build.importedSavedBuild == true then return true end
     local owner = CurrentOwnerKey()
     return owner ~= nil and type(build.ownerKey) == "string"
@@ -96,6 +106,15 @@ end
 
 local function IsLocalDpsRow(row)
     if type(row) ~= "table" then return false end
+    local store = Nexus and Nexus.Store
+    if store and type(store.IsAccountOwnerKey) == "function"
+        and type(row.ownerKey) == "string" then
+        local ok, value = pcall(store.IsAccountOwnerKey, row.ownerKey)
+        if ok and value then return true end
+    end
+    local overlay = NexusDB and NexusDB.communityBuilds
+    if type(overlay) == "table" and type(row.buildId) == "string"
+        and IsLocalBuild(overlay[row.buildId]) then return true end
     local me = UnitName and PlayerKey(UnitName("player")) or ""
     if me ~= "" and PlayerKey(row.player) == me then return true end
     local owner = CurrentOwnerKey()
@@ -122,6 +141,12 @@ local function EntryStamp(value, seen)
     return newest
 end
 
+local function BetterDps(left, right)
+    if left.dps ~= right.dps then return left.dps > right.dps end
+    if left.stamp ~= right.stamp then return left.stamp > right.stamp end
+    return tostring(left.key) < tostring(right.key)
+end
+
 local function BetterRow(left, right)
     if left.protected ~= right.protected then return left.protected end
     if left.stamp ~= right.stamp then return left.stamp > right.stamp end
@@ -129,49 +154,150 @@ local function BetterRow(left, right)
     return tostring(left.key) < tostring(right.key)
 end
 
-local function TrimCharacterBest(dps, limits)
+local function TypedIdentity(value)
+    return type(value) .. ":" .. tostring(value == nil and "" or value)
+end
+
+local function RowIdentity(row)
+    if type(row) ~= "table" then return nil end
+    if row.fingerprint ~= nil then return TypedIdentity(row.fingerprint) end
+    if row.buildId ~= nil then return TypedIdentity(row.buildId) end
+    return nil
+end
+
+local function ClassKey(value)
+    local key = tostring(value or "UNKNOWN"):upper():gsub("%s+", "")
+    return key ~= "" and key or "UNKNOWN"
+end
+
+local function RowClass(row, overlay)
+    if type(row) ~= "table" then return "UNKNOWN" end
+    local build = type(overlay) == "table" and type(row.buildId) == "string"
+        and overlay[row.buildId] or nil
+    return ClassKey(row.class or (type(build) == "table" and build.class))
+end
+
+local function SelectRanked(rows, overall, perClass, keep)
+    table.sort(rows, BetterDps)
+    local overallKept = 0
+    for _, entry in ipairs(rows) do
+        if not entry.localRow and overallKept < overall then
+            keep(entry)
+            overallKept = overallKept + 1
+        end
+    end
+    local classCounts = {}
+    for _, entry in ipairs(rows) do
+        local count = classCounts[entry.class] or 0
+        if not entry.localRow and entry.class ~= "UNKNOWN" and count < perClass then
+            keep(entry)
+            classCounts[entry.class] = count + 1
+        end
+    end
+end
+
+local function SelectCharacterBest(dps, limits, overlay)
+    local source = type(dps) == "table" and dps.characterBest or nil
+    local selected = {dummy={},lk={}}
+    local fingerprints, buildIds = {}, {}
+    local categoryCounts = {dummy=0,lk=0,average=0}
+    if type(source) ~= "table" then
+        return selected, fingerprints, buildIds, categoryCounts
+    end
+
+    local entries = {dummy={},lk={}}
+    for _, category in ipairs({"dummy", "lk"}) do
+        for key, row in pairs(type(source[category]) == "table" and source[category] or {}) do
+            if type(row) == "table" then
+                local entry = {
+                    key=key, row=row, category=category,
+                    dps=tonumber(row.dps) or 0, stamp=RowStamp(row),
+                    class=RowClass(row, overlay), localRow=IsLocalDpsRow(row),
+                }
+                entries[category][#entries[category] + 1] = entry
+                if entry.localRow then selected[category][key] = true end
+            end
+        end
+        SelectRanked(entries[category], limits.topPerCategory,
+            limits.minPerClassPerCategory, function(entry)
+                selected[category][entry.key] = true
+            end)
+    end
+
+    -- Average is a projection, not a stored category. Match the same player +
+    -- loadout identity used by ViewProjections and reserve both raw rows.
+    local dummyByIdentity, dummyByBuild = {}, {}
+    for _, entry in ipairs(entries.dummy) do
+        local player = PlayerKey(entry.row.player or entry.key)
+        local identity = RowIdentity(entry.row)
+        if identity then dummyByIdentity[player .. "|" .. identity] = entry end
+        if entry.row.buildId ~= nil then
+            dummyByBuild[player .. "|" .. TypedIdentity(entry.row.buildId)] = entry
+        end
+    end
+    local averages = {}
+    for _, lkEntry in ipairs(entries.lk) do
+        local player = PlayerKey(lkEntry.row.player or lkEntry.key)
+        local identity = RowIdentity(lkEntry.row)
+        local dummyEntry = identity and dummyByIdentity[player .. "|" .. identity] or nil
+        if not dummyEntry and lkEntry.row.buildId ~= nil then
+            dummyEntry = dummyByBuild[player .. "|" .. TypedIdentity(lkEntry.row.buildId)]
+        end
+        if dummyEntry then
+            averages[#averages + 1] = {
+                key=player .. "|" .. tostring(identity or lkEntry.row.buildId),
+                dps=(dummyEntry.dps + lkEntry.dps) / 2,
+                stamp=math.min(dummyEntry.stamp, lkEntry.stamp),
+                class=lkEntry.class ~= "UNKNOWN" and lkEntry.class or dummyEntry.class,
+                dummy=dummyEntry, lk=lkEntry,
+                localRow=dummyEntry.localRow or lkEntry.localRow,
+            }
+        end
+    end
+    for _, entry in ipairs(averages) do
+        if entry.localRow then
+            selected.dummy[entry.dummy.key] = true
+            selected.lk[entry.lk.key] = true
+            entry.averageSelected = true
+        end
+    end
+    SelectRanked(averages, limits.topAverage, limits.minAveragePerClass,
+        function(entry)
+            selected.dummy[entry.dummy.key] = true
+            selected.lk[entry.lk.key] = true
+            entry.averageSelected = true
+        end)
+
+    for _, entry in ipairs(averages) do
+        if entry.averageSelected then categoryCounts.average = categoryCounts.average + 1 end
+    end
+    for _, category in ipairs({"dummy", "lk"}) do
+        for _, entry in ipairs(entries[category]) do
+            if selected[category][entry.key] then
+                categoryCounts[category] = categoryCounts[category] + 1
+                local row = entry.row
+                if type(row.fingerprint) == "string" then fingerprints[row.fingerprint] = true end
+                if type(row.buildId) == "string" and row.buildId ~= "" then buildIds[row.buildId] = true end
+            end
+        end
+    end
+    return selected, fingerprints, buildIds, categoryCounts
+end
+
+local function TrimCharacterBest(dps, selected)
     local removed = 0
     local source = type(dps) == "table" and dps.characterBest or nil
     if type(source) ~= "table" then return removed end
-    for _, category in ipairs({ "dummy", "lk" }) do
-        local bucket = source[category]
-        if type(bucket) == "table" then
-            local rows = {}
-            for key, row in pairs(bucket) do
-                rows[#rows + 1] = {
-                    key=key, row=row, protected=IsLocalDpsRow(row),
-                    stamp=RowStamp(row), dps=tonumber(row and row.dps) or 0,
-                }
-            end
-            table.sort(rows, BetterRow)
-            local kept = 0
-            for _, entry in ipairs(rows) do
-                if entry.protected or kept < limits.characterBestPerCategory then
-                    kept = kept + 1
-                else
-                    bucket[entry.key] = nil
-                    removed = removed + 1
-                end
+    for _, category in ipairs({"dummy", "lk"}) do
+        local bucket = type(source[category]) == "table" and source[category] or {}
+        for key in pairs(bucket) do
+            if not (selected[category] and selected[category][key]) then
+                bucket[key] = nil
+                removed = removed + 1
             end
         end
     end
     return removed
-end
-
-local function CharacterFingerprints(dps)
-    local protected = {}
-    local source = type(dps) == "table" and dps.characterBest or nil
-    if type(source) ~= "table" then return protected end
-    for _, category in ipairs({ "dummy", "lk" }) do
-        for _, row in pairs(type(source[category]) == "table"
-            and source[category] or {}) do
-            if type(row) == "table" and IsLocalDpsRow(row)
-                and type(row.fingerprint) == "string" then
-                protected[row.fingerprint] = true
-            end
-        end
-    end
-    return protected
 end
 
 local function TrimFingerprintMap(source, limit, protected)
@@ -196,8 +322,8 @@ local function TrimFingerprintMap(source, limit, protected)
     return removed
 end
 
-local function CollectBuildReferences(dps)
-    local referenced, seen = {}, {}
+local function CollectBuildReferences(dps, seed)
+    local referenced, seen = Copy(seed), {}
     local function Scan(value)
         if type(value) ~= "table" or seen[value] then return end
         seen[value] = true
@@ -239,11 +365,6 @@ local function AuthorKey(value)
     return key ~= "" and key or "<unknown>"
 end
 
-local function ClassKey(value)
-    local key = tostring(value or "UNKNOWN"):upper():gsub("%s+", "")
-    return key ~= "" and key or "UNKNOWN"
-end
-
 local function RemoveOverlayIds(database, ids)
     if #ids == 0 then return 0 end
     table.sort(ids, function(left, right) return tostring(left) < tostring(right) end)
@@ -283,43 +404,19 @@ local function PruneOverlay(database, referenced, limits)
     for id, build in pairs(overlay) do
         if not IsLocalBuild(build) then
             remoteBefore = remoteBefore + 1
-            if type(build) == "table" and build.autoDps == true
-                and not referenced[id] then
+            if type(build) == "table" and build.autoDps == true and not referenced[id] then
                 marked[id] = true
                 orphaned = orphaned + 1
             end
         end
     end
 
-    -- First prevent a single class from crowding out the rest of the library.
-    -- Referenced builds rank first but are not exempt: maxTotal remains a hard
-    -- cap even if a corrupt/hostile dataset creates thousands of references.
-    local classes = {}
-    for id, build in pairs(overlay) do
-        if not marked[id] and not IsLocalBuild(build) then
-            local class = ClassKey(type(build) == "table" and build.class)
-            classes[class] = classes[class] or {}
-            classes[class][#classes[class] + 1] = {
-                id=id, referenced=referenced[id] == true,
-                stamp=BuildStamp(build), complete=CompleteBuild(build),
-            }
-        end
-    end
-    local perClassRemoved = 0
-    for _, rows in pairs(classes) do
-        table.sort(rows, BetterBuild)
-        for index = limits.remotePerClass + 1, #rows do
-            local id = rows[index].id
-            if not marked[id] then
-                marked[id] = true
-                perClassRemoved = perClassRemoved + 1
-            end
-        end
-    end
-
+    -- Ranked pages are already selected from DPS rows. Apply author/global
+    -- budgets only to unrelated community pages so representation guarantees
+    -- cannot be undone by a second, contradictory cap.
     local groups = {}
     for id, build in pairs(overlay) do
-        if not marked[id] and not IsLocalBuild(build) then
+        if not marked[id] and not referenced[id] and not IsLocalBuild(build) then
             local author = AuthorKey(type(build) == "table" and build.author)
             groups[author] = groups[author] or {}
             groups[author][#groups[author] + 1] = {
@@ -339,7 +436,7 @@ local function PruneOverlay(database, referenced, limits)
 
     local candidates = {}
     for id, build in pairs(overlay) do
-        if not marked[id] and not IsLocalBuild(build) then
+        if not marked[id] and not referenced[id] and not IsLocalBuild(build) then
             candidates[#candidates + 1] = {
                 id=id, referenced=referenced[id] == true,
                 stamp=BuildStamp(build), complete=CompleteBuild(build),
@@ -348,7 +445,7 @@ local function PruneOverlay(database, referenced, limits)
     end
     table.sort(candidates, BetterBuild)
     local globalRemoved = 0
-    for index = limits.remoteOverlay + 1, #candidates do
+    for index = limits.otherRemoteBuilds + 1, #candidates do
         local id = candidates[index].id
         if not marked[id] then marked[id] = true; globalRemoved = globalRemoved + 1 end
     end
@@ -368,7 +465,7 @@ local function PruneOverlay(database, referenced, limits)
         after=math.max(0, remoteBefore - removed),
         removed=removed,
         orphaned=orphaned,
-        perClass=perClassRemoved,
+        perClass=0,
         perAuthor=perAuthorRemoved,
         global=globalRemoved,
         referencedKept=referencedKept,
@@ -550,13 +647,14 @@ function Retention.Enforce(database, reason)
 
     local limits = ResolveLimits(database)
     local dps = type(database.dpsCapture) == "table" and database.dpsCapture or nil
-    local characterRemoved = TrimCharacterBest(dps, limits)
-    local fingerprints = CharacterFingerprints(dps)
+    local selected, fingerprints, selectedBuildIds, categoryCounts =
+        SelectCharacterBest(dps, limits, database.communityBuilds)
+    local characterRemoved = TrimCharacterBest(dps, selected)
     local personalRemoved = dps and TrimFingerprintMap(
         dps.personalBest, limits.personalFingerprints, fingerprints) or 0
     local buildBestRemoved = dps and TrimFingerprintMap(
-        dps.buildBest, limits.buildBestFingerprints, nil) or 0
-    local referenced = CollectBuildReferences(dps)
+        dps.buildBest, limits.buildBestFingerprints, fingerprints) or 0
+    local referenced = CollectBuildReferences(dps, selectedBuildIds)
     local overlay = PruneOverlay(database, referenced, limits)
     local now = EpochNow()
     local evictions = PruneEvictionMarkers(database, now)
@@ -572,6 +670,9 @@ function Retention.Enforce(database, reason)
         schemaVersion=SCHEMA_VERSION,
         reason=tostring(reason or "maintenance"):sub(1, 80),
         characterBestRemoved=characterRemoved,
+        selectedDummy=categoryCounts.dummy,
+        selectedLk=categoryCounts.lk,
+        selectedAverage=categoryCounts.average,
         personalRemoved=personalRemoved,
         buildBestRemoved=buildBestRemoved,
         overlayBefore=overlay.before,

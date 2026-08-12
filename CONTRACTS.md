@@ -1,4 +1,4 @@
-# Nexus — internal module contracts (v1.20.0-beta.4)
+# Nexus — internal module contracts (v1.20.0-beta.5)
 
 Binding interface spec for all modules. Authored from `WISHLIST_REALIZER_BUILD_PROMPT.md`
 + `WISHLIST_REALIZER_SPEC_ADDENDUM.md` + `WISHLIST_REALIZER_DESIGN.md` (the addendum wins
@@ -7,8 +7,8 @@ SavedVariables, NO `ProjectEbonhold.*` — loadable under bare LuaJIT. All cross
 data is plain tables produced by `core/GameAdapter.lua` (the only IO module).
 
 Global namespace: `Nexus` (each file: `Nexus = Nexus or {};
-local M = {}; Nexus.<Name> = M`). Version: `Nexus.VERSION = "1.20.0-beta.4"`
-comes from `data/Release.lua`; .toc `## Version: 1.20.0-beta.4` stays in lockstep.
+local M = {}; Nexus.<Name> = M`). Version: `Nexus.VERSION = "1.20.0-beta.5"`
+comes from `data/Release.lua`; .toc `## Version: 1.20.0-beta.5` stays in lockstep.
 
 Lua 5.1 rules: no `goto`, no `#` on non-sequences, `unpack` global, sort pairs for
 deterministic output, forward-declare every closure-captured local BEFORE the closure,
@@ -420,13 +420,15 @@ catalog mutation APIs reject writes until a supported database is rebound.
 
 `DataRetention.Init(db)` performs an idempotent startup pass and `Request(reason)`
 coalesces later noncritical passes through `Scheduler`. It never automatically
-removes `isMine`, `importedSavedBuild`, or current-character-owned builds. Remote
-overlay rows are capped globally, per class, and per author using clamped saved
-settings (defaults 300/50/24). Referenced, complete, and newer rows rank first,
-but only owned/imported rows are exempt from the hard remote cap. Superseded
-unreferenced `autoDps` rows are removed locally without broadcasting a delete for
-another author. Personal/build-best fingerprint maps and each public
-character-best encounter bucket have configurable bounded limits.
+removes `isMine`, `importedSavedBuild`, or a build owned by any account character
+seen by Nexus. Dummy and Lich King each retain the top 100 overall plus the top
+15 per represented class. The derived Average board retains its top 50 overall
+plus top 10 per class by protecting both contributing raw rows. These clamped
+limits are saved/configurable and account-owned rows never consume them.
+Unrelated community posts have a separate 75-row recency budget and 12-per-author
+limit. Superseded unreferenced `autoDps` rows are removed locally without
+broadcasting a delete for another author. Personal/build-best fingerprint maps
+remain bounded while fingerprints selected by a retained rank are protected.
 
 Local eviction markers prevent the same stale rows from churning back through
 Sync. Markers themselves compact to a monotonic build-revision floor. Exact

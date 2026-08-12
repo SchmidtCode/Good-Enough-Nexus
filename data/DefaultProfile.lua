@@ -52,12 +52,17 @@ DefaultProfile.defaultSettings = {
     syncSuspendedInstanceTypes = {
         party=true, raid=true, pvp=true, arena=true, scenario=true,
     },
-    -- Durable remote Community data. Owned/imported builds are never counted
-    -- against or removed by these limits.
-    communityRetentionMaxTotal = 300,
-    communityRetentionMaxPerClass = 50,
-    communityRetentionMaxPerAuthor = 24,
-    communityRetentionCharacterBest = 256,
+    -- Durable remote Community data. Rankings are selected independently for
+    -- Dummy and Lich King, then the Average board reserves its contributing
+    -- rows. Each category keeps its overall leaders plus a per-class floor.
+    -- The smaller defaults are deliberate: a real 11 MB save showed visible
+    -- UI lag. Account-owned builds are protected and never consume these caps.
+    communityRetentionTopPerCategory = 100,
+    communityRetentionMinPerClassPerCategory = 15,
+    communityRetentionTopAverage = 50,
+    communityRetentionMinAveragePerClass = 10,
+    communityRetentionOtherRemoteBuilds = 75,
+    communityRetentionMaxPerAuthor = 12,
     communityRetentionPersonalFingerprints = 128,
     communityRetentionBuildFingerprints = 128,
     anchorSpellId = nil, -- explicit override; honored only when on the wishlist

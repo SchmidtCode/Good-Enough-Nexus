@@ -68,6 +68,7 @@ local Adapter, Model
 local selectedId  = nil
 local pendingLockIn = nil
 local IsOwnBuild
+local IsAccountBuild
 local lastSavedLoadoutImport = 0
 local renderBuildWindow, virtualBinding = nil, false
 local refreshDirty = false
@@ -287,7 +288,7 @@ local function SortedBuilds()
         if scope == "mine" then
             -- Personal workspace: current server Saved Builds plus builds the
             -- player has explicitly published.
-            scopeMatch = b.importedSavedBuild or IsOwnBuild(b)
+            scopeMatch = IsAccountBuild(b)
         else
             -- Community browser: never leak automatic local Saved Build
             -- mirrors into the shared/all-builds view.
@@ -458,6 +459,9 @@ local function FindRelatedBuild(serverTitle, echoes, old, author)
     local function CandidateScore(candidate)
         if not candidate or candidate.importedSavedBuild then return nil end
         if authorKey ~= "" and NormalizeTitle(candidate.author) ~= authorKey then return nil end
+        local currentOwner = CurrentOwnerKey()
+        if candidate.ownerKey and currentOwner
+            and tostring(candidate.ownerKey):lower() ~= currentOwner then return nil end
 
         local candidateKey = D and D.GetEchoKey and D.GetEchoKey(candidate.echoes) or candidate.fingerprint
         if exactKey and candidateKey == exactKey then return 100000 end
@@ -509,12 +513,16 @@ local function ImportCurrentSavedLoadouts(force)
 
     local me = tostring((UnitName and UnitName("player")) or "You")
     local meKey = me:lower():gsub("[^%w]", "_")
+    local currentOwner = CurrentOwnerKey()
+    if not currentOwner then return 0 end
+    local ownerSlug = currentOwner:gsub("[^%w]", "_")
     local seen, changed = {}, 0
 
     for rawSlot, live in pairs(slots.bySlot) do
         local slot = tonumber(rawSlot)
         if slot and slot >= 1 and slot < 100 and live and type(live.echoes) == "table" and #live.echoes > 0 then
-            local id = string.format("saved-%s-%d", meKey, slot)
+            local id = string.format("saved-%s-%d", ownerSlug, slot)
+            local legacyId = string.format("saved-%s-%d", meKey, slot)
             seen[id] = true
             local echoes, total = {}, 0
             for _, e in ipairs(live.echoes) do
@@ -530,7 +538,7 @@ local function ImportCurrentSavedLoadouts(force)
                 total = total + stacks
             end
             local serverTitle = (live.name and live.name ~= "") and live.name or ("Saved Build " .. slot)
-            local old = LoadBuild(id)
+            local old = LoadBuild(id) or (legacyId ~= id and LoadBuild(legacyId))
             -- Saved-loadout mirrors keep the server name as their default, but a
             -- player-entered build title remains available for editing/uploading.
             local title = (old and old.userTitle and old.userTitle ~= "") and old.userTitle or serverTitle
@@ -575,6 +583,7 @@ local function ImportCurrentSavedLoadouts(force)
                 }
                 if RefreshBuildIdentity(record) then
                     SaveBuild(record)
+                    if legacyId ~= id and LoadBuild(legacyId) then RemoveOverlay(legacyId) end
                     changed = changed + 1
                 end
             elseif old then
@@ -591,7 +600,9 @@ local function ImportCurrentSavedLoadouts(force)
                 old.destinationWishlistSlot = linked and linked.slot or nil
                 old.destinationProgress = progress
                 old.destinationTotal = destinationTotal
+                old.id = id
                 SaveBuild(old)
+                if legacyId ~= id and LoadBuild(legacyId) then RemoveOverlay(legacyId) end
             end
         end
     end
@@ -599,7 +610,7 @@ local function ImportCurrentSavedLoadouts(force)
     -- Remove only stale automatic mirrors for this character. Manually
     -- posted builds and imported records belonging to other characters stay.
     for id, build in pairs(Store()) do
-        if build and build.importedSavedBuild and tostring(build.author or ""):lower() == me:lower() and not seen[id] then
+        if build and build.importedSavedBuild and IsOwnBuild(build) and not seen[id] then
             RemoveOverlay(id)
             if selectedId == id then selectedId = nil end
             changed = changed + 1
@@ -1434,7 +1445,7 @@ local function EnsureDetailPanel(parent)
     p.lockBtn:SetScript("OnClick", function()
         local b = selectedId and LoadBuild(selectedId)
         if not b then return end
-        if b.importedSavedBuild then
+        if b.importedSavedBuild and IsOwnBuild(b) then
             local ok, err = M.PublishImportedBuild(selectedId)
             if ok then
                 print("|cff4dff80Nexus:|r uploaded '" .. tostring(b.title or "Saved Build") .. "' to community builds.")
@@ -1501,7 +1512,7 @@ local function EnsureDetailPanel(parent)
     p.lockBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self,"ANCHOR_TOP")
         local b = selectedId and LoadBuild(selectedId)
-        if b and b.importedSavedBuild then
+        if b and b.importedSavedBuild and IsOwnBuild(b) then
             GameTooltip:AddLine("Publish this saved loadout",0.9,0.9,0.9,true)
             GameTooltip:AddLine("Uploads it to the community build list so others can see and copy it.",0.7,0.7,0.7,true)
         else
@@ -1545,7 +1556,9 @@ local function RefreshDetailPanel(build)
     if detailPanel.classIcon then
         detailPanel.classIcon:SetTexture(CLASS_ICON[(build.class or ""):upper()] or "Interface\\Icons\\INV_Misc_QuestionMark")
     end
-    detailPanel.author:SetText("by "..(build.author or "?"))
+    local accountReference = IsAccountBuild(build) and not IsOwnBuild(build)
+    detailPanel.author:SetText("by "..(build.author or "?")
+        .. (accountReference and "  |cff66ccff(Account reference)|r" or ""))
     detailPanel.desc:SetText((build.description ~= "" and build.description) or "|cff666666(no description)|r")
 
     -- Link field: always show the box so anyone can copy; only show Save
@@ -1668,7 +1681,12 @@ local function RefreshDetailPanel(build)
     end
 
     if build.importedSavedBuild then
-        local state = build.publishedBuildId and "Uploaded. Upload Build again to publish title/description or loadout changes." or "Local server loadout. Edit its title/description, then Upload Build when ready."
+        local state
+        if accountReference then
+            state = "Saved loadout from another account character. Kept as a read-only reference; log into that character to edit or upload it."
+        else
+            state = build.publishedBuildId and "Uploaded. Upload Build again to publish title/description or loadout changes." or "Local server loadout. Edit its title/description, then Upload Build when ready."
+        end
         detailPanel.editState:SetText(state)
         detailPanel.editState:Show()
     elseif mine and loadoutLocked then
@@ -1681,7 +1699,7 @@ local function RefreshDetailPanel(build)
         detailPanel.editState:Hide()
     end
 
-    if build.importedSavedBuild then
+    if build.importedSavedBuild and mine then
         detailPanel.lockBtn:SetText(build.publishedBuildId and "Update Upload" or "Upload Build")
     else
         detailPanel.lockBtn:SetText(not hasLoadout and "Request Loadout" or "Copy into Editor")
@@ -2283,7 +2301,7 @@ local function EnsureFrame()
     myBuildsBtn = CreateFrame("Button",nil,frame,"UIPanelButtonTemplate")
     myBuildsBtn:SetSize(92,22)
     myBuildsBtn:SetPoint("LEFT",scopeBtn,"RIGHT",4,0)
-    myBuildsBtn:SetText("My Builds")
+    myBuildsBtn:SetText("My Account")
     myBuildsBtn:SetScript("OnClick",function()
         FilterSettings().scope = "mine"
         selectedId = nil
@@ -2292,8 +2310,8 @@ local function EnsureFrame()
     end)
     myBuildsBtn:SetScript("OnEnter",function(self)
         GameTooltip:SetOwner(self,"ANCHOR_TOP")
-        GameTooltip:AddLine("My Builds",1,0.82,0.2)
-        GameTooltip:AddLine("Open your saved loadouts and uploaded builds.",0.8,0.8,0.8,true)
+        GameTooltip:AddLine("My Account",1,0.82,0.2)
+        GameTooltip:AddLine("Reference saved loadouts and uploaded builds from every character seen by Nexus. Offline-character builds are read-only.",0.8,0.8,0.8,true)
         GameTooltip:Show()
     end)
     myBuildsBtn:SetScript("OnLeave",function() GameTooltip:Hide() end)
@@ -2603,7 +2621,7 @@ function M.Refresh()
             if not projectionSummary then
                 for _, b in pairs(Store()) do
                     if b.importedSavedBuild then loadouts = loadouts + 1
-                    elseif IsOwnBuild(b) then uploaded = uploaded + 1 end
+                    elseif IsAccountBuild(b) then uploaded = uploaded + 1 end
                 end
             end
             resultText:SetText(string.format("|cffd8c7a0%d saved loadouts|r  |cff777777•|r  %d uploaded builds", loadouts, uploaded))
@@ -2692,8 +2710,11 @@ function M.Refresh()
         card.title:SetText(b.title or "")
         do
             local ownerTag = ""
-            if b.importedSavedBuild then ownerTag = "  |cff66ccffSaved loadout|r"
-            elseif IsOwnBuild(b) then ownerTag = "  |cffffd200Your build|r" end
+            if b.importedSavedBuild then
+                ownerTag = IsOwnBuild(b) and "  |cff66ccffSaved loadout|r"
+                    or "  |cff66ccffAccount reference|r"
+            elseif IsOwnBuild(b) then ownerTag = "  |cffffd200Your build|r"
+            elseif IsAccountBuild(b) then ownerTag = "  |cff66ccffAccount build|r" end
             card.author:SetText("by "..(b.author or "?")..ownerTag)
         end
         if b.importedSavedBuild then
@@ -2859,6 +2880,22 @@ local function MakeDropdownMenu(parent, width)
     menu._buttons = {}
     menu:Hide()
     return menu
+end
+
+IsAccountBuild = function(build)
+    if not build then return false end
+    local store = Nexus and Nexus.Store
+    if store and type(store.IsAccountBuild) == "function" then
+        local ok, value = pcall(store.IsAccountBuild, build)
+        if ok then return value == true end
+    end
+    return build.isMine == true or build.importedSavedBuild == true
+        or IsOwnBuild(build)
+end
+
+function M.IsAccountBuild(idOrBuild)
+    local build = type(idOrBuild) == "table" and idOrBuild or LoadBuild(idOrBuild)
+    return IsAccountBuild(build)
 end
 
 local function AddMenuButton(menu, text, onClick, index)

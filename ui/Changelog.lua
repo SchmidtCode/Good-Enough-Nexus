@@ -4,8 +4,8 @@ Nexus = Nexus or {}
 local M = {}
 Nexus.Changelog = M
 
-local VERSION = "1.20.0-beta.4"
-local RELEASE_KEY = "1.20.0-beta.4"
+local VERSION = "1.20.0-beta.5"
+local RELEASE_KEY = "1.20.0-beta.5"
 local frame
 local shownThisSession = false
 
@@ -43,17 +43,22 @@ local function Create()
 
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -20)
-    title:SetText("Nexus 1.20 Beta 4")
+    title:SetText("Nexus 1.20 Beta 5")
 
     local body = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     body:SetPoint("TOPLEFT", 28, -52)
     body:SetPoint("RIGHT", -28, 0)
     body:SetJustifyH("LEFT")
     body:SetJustifyV("TOP")
-    body:SetText([[|cffffd200Community is back, with bounded storage|r
+    body:SetText([[|cffffd200Smaller, DPS-ranked Community storage|r
 
-- Owned/imported builds are never auto-removed; remote builds default to 300 total, 50/class, and 24/author.
-- DPS history is capped and superseded automatic record pages are reclaimed.
+- Dummy and Lich King keep top 100 overall plus top 15/class; Average keeps top 50 plus top 10/class.
+- Account-owned builds do not consume those limits; unrelated community posts use a separate small budget.
+
+|cffffd200My Account references|r
+
+- Saved loadouts and uploads remain visible across characters seen by Nexus.
+- Offline-character builds are read-only until you log into their owner; same names on different realms no longer collide.
 
 |cffffd200Sync only when it is safe|r
 
@@ -64,7 +69,7 @@ local function Create()
 
 - Sync request/broadcast caches and repeated popup/log refreshes now reuse bounded state.
 - Old delete records compact behind a stale-revision floor instead of allowing resurrection.
-- Beta 3 wishlist and stock server-HUD fixes remain active.
+- Large-save compaction, virtualized lists, and bounded refresh work remain active.
 
 Back up Nexus SavedVariables before beta testing.]])
 

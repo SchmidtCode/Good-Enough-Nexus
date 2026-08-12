@@ -84,14 +84,15 @@ assert(NexusDB == legacy and WishlistRealizerDB == nil,
 assert(NexusDB.settings == settings and NexusDB.chars.Hero == state,
     "migration replaced live settings or character tables")
 assert(NexusDB.settingsVersion == Store.SettingsVersion()
-    and NexusDB.settingsVersion == 3, "ordered migration version was not recorded")
+    and NexusDB.settingsVersion == 4, "ordered migration version was not recorded")
 assert(settings.autoPick == false and settings.autoActivate == false
     and settings.updateNotifications == false,
     "existing false preferences were overwritten by defaults")
 assert(settings.autoSave == true and settings.autoBanish == true
     and settings.anchorNames[1] == "Adaptive Power"
     and settings.syncMode == "automatic"
-    and settings.communityRetentionMaxTotal == 300,
+    and settings.communityRetentionTopPerCategory == 100
+    and settings.communityRetentionMinPerClassPerCategory == 15,
     "missing defaults were not filled additively")
 assert(settings.leverOptOut.futureLeverValue == "keep"
     and settings.futurePreference.nested == "preserve",
@@ -99,6 +100,10 @@ assert(settings.leverOptOut.futureLeverValue == "keep"
 assert(NexusDB.buildFilters == filters and NexusDB.dpsCapture == dps
     and NexusDB.updateNotice == notice and NexusDB.unrelatedRoot.future,
     "unrelated NexusDB subsystems changed during settings migration")
+assert(Store.IsAccountOwnerKey("boganic@ebonhold")
+    and Store.IsAccountBuild({ownerKey="boganic@ebonhold"})
+    and not Store.IsAccountOwnerKey("stranger@ebonhold"),
+    "live character identity was not registered for account-wide references")
 assert(state.tomeTogglePending == pending
     and type(pending[17]) == "table" and pending[17].t == 123.5
     and pending[17].want == true,
@@ -122,6 +127,8 @@ local originalUnitName = UnitName
 UnitName = function() return "Hero" end
 assert(Store.State() == state and Store.Settings() == settings,
     "Store accessors stopped returning the preserved live tables")
+assert(Store.IsAccountOwnerKey("hero@ebonhold"),
+    "per-character access did not register the newly seen account character")
 UnitName = originalUnitName
 
 local converted = pending[17]

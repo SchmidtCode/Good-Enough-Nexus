@@ -3440,17 +3440,23 @@ SlashCmdList["NEXUS"] = function(msg)
             Print("sync unavailable")
         end
     elseif msg:match("^synclimits") then
-        local total, perClass, perAuthor = msg:match(
-            "^synclimits%s+(%d+)%s+(%d+)%s+(%d+)$")
-        if total then
-            settings.communityRetentionMaxTotal = tonumber(total)
-            settings.communityRetentionMaxPerClass = tonumber(perClass)
+        local top, perClass, average, averagePerClass, other, perAuthor = msg:match(
+            "^synclimits%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)$")
+        if top then
+            settings.communityRetentionTopPerCategory = tonumber(top)
+            settings.communityRetentionMinPerClassPerCategory = tonumber(perClass)
+            settings.communityRetentionTopAverage = tonumber(average)
+            settings.communityRetentionMinAveragePerClass = tonumber(averagePerClass)
+            settings.communityRetentionOtherRemoteBuilds = tonumber(other)
             settings.communityRetentionMaxPerAuthor = tonumber(perAuthor)
             local limits = Nexus.DataRetention and Nexus.DataRetention.Limits
                 and Nexus.DataRetention.Limits(NexusDB) or nil
             if limits then
-                settings.communityRetentionMaxTotal = limits.remoteOverlay
-                settings.communityRetentionMaxPerClass = limits.remotePerClass
+                settings.communityRetentionTopPerCategory = limits.topPerCategory
+                settings.communityRetentionMinPerClassPerCategory = limits.minPerClassPerCategory
+                settings.communityRetentionTopAverage = limits.topAverage
+                settings.communityRetentionMinAveragePerClass = limits.minAveragePerClass
+                settings.communityRetentionOtherRemoteBuilds = limits.otherRemoteBuilds
                 settings.communityRetentionMaxPerAuthor = limits.remotePerAuthor
                 pcall(Nexus.DataRetention.Enforce, NexusDB, "settings changed")
             end
@@ -3458,9 +3464,12 @@ SlashCmdList["NEXUS"] = function(msg)
         local limits = Nexus.DataRetention and Nexus.DataRetention.Limits
             and Nexus.DataRetention.Limits(NexusDB) or nil
         if limits then
-            Print(string.format("Remote build limits: %d total, %d per class, %d per author.",
-                limits.remoteOverlay, limits.remotePerClass, limits.remotePerAuthor))
-            Print("Set with: /nexus synclimits <total> <per-class> <per-author>")
+            Print(string.format("DPS retention: %d overall + %d/class for Dummy and LK; %d overall + %d/class for Average.",
+                limits.topPerCategory, limits.minPerClassPerCategory,
+                limits.topAverage, limits.minAveragePerClass))
+            Print(string.format("Other community builds: %d total, %d per author.",
+                limits.otherRemoteBuilds, limits.remotePerAuthor))
+            Print("Set with: /nexus synclimits <raw-top> <raw-per-class> <avg-top> <avg-per-class> <other> <per-author>")
         else
             Print("retention settings unavailable")
         end

@@ -29,6 +29,15 @@ for index = 1, 1000 do
         echoes={{spellId=500000+index,quality=3,stacks=1}},
     }
 end
+builds["projection-0021"].author = "AccountAlt"
+builds["projection-0021"].ownerKey = "accountalt@ebonhold"
+Nexus.Store = {
+    IsAccountBuild=function(build)
+        return build.isMine == true or build.importedSavedBuild == true
+            or build.ownerKey == "projectionmage@ebonhold"
+            or build.ownerKey == "accountalt@ebonhold"
+    end,
+}
 
 local catalogWalks, boardReads, leaderboardReads = 0, 0, 0
 Nexus.BuildCatalog = {All=function()
@@ -92,8 +101,12 @@ assert(P.Builds({scope="all",classFilter="MAGE",sortMode="recent"})[1].title ~= 
     "caller mutated cached build projection")
 
 local mine, mineSummary = P.Builds({scope="mine",search="needle",sortMode="title"})
-assert(mineSummary.savedLoadouts == 15 and mineSummary.uploaded == 99
-    and #mine > 0,
+local sawAlt = false
+for _, build in ipairs(mine) do
+    if build.ownerKey == "accountalt@ebonhold" then sawAlt = true; break end
+end
+assert(mineSummary.savedLoadouts == 15 and mineSummary.uploaded == 100
+    and #mine > 0 and sawAlt,
     "owner/scope/search projection summary changed")
 local beforeStatus = P.Stats().builds.rebuilds
 Revisions.Advance(Revisions.SYNC_CHANGED, {scope="status"})
