@@ -877,6 +877,8 @@ local function EnsureFrame()
     bestDpsText:SetSize(280, 14)
     bestDpsText:SetJustifyH("CENTER")
     bestDpsText:SetText("|cff888888Best DPS: hit a training dummy to record|r")
+    frame._performanceBottomText = dummyGlobal
+    frame._bestDpsText = bestDpsText
     bestDpsHit = HitFrame(frame, bestDpsText)
     bestDpsHit:SetScript("OnEnter", function(self)
         local info = M._lastModel and M._lastModel.bestDps
@@ -1419,7 +1421,11 @@ function M.Render(model)
         -- most wishlists design zero locked-slot targets, so the extra
         -- height stays reserved only while it's actually needed.
         local toLockExtra = #toLockNamesCache > 0 and 34 or 0
-        frame:SetHeight((showPerformance and (activeRoll and 448 or 325) or (activeRoll and 388 or 267)) - statusHeightReduction + toLockExtra)
+        -- Performance ends immediately above the character-best line and
+        -- footer. Reserve its full text height in both PEH-merged and stock-HUD
+        -- modes; the prior height ended at the same pixels as Best DPS.
+        local performanceFooterClearance = showPerformance and 22 or 0
+        frame:SetHeight((showPerformance and (activeRoll and 448 or 325) or (activeRoll and 388 or 267)) - statusHeightReduction + toLockExtra + performanceFooterClearance)
         SetPoint(progressLabel, "TOPLEFT", frame, "TOPLEFT", 12, contentTop)
         SetPoint(progressValue, "TOPLEFT", frame, "TOPLEFT", 12, contentTop - 17)
         progressValue:SetText(string.format("%d / %d complete", owned, total))
