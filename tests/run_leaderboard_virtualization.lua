@@ -152,9 +152,12 @@ assert(L.VirtualStats().active<=5
 -- Categories, search, class filters, and empty state each rebuild once.
 L.Show("lk")
 assert(L.VirtualStats().results==150 and L.VirtualStats().category=="lk")
-L.SetCategory("combined")
-assert(L.VirtualStats().results==150 and L.VirtualStats().category=="lk",
-    "emergency mode still allowed average-DPS leaderboard calculation")
+local averageTab=NexusLeaderboardFrame._averageTab
+assert(averageTab and type(averageTab:GetScript("OnClick"))=="function",
+    "Average leaderboard tab was not enabled")
+averageTab:GetScript("OnClick")()
+assert(L.VirtualStats().results==150 and L.VirtualStats().category=="combined",
+    "average-DPS leaderboard category did not activate")
 NexusLeaderboardSearch:SetText("Player 001")
 L.RefreshData()
 assert(L.VirtualStats().results==1 and L.VirtualStats().offset==0,
