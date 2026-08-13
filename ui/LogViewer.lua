@@ -24,11 +24,37 @@ local TABS = {
 
 local frame, editBox, scroll, tabButtons, statusFS, exportButton
 local exportRunner, exportJob, exportGeneration = nil, nil, 0
+local exportChunks, exportChunkIndex = nil, 0
 local delayFrame, delayed = nil, {}
 local provider, clearProvider
 local activeTab = "state"
 local repaintPending = false
 local MAX_TEXT_CHARS = 60000
+-- WoW 3.3.5 lays out and selects EditBox text synchronously.  A complete
+-- long-session export can exceed 300 KB, so displaying it all at once defeats
+-- the coroutine and freezes the client at the final step.
+local EXPORT_CHUNK_CHARS = 45000
+
+local function SplitExportText(text, limit)
+    text = tostring(text or "")
+    limit = math.max(1000, math.floor(tonumber(limit) or EXPORT_CHUNK_CHARS))
+    if text == "" then return { "" } end
+    local chunks, first, length = {}, 1, #text
+    while first <= length do
+        local last = math.min(length, first + limit - 1)
+        if last < length then
+            local window = text:sub(first, last)
+            local boundary = window:match(".*()\n")
+            if boundary and boundary > 1 then last = first + boundary - 1 end
+        end
+        chunks[#chunks + 1] = text:sub(first, last)
+        first = last + 1
+    end
+    return chunks
+end
+
+-- Focused tests use the pure splitter without constructing WoW frames.
+M._SplitExportText = SplitExportText
 
 -- Prefer the addon's keyed scheduler. Focused UI tests can load this module
 -- before Scheduler.Init, so retain one shared fallback frame instead of
@@ -115,23 +141,45 @@ end
 local function StopExport()
     exportGeneration = exportGeneration + 1
     exportJob = nil
+    exportChunks, exportChunkIndex = nil, 0
     CancelAfter("log-viewer.export-finish")
     if exportRunner then
         exportRunner:SetScript("OnUpdate", nil)
         exportRunner:Hide()
     end
+    if exportButton then exportButton:SetText("Copy Full Diagnostic Log") end
+end
+
+local function ShowExportChunk(index)
+    if type(exportChunks) ~= "table" or #exportChunks == 0 then return false end
+    index = math.max(1, math.min(#exportChunks, tonumber(index) or 1))
+    exportChunkIndex = index
+    local header = string.format(
+        "NEXUS_DIAGNOSTIC_EXPORT_CHUNK %d/%d\nPaste all chunks in order; chunk markers are part of the export.\n\n",
+        index, #exportChunks)
+    local text = header .. tostring(exportChunks[index] or "")
+    editBox:SetText(text)
+    editBox:SetCursorPosition(0)
+    editBox:SetFocus()
+    editBox:HighlightText()
+    statusFS:SetText(string.format(
+        "Chunk %d/%d selected (%d chars) -- Ctrl-C, then click %s",
+        index, #exportChunks, #text,
+        index < #exportChunks and "Next Copy Chunk" or "First Copy Chunk"))
+    if exportButton then
+        exportButton:SetText(index < #exportChunks
+            and "Next Copy Chunk" or "First Copy Chunk")
+    end
+    return true
 end
 
 local function FinishExport(text)
     exportJob = nil
     if exportRunner then exportRunner:SetScript("OnUpdate", nil); exportRunner:Hide() end
-    text = tostring(text or "")
-    local n = #text
-    editBox:SetText(text)
-    editBox:SetCursorPosition(0)
-    editBox:SetFocus()
-    editBox:HighlightText()
-    statusFS:SetText(n .. " chars -- complete log selected; Ctrl-C")
+    exportChunks = SplitExportText(text, EXPORT_CHUNK_CHARS)
+    exportChunkIndex = 0
+    text = nil
+    ShowExportChunk(1)
 end
 
 local function StartExport()
@@ -140,6 +188,7 @@ local function StartExport()
     for _, b in ipairs(tabButtons or {}) do b:UnlockHighlight() end
     editBox:SetText("Preparing full diagnostic log...\n\nNexus is building this over multiple frames so gameplay stays responsive.")
     statusFS:SetText("Preparing export...")
+    if exportButton then exportButton:SetText("Building Export...") end
     local factory = Nexus and Nexus.NewAIExportCoroutine
     if type(factory) ~= "function" then
         editBox:SetText("Diagnostic export builder is unavailable.")
@@ -267,7 +316,16 @@ local function EnsureFrame()
     exportButton:SetSize(148, 22)
     exportButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -12, 7)
     exportButton:SetText("Copy Full Diagnostic Log")
-    exportButton:SetScript("OnClick", StartExport)
+    exportButton:SetScript("OnClick", function()
+        if activeTab == "ai_export" and type(exportChunks) == "table"
+            and #exportChunks > 0 then
+            local nextIndex = exportChunkIndex + 1
+            if nextIndex > #exportChunks then nextIndex = 1 end
+            ShowExportChunk(nextIndex)
+        else
+            StartExport()
+        end
+    end)
     exportButton:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText("Copy every retained decision and mismatch")

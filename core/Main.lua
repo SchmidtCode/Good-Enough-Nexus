@@ -3481,9 +3481,17 @@ SlashCmdList["NEXUS"] = function(msg)
             Print("sync unavailable")
         end
     elseif msg:match("^synclimits") then
+        local retentionMode = msg:match("^synclimits%s+(%S+)$")
         local top, perClass, average, averagePerClass, other, perAuthor = msg:match(
             "^synclimits%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)$")
-        if top then
+        if retentionMode == "on" or retentionMode == "off" then
+            settings.communityRetentionEnabled = retentionMode == "on"
+            if Nexus.DataRetention and Nexus.DataRetention.Enforce then
+                pcall(Nexus.DataRetention.Enforce, NexusDB,
+                    "retention " .. retentionMode)
+            end
+        elseif top then
+            settings.communityRetentionEnabled = true
             settings.communityRetentionTopPerCategory = tonumber(top)
             settings.communityRetentionMinPerClassPerCategory = tonumber(perClass)
             settings.communityRetentionTopAverage = tonumber(average)
@@ -3501,16 +3509,22 @@ SlashCmdList["NEXUS"] = function(msg)
                 settings.communityRetentionMaxPerAuthor = limits.remotePerAuthor
                 pcall(Nexus.DataRetention.Enforce, NexusDB, "settings changed")
             end
+        elseif msg ~= "synclimits" then
+            Print("usage: /nexus synclimits <on|off> or <D/L top> <D/L class> <avg top> <avg class> <other> <author>")
         end
         local limits = Nexus.DataRetention and Nexus.DataRetention.Limits
             and Nexus.DataRetention.Limits(NexusDB) or nil
         if limits then
+            Print(limits.enabled
+                and "Ranked retention: ON (custom limits active)."
+                or "Ranked retention: OFF (relaxed hard safety ceilings remain).")
             Print(string.format("DPS retention: %d overall + %d/class for Dummy and LK; %d overall + %d/class for Average.",
                 limits.topPerCategory, limits.minPerClassPerCategory,
                 limits.topAverage, limits.minAveragePerClass))
             Print(string.format("Other community builds: %d total, %d per author.",
                 limits.otherRemoteBuilds, limits.remotePerAuthor))
-            Print("Set with: /nexus synclimits <raw-top> <raw-per-class> <avg-top> <avg-per-class> <other> <per-author>")
+            Print("Set mode: /nexus synclimits <on|off>")
+            Print("Set custom limits (also enables): /nexus synclimits <raw-top> <raw-per-class> <avg-top> <avg-per-class> <other> <per-author>")
         else
             Print("retention settings unavailable")
         end
@@ -3592,7 +3606,7 @@ SlashCmdList["NEXUS"] = function(msg)
         Print("|cffffd200Nexus v" .. Nexus.VERSION .. "|r  --  /nexus (or /nx, /wr)")
         Print("|cffffd200Setup:|r  builds  |  leaderboard  |  editor  |  sync  |  overlay")
         Print("|cffffd200Sync:|r   syncmode <automatic|manual|off>  |  sync")
-        Print("|cffffd200Limits:|r synclimits <D/L top> <D/L class> <avg top> <avg class> <other> <author>")
+        Print("|cffffd200Limits:|r synclimits <on|off>  |  synclimits <D/L top> <D/L class> <avg top> <avg class> <other> <author>")
         Print("|cffffd200Run:|r    auto  |  panel  |  status  |  wishlist  |  progress")
         Print("|cffffd200Data:|r   log  |  perf  |  dps  |  nameplate  |  logclear")
         Print("|cffffd200Fixes:|r  flags  |  undemote  |  anchor <id|off>  |  restore  |  err")

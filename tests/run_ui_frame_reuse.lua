@@ -36,6 +36,16 @@ assert(allocations == afterFirstClass,
     "class dropdown allocated new frames on every refresh")
 
 dofile("ui/LogViewer.lua")
+do
+    local source = string.rep("short line\n", 5000) .. string.rep("x", 50000)
+    local chunks = Nexus.LogViewer._SplitExportText(source, 45000)
+    assert(#chunks > 1 and table.concat(chunks) == source,
+        "diagnostic export chunks lost or reordered text")
+    for _, chunk in ipairs(chunks) do
+        assert(#chunk <= 45000,
+            "diagnostic export chunk exceeded its safe EditBox budget")
+    end
+end
 Nexus.LogViewer.Init(function() return "diagnostic text" end, function() return true end)
 Nexus.LogViewer.Show("state")
 H.Advance(0.1)

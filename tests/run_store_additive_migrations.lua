@@ -91,6 +91,7 @@ assert(settings.autoPick == false and settings.autoActivate == false
 assert(settings.autoSave == true and settings.autoBanish == true
     and settings.anchorNames[1] == "Adaptive Power"
     and settings.syncMode == "automatic"
+    and settings.communityRetentionEnabled == false
     and settings.communityRetentionTopPerCategory == 100
     and settings.communityRetentionMinPerClassPerCategory == 15,
     "missing defaults were not filled additively")

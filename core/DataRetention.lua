@@ -55,6 +55,11 @@ end
 local function ResolveLimits(database)
     local limits = Copy(DEFAULT_LIMITS)
     local settings = type(database) == "table" and database.settings or nil
+    -- Missing preserves the bounded behavior for legacy/focused callers that
+    -- do not load DefaultProfile. Store.Init fills the shipped false default
+    -- for real players, making ranked pruning explicitly opt-in.
+    local enabled = not (type(settings) == "table"
+        and settings.communityRetentionEnabled == false)
     for name, spec in pairs(CONFIGURED_LIMITS) do
         local value = type(settings) == "table" and tonumber(settings[spec.key]) or nil
         if value and value == value and value < math.huge and value > -math.huge then
@@ -62,6 +67,15 @@ local function ResolveLimits(database)
             limits[name] = math.max(spec.min, math.min(spec.max, value))
         end
     end
+    if not enabled then
+        -- "Off" disables the smaller ranking policy, not the absolute safety
+        -- boundary. A compromised/noisy mesh must never grow SavedVariables
+        -- without limit.
+        for name, spec in pairs(CONFIGURED_LIMITS) do
+            limits[name] = spec.max
+        end
+    end
+    limits.enabled = enabled
     limits.minPerClassPerCategory = math.min(
         limits.minPerClassPerCategory, limits.topPerCategory)
     limits.minAveragePerClass = math.min(

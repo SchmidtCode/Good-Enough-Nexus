@@ -52,11 +52,11 @@ DefaultProfile.defaultSettings = {
     syncSuspendedInstanceTypes = {
         party=true, raid=true, pvp=true, arena=true, scenario=true,
     },
-    -- Durable remote Community data. Rankings are selected independently for
-    -- Dummy and Lich King, then the Average board reserves its contributing
-    -- rows. Each category keeps its overall leaders plus a per-class floor.
-    -- The smaller defaults are deliberate: a real 11 MB save showed visible
-    -- UI lag. Account-owned builds are protected and never consume these caps.
+    -- Ranked retention is opt-in. Off uses relaxed 1,000-record hard safety
+    -- ceilings rather than allowing hostile/unbounded SavedVariables growth.
+    -- When enabled, categories keep their overall leaders plus a class floor;
+    -- account-owned builds remain protected and never consume these caps.
+    communityRetentionEnabled = false,
     communityRetentionTopPerCategory = 100,
     communityRetentionMinPerClassPerCategory = 15,
     communityRetentionTopAverage = 50,

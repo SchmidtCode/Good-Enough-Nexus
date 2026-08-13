@@ -18,6 +18,7 @@ Nexus.BundledBuilds = {
 
 NexusDB = {
     settings={
+        communityRetentionEnabled=true,
         communityRetentionTopPerCategory=120,
         communityRetentionMinPerClassPerCategory=10,
         communityRetentionTopAverage=40,
@@ -142,6 +143,7 @@ assert(limits.topPerCategory == 120 and limits.minPerClassPerCategory == 10
     and limits.otherRemoteBuilds == 60
     and limits.remotePerAuthor == 8,
     "configured retention limits were not resolved")
+assert(limits.enabled == true, "explicit ranked retention mode was not enabled")
 local summary = assert(Nexus.DataRetention.Enforce(NexusDB, "focused test"))
 
 local remoteCount, floodCount, localCount = 0, 0, 0
@@ -260,5 +262,22 @@ local futureCatalogSummary = Nexus.DataRetention.Enforce(
 assert(futureCatalogSummary.readOnly and futureCatalog.communityBuilds.keep
     and futureCatalog.dataRetention == nil,
     "future catalog schema was mutated by retention")
+
+local relaxedLimits = Nexus.DataRetention.Limits({settings={
+    communityRetentionEnabled=false,
+    communityRetentionTopPerCategory=25,
+    communityRetentionMinPerClassPerCategory=1,
+    communityRetentionTopAverage=10,
+    communityRetentionMinAveragePerClass=1,
+    communityRetentionOtherRemoteBuilds=0,
+    communityRetentionMaxPerAuthor=1,
+}})
+assert(relaxedLimits.enabled == false
+    and relaxedLimits.topPerCategory == 1000
+    and relaxedLimits.minPerClassPerCategory == 100
+    and relaxedLimits.topAverage == 1000
+    and relaxedLimits.otherRemoteBuilds == 1000
+    and relaxedLimits.remotePerAuthor == 250,
+    "disabled ranked retention did not retain hard safety ceilings")
 
 print("bounded community/DPS retention and tombstone compaction -- OK")
