@@ -411,11 +411,19 @@ local function EnsureFrame()
     end
     classBtn:SetScript("OnClick",function(self) if classMenu:IsShown() then classMenu:Hide() else classMenu:ClearAllPoints(); classMenu:SetPoint("TOPLEFT",self,"BOTTOMLEFT",0,-2); classMenu:Show() end end)
 
-    syncBtn=MakeNavButton(frame,"Sync Now",90); syncBtn:SetPoint("TOPRIGHT",-18,-50); syncBtn:SetScript("OnClick",function() classMenu:Hide(); if Nexus.Sync then Nexus.Sync.RequestSync() end end)
+    syncBtn=MakeNavButton(frame,"Sync Now",90); syncBtn:SetPoint("TOPRIGHT",-18,-50); frame._syncBtn=syncBtn; syncBtn:SetScript("OnClick",function()
+        classMenu:Hide()
+        local S=Nexus.Sync
+        if not (S and S.RequestSync) then return end
+        local ok,err=S.RequestSync()
+        if ok then print("|cff7fd5ffNexus:|r asking other players for builds and DPS records...")
+        else print("|cffff6060Nexus:|r "..tostring(err)) end
+        M.RefreshStatus()
+    end)
     dummyBtn=MakeTab(frame,"Training Dummy",118); dummyBtn:SetPoint("TOPLEFT",18,-82); dummyBtn:SetScript("OnClick",function() category="dummy"; selectedKey=nil; classMenu:Hide(); M.RefreshData() end)
     lkBtn=MakeTab(frame,"Lich King",100); lkBtn:SetPoint("LEFT",dummyBtn,"RIGHT",5,0); lkBtn:SetScript("OnClick",function() category="lk"; selectedKey=nil; classMenu:Hide(); M.RefreshData() end)
     combinedBtn=MakeTab(frame,"Average",112); combinedBtn:SetPoint("LEFT",lkBtn,"RIGHT",5,0); combinedBtn:SetScript("OnClick",function() category="combined"; selectedKey=nil; classMenu:Hide(); M.RefreshData() end); frame._averageTab=combinedBtn
-    statusText=frame:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); statusText:SetPoint("LEFT",combinedBtn,"RIGHT",12,0); statusText:SetSize(250,14); statusText:SetJustifyH("LEFT")
+    statusText=frame:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); statusText:SetPoint("LEFT",combinedBtn,"RIGHT",12,0); statusText:SetSize(250,14); statusText:SetJustifyH("LEFT"); frame._syncStatusText=statusText
     countText=frame:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); countText:SetPoint("TOPLEFT",18,-113); countText:SetSize(LIST_W,14); countText:SetJustifyH("LEFT")
 
     local head=CreateFrame("Frame",nil,frame); head:SetSize(LIST_W,22); head:SetPoint("TOPLEFT",18,-133); SetBackdrop(head,0.74)
@@ -454,7 +462,18 @@ function M.RefreshStatus()
         local state,waitSeconds,pending,work=S.GetLeaderboardSyncStatus(); work=type(work)=="table" and work or {}; local receiving=tonumber(work.receiving) or 0
         if state=="throttled" then statusText:SetText("|cffffcc55Sync resumes in "..tostring(waitSeconds).."s|r")
         elseif state=="syncing" then statusText:SetText("|cff4dff80Syncing"..(receiving>0 and (" • "..receiving.." receiving") or "...").."|r")
+        elseif state=="off" then statusText:SetText("|cffff6060Sync Off — change mode in Builds|r")
+        elseif state=="suspended" then
+            local effective=S.GetEffectiveState and S.GetEffectiveState() or nil
+            statusText:SetText("|cffffcc55Sync waiting"..(effective and effective.reason and (" — "..tostring(effective.reason)) or "").."|r")
+        elseif state=="manual-idle" then statusText:SetText("|cff888888Manual — press Sync Now while resting|r")
         else statusText:SetText("|cff888888Best exact loadout per character|r") end
+        if syncBtn then
+            syncBtn:SetText(state=="off" and "Sync Off"
+                or state=="suspended" and "Waiting..."
+                or state=="syncing" and "Syncing..."
+                or "Sync Now")
+        end
     else statusText:SetText("|cff888888Best exact loadout per character|r") end
     virtualStats.statusRefreshes=virtualStats.statusRefreshes+1
     return true

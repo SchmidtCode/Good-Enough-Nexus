@@ -2604,13 +2604,16 @@ function M.Refresh()
                 math.ceil(sync.ReceiveTimeLeft()), sync.LastSyncNewCount()))
         end
         if syncBtn then syncBtn:SetText("Listening...") end
-        if resultText then
-            resultText:SetText(
-                "|cffffd200Build list paused until Sync finishes to prevent freezing.|r")
+        -- The browser is bounded and virtualized now, so its first cached
+        -- projection is safe to show while a receive window is active.  Once
+        -- rows have been drawn, continue coalescing incoming revisions until
+        -- Sync ends instead of repeatedly rebuilding the projection.
+        if virtualStats.dataBinds > 0 then
+            return true
         end
-        return true
+    else
+        Measure("community.import", ImportCurrentSavedLoadouts, false)
     end
-    Measure("community.import", ImportCurrentSavedLoadouts, false)
 
     -- Sync status
     if syncStatusText and Nexus.Sync then
