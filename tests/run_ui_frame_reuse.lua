@@ -36,16 +36,6 @@ assert(allocations == afterFirstClass,
     "class dropdown allocated new frames on every refresh")
 
 dofile("ui/LogViewer.lua")
-do
-    local source = string.rep("short line\n", 5000) .. string.rep("x", 50000)
-    local chunks = Nexus.LogViewer._SplitExportText(source, 45000)
-    assert(#chunks > 1 and table.concat(chunks) == source,
-        "diagnostic export chunks lost or reordered text")
-    for _, chunk in ipairs(chunks) do
-        assert(#chunk <= 45000,
-            "diagnostic export chunk exceeded its safe EditBox budget")
-    end
-end
 Nexus.LogViewer.Init(function() return "diagnostic text" end, function() return true end)
 Nexus.LogViewer.Show("state")
 H.Advance(0.1)
@@ -56,5 +46,24 @@ for _ = 1, 25 do
 end
 assert(allocations == afterFirstRepaint,
     "LogViewer repaint allocated permanent one-shot frames")
+
+-- The user-facing export remains one complete, lossless copy. Text layout and
+-- selection are deferred to separate ticks instead of introducing copy chunks.
+local fullExport = "NEXUS_DIAGNOSTIC_LOG_5\n" .. string.rep("full detail line\n", 14000)
+Nexus.NewAIExportCoroutine = function()
+    return coroutine.create(function()
+        coroutine.yield("Encoding complete retained history")
+        return fullExport
+    end)
+end
+local logFrame = NexusLogViewer
+logFrame._editBox.HighlightText = function(self) self.highlighted = true end
+logFrame._exportButton:GetScript("OnClick")()
+H.Advance(0.5)
+assert(logFrame._editBox:GetText() == fullExport
+    and #logFrame._editBox:GetText() == #fullExport
+    and not logFrame._editBox:GetText():find("EXPORT_CHUNK", 1, true)
+    and logFrame._editBox.highlighted == true,
+    "full diagnostic export was split, truncated, reordered, or not selected")
 
 print("dropdown and LogViewer delayed work reuse bounded frame pools -- OK")

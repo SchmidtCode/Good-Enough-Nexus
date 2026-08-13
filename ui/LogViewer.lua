@@ -24,37 +24,11 @@ local TABS = {
 
 local frame, editBox, scroll, tabButtons, statusFS, exportButton
 local exportRunner, exportJob, exportGeneration = nil, nil, 0
-local exportChunks, exportChunkIndex = nil, 0
 local delayFrame, delayed = nil, {}
 local provider, clearProvider
 local activeTab = "state"
 local repaintPending = false
 local MAX_TEXT_CHARS = 60000
--- WoW 3.3.5 lays out and selects EditBox text synchronously.  A complete
--- long-session export can exceed 300 KB, so displaying it all at once defeats
--- the coroutine and freezes the client at the final step.
-local EXPORT_CHUNK_CHARS = 45000
-
-local function SplitExportText(text, limit)
-    text = tostring(text or "")
-    limit = math.max(1000, math.floor(tonumber(limit) or EXPORT_CHUNK_CHARS))
-    if text == "" then return { "" } end
-    local chunks, first, length = {}, 1, #text
-    while first <= length do
-        local last = math.min(length, first + limit - 1)
-        if last < length then
-            local window = text:sub(first, last)
-            local boundary = window:match(".*()\n")
-            if boundary and boundary > 1 then last = first + boundary - 1 end
-        end
-        chunks[#chunks + 1] = text:sub(first, last)
-        first = last + 1
-    end
-    return chunks
-end
-
--- Focused tests use the pure splitter without constructing WoW frames.
-M._SplitExportText = SplitExportText
 
 -- Prefer the addon's keyed scheduler. Focused UI tests can load this module
 -- before Scheduler.Init, so retain one shared fallback frame instead of
@@ -141,8 +115,8 @@ end
 local function StopExport()
     exportGeneration = exportGeneration + 1
     exportJob = nil
-    exportChunks, exportChunkIndex = nil, 0
     CancelAfter("log-viewer.export-finish")
+    CancelAfter("log-viewer.export-select")
     if exportRunner then
         exportRunner:SetScript("OnUpdate", nil)
         exportRunner:Hide()
@@ -150,36 +124,25 @@ local function StopExport()
     if exportButton then exportButton:SetText("Copy Full Diagnostic Log") end
 end
 
-local function ShowExportChunk(index)
-    if type(exportChunks) ~= "table" or #exportChunks == 0 then return false end
-    index = math.max(1, math.min(#exportChunks, tonumber(index) or 1))
-    exportChunkIndex = index
-    local header = string.format(
-        "NEXUS_DIAGNOSTIC_EXPORT_CHUNK %d/%d\nPaste all chunks in order; chunk markers are part of the export.\n\n",
-        index, #exportChunks)
-    local text = header .. tostring(exportChunks[index] or "")
-    editBox:SetText(text)
-    editBox:SetCursorPosition(0)
-    editBox:SetFocus()
-    editBox:HighlightText()
-    statusFS:SetText(string.format(
-        "Chunk %d/%d selected (%d chars) -- Ctrl-C, then click %s",
-        index, #exportChunks, #text,
-        index < #exportChunks and "Next Copy Chunk" or "First Copy Chunk"))
-    if exportButton then
-        exportButton:SetText(index < #exportChunks
-            and "Next Copy Chunk" or "First Copy Chunk")
-    end
-    return true
-end
-
 local function FinishExport(text)
     exportJob = nil
     if exportRunner then exportRunner:SetScript("OnUpdate", nil); exportRunner:Hide() end
-    exportChunks = SplitExportText(text, EXPORT_CHUNK_CHARS)
-    exportChunkIndex = 0
-    text = nil
-    ShowExportChunk(1)
+    text = tostring(text or "")
+    local n = #text
+    editBox:SetText(text)
+    statusFS:SetText(n .. " chars -- full log loaded; selecting...")
+    if exportButton then exportButton:SetText("Copy Full Diagnostic Log") end
+    local myGeneration = exportGeneration
+    -- Keep text layout and selection in different rendered frames. Both are
+    -- synchronous client operations, but separating them avoids combining two
+    -- large EditBox costs into one frame without dropping any export detail.
+    RunAfter("log-viewer.export-select", 0.01, function()
+        if myGeneration ~= exportGeneration or not editBox then return end
+        editBox:SetCursorPosition(0)
+        editBox:SetFocus()
+        editBox:HighlightText()
+        statusFS:SetText(n .. " chars -- complete log selected; Ctrl-C")
+    end)
 end
 
 local function StartExport()
@@ -206,7 +169,8 @@ local function StartExport()
     exportRunner:Show()
     local updateElapsed = 0
     exportRunner:SetScript("OnUpdate", function(self, elapsed)
-        if myGeneration ~= exportGeneration or not exportJob then self:SetScript("OnUpdate", nil); self:Hide(); return end
+        local runner = self or exportRunner
+        if myGeneration ~= exportGeneration or not exportJob then runner:SetScript("OnUpdate", nil); runner:Hide(); return end
         updateElapsed = updateElapsed + (tonumber(elapsed) or 0)
         -- Exactly one small coroutine slice per rendered frame. Each slice
         -- encodes only a handful of boards/audits, keeping frame time bounded
@@ -215,15 +179,15 @@ local function StartExport()
             local okResume, value = coroutine.resume(exportJob)
             if not okResume then
                 exportJob = nil
-                self:SetScript("OnUpdate", nil); self:Hide()
+                runner:SetScript("OnUpdate", nil); runner:Hide()
                 editBox:SetText("Diagnostic export failed: " .. tostring(value))
                 statusFS:SetText("export failed")
                 return
             end
             if coroutine.status(exportJob) == "dead" then
                 exportJob = nil
-                self:SetScript("OnUpdate", nil)
-                self:Hide()
+                runner:SetScript("OnUpdate", nil)
+                runner:Hide()
                 local finalText = value
                 RunAfter("log-viewer.export-finish", 0.01, function()
                     if myGeneration == exportGeneration then FinishExport(finalText) end
@@ -315,21 +279,13 @@ local function EnsureFrame()
     exportButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     exportButton:SetSize(148, 22)
     exportButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -12, 7)
+    frame._exportButton = exportButton
     exportButton:SetText("Copy Full Diagnostic Log")
-    exportButton:SetScript("OnClick", function()
-        if activeTab == "ai_export" and type(exportChunks) == "table"
-            and #exportChunks > 0 then
-            local nextIndex = exportChunkIndex + 1
-            if nextIndex > #exportChunks then nextIndex = 1 end
-            ShowExportChunk(nextIndex)
-        else
-            StartExport()
-        end
-    end)
+    exportButton:SetScript("OnClick", StartExport)
     exportButton:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText("Copy every retained decision and mismatch")
-        GameTooltip:AddLine("Creates one compact diagnostic block and selects it for Ctrl-C. The normal tabs stay shortened to prevent freezes.", 1, 1, 1, true)
+        GameTooltip:AddLine("Creates one complete diagnostic block and selects it for Ctrl-C. Text layout and selection run in separate frames to reduce the final hitch.", 1, 1, 1, true)
         GameTooltip:Show()
     end)
     exportButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -380,6 +336,7 @@ local function EnsureFrame()
     editBox:SetAutoFocus(false)
     editBox:SetFontObject(ChatFontNormal)
     editBox:SetWidth(646)
+    frame._editBox = editBox
     editBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     -- read-only in spirit: typing is harmless (nothing reads it back),
     -- but keep the text restorable via Refresh
@@ -388,6 +345,7 @@ local function EnsureFrame()
     statusFS = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     statusFS:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 12, 10)
     statusFS:SetJustifyH("LEFT")
+    frame._statusFS = statusFS
 
     frame:Hide()
     return frame
