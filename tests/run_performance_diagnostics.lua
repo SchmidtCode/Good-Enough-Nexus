@@ -4,11 +4,12 @@ local H = dofile("tests/harness.lua")
 local Performance = Nexus.Performance
 
 local definitions = Performance.Definitions()
-assert(#definitions == 22 and definitions[1] == "automation.step"
+assert(#definitions == 23 and definitions[1] == "automation.step"
     and definitions[2] == "automation.catalog"
     and definitions[10] == "automation.hud"
     and definitions[14] == "community.open"
-    and definitions[22] == "overlay.refresh",
+    and definitions[15] == "community.frame"
+    and definitions[23] == "overlay.refresh",
     "performance path registry is not fixed and ordered")
 
 Performance.Reset()

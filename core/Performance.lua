@@ -25,6 +25,7 @@ local PATH_ORDER = {
     "sync.update",
     "dps.update",
     "community.open",
+    "community.frame",
     "community.refresh",
     "community.import",
     "community.projection",

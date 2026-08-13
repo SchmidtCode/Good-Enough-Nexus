@@ -77,6 +77,7 @@ local virtualStats = {
     created=0, peakActive=0, active=0, results=0,
     dataBinds=0, scrollBinds=0, resizeBinds=0,
     dirtyMarks=0, deferredRefreshes=0, periodicSkips=0,
+    relatedScans=0, relatedHydrations=0,
     first=1, last=0, offset=0, maxOffset=0,
 }
 
@@ -482,7 +483,8 @@ local function FindRelatedBuild(serverTitle, echoes, old, author, store)
     local wantedTotal = 0
     for _, count in pairs(wanted) do wantedTotal = wantedTotal + count end
 
-    local function CandidateScore(candidate, candidateId)
+    local function CandidateScore(candidate, candidateId, preferred)
+        virtualStats.relatedScans = virtualStats.relatedScans + 1
         if not candidate or candidate.importedSavedBuild then return nil end
         if authorKey ~= "" and NormalizeTitle(candidate.author) ~= authorKey then return nil end
         local currentOwner = CurrentOwnerKey()
@@ -495,12 +497,17 @@ local function FindRelatedBuild(serverTitle, echoes, old, author, store)
         end
         if exactKey and candidateKey == exactKey then return 100000, candidate end
 
-        -- BuildCatalog summaries deliberately omit Echo arrays. Hydrate only a
-        -- same-author candidate that survived the cheap ownership filters and
-        -- actually needs the older partial/subset matching fallback.
+        local sameTitle = titleKey ~= ""
+            and NormalizeTitle(candidate.title or candidate.serverTitle) == titleKey
+        -- A partial Saved Build cannot prove a relationship to every other
+        -- same-author loadout. Only hydrate a previously linked record or an
+        -- exact same-title candidate; broad author-wide hydration made opening
+        -- Builds copy dozens of 79-Echo records per server slot.
+        if not preferred and not sameTitle then return nil end
         if type(candidate.echoes) ~= "table" and candidateId ~= nil then
             candidate = LoadBuild(candidateId)
             if not candidate then return nil end
+            virtualStats.relatedHydrations = virtualStats.relatedHydrations + 1
         end
 
         local have, overlap = EchoPresence(candidate.echoes), 0
@@ -510,7 +517,6 @@ local function FindRelatedBuild(serverTitle, echoes, old, author, store)
         -- while the published leaderboard build contains the complete 79-Echo
         -- loadout. Treat the locked set as a subset match, but require the same
         -- owner and strongly prefer the same server/build title.
-        local sameTitle = titleKey ~= "" and NormalizeTitle(candidate.title or candidate.serverTitle) == titleKey
         local required = math.min(8, math.max(1, math.floor(wantedTotal / 2)))
         if overlap < required then return nil end
         if sameTitle then return 10000 + overlap, candidate end
@@ -527,17 +533,21 @@ local function FindRelatedBuild(serverTitle, echoes, old, author, store)
     if old and old.recordBuildId then preferred[#preferred + 1] = old.recordBuildId end
     if old and old.publishedBuildId then preferred[#preferred + 1] = old.publishedBuildId end
     local best, bestScore = nil, -1
+    local preferredIds = {}
     for _, candidateId in ipairs(preferred) do
+        preferredIds[candidateId] = true
         local candidate = store[candidateId] or LoadBuild(candidateId)
-        local score, resolved = CandidateScore(candidate, candidateId)
+        local score, resolved = CandidateScore(candidate, candidateId, true)
         if score and score > bestScore then
             best, bestScore = resolved or candidate, score
         end
     end
     for candidateId, candidate in pairs(store) do
-        local score, resolved = CandidateScore(candidate, candidateId)
-        if score and score > bestScore then
-            best, bestScore = resolved or candidate, score
+        if not preferredIds[candidateId] then
+            local score, resolved = CandidateScore(candidate, candidateId, false)
+            if score and score > bestScore then
+                best, bestScore = resolved or candidate, score
+            end
         end
     end
     return best
@@ -1595,6 +1605,13 @@ local function EnsureDetailPanel(parent)
 end
 
 local function RefreshDetailPanel(build)
+    if not detailPanel and build then
+        EnsureDetailPanel(frame)
+        detailPanel:ClearAllPoints()
+        detailPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 520, -130)
+        detailPanel:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -20, 20)
+        detailPanel:SetFrameLevel(frame:GetFrameLevel() + 10)
+    end
     if not detailPanel then return end
     if not build then detailPanel:Hide(); return end
 
@@ -2532,12 +2549,8 @@ local function EnsureFrame()
     emptyState:Hide()
     frame._emptyState = emptyState
 
-    -- Right: detail panel ------------------------------------------------
-    EnsureDetailPanel(frame)
-    detailPanel:ClearAllPoints()
-    detailPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 520, -130)
-    detailPanel:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -20, 20)
-    detailPanel:SetFrameLevel(frame:GetFrameLevel() + 10)
+    -- Right-side details are allocated lazily on the first View click. The
+    -- panel owns 80 Echo textures and is unnecessary for the initial list.
 
     -- Style the static browser controls once. Dynamic cards are created from
     -- an already dark template and do not need a full recursive restyle on
@@ -3322,7 +3335,7 @@ end
 function M.GetViewMode() return "builds" end
 
 function M.Show()
-    EnsureFrame()
+    Measure("community.frame", EnsureFrame)
     local receiving = Nexus.Sync and Nexus.Sync.IsReceiving
         and Nexus.Sync.IsReceiving() or false
     if receiving then M.MarkDataDirty()
@@ -3342,7 +3355,6 @@ function M.ShowBuild(id)
         and Nexus.Sync and Nexus.Sync.RequestLoadout then
         Nexus.Sync.RequestLoadout(id)
     end
-    M.Refresh()
 end
 
 function M.Hide() if frame then frame:Hide() end end
