@@ -162,19 +162,22 @@ end
 local function EnsureDefaultMode()
     NexusDB = NexusDB or {}
     if NexusDB.soulAshHudMode ~= "server" and NexusDB.soulAshHudMode ~= "nexus" then
-        NexusDB.soulAshHudMode = "nexus"
+        NexusDB.soulAshHudMode = Nexus.Release
+            and Nexus.Release.preferStockServerHud == true
+            and "server" or "nexus"
     end
 end
 
 local function UsingNexusHud()
     EnsureDefaultMode()
-    -- Beta 3 restored Project Ebonhold's stock HUD. Keep that independent fix
-    -- when Community returns; do not rewrite the user's saved preference so a
-    -- later release can re-enable the Nexus mirror without a migration.
-    if Nexus.Release and (Nexus.Release.emergencyCommunityOff == true
-        or Nexus.Release.preferStockServerHud == true) then
+    -- Emergency isolation is a hard override. The Beta 3 stock-HUD flag is
+    -- only a safe default: once the player explicitly chooses a HUD in the
+    -- Nexus menu, honor that choice instead of making the button a no-op.
+    if Nexus.Release and Nexus.Release.emergencyCommunityOff == true then
         return false
     end
+    if Nexus.Release and Nexus.Release.preferStockServerHud == true
+        and NexusDB.soulAshHudModeExplicit ~= true then return false end
     return NexusDB.soulAshHudMode == "nexus"
 end
 
@@ -267,8 +270,13 @@ end
 function M.SetMode(mode)
     NexusDB = NexusDB or {}
     NexusDB.soulAshHudMode = mode == "server" and "server" or "nexus"
+    NexusDB.soulAshHudModeExplicit = true
+    -- Capture PEH's current text before hiding its root so the first Nexus HUD
+    -- repaint can merge Difficulty, Soul Ash, multiplier, and Intensity now.
+    if NexusDB.soulAshHudMode == "nexus" then M.GetSummary() end
     ApplyVisibility()
     if Nexus.Panel and Nexus.Panel.Refresh then Nexus.Panel.Refresh() end
+    return NexusDB.soulAshHudMode
 end
 
 local function CollectClickableChildren(frame, out, seen, depth)
