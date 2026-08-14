@@ -138,6 +138,11 @@ assert(#combinedAgain == #combined and boardReads == boardReadsAfter,
 combinedAgain[1].player = "mutated"
 assert(P.Leaderboard("combined", {classFilter="MAGE",search="player"})[1].player ~= "mutated",
     "caller mutated cached leaderboard projection")
+P.Leaderboard("combined", {classFilter="MAGE",search="player1"})
+P.Leaderboard("dummy", {classFilter="ALL",search=""})
+P.Leaderboard("lk", {classFilter="ALL",search=""})
+assert(boardReads == boardReadsAfter,
+    "search/filter/category changes rematerialized revision-stable DPS boards")
 
 local mainBoards = boards
 boards = {

@@ -1655,16 +1655,21 @@ local function RefreshDetailPanel(build)
     -- icons still populate for a build nobody's posted a score for yet.
     local D = Nexus.DpsCapture
     local lockedEchoes = nil
-    if D and D.GetDpsBoard then
+    if D then
         for _, cat in ipairs({"dummy","lk"}) do
-            local ok2, board = pcall(D.GetDpsBoard, cat)
-            if ok2 and board then
-                for _, dpsRow in ipairs(board) do
-                    if dpsRow.buildId == build.id and dpsRow.lockedEchoes then
-                        lockedEchoes = dpsRow.lockedEchoes
-                        break
-                    end
-                end
+            local ok2, dpsRow = false, nil
+            if type(D.GetBestRecordForIdentity) == "function" then
+                ok2, dpsRow = pcall(D.GetBestRecordForIdentity,
+                    build.id, build.fingerprint, build.fingerprintHash, cat)
+            end
+            if (not ok2 or not dpsRow)
+                and type(D.GetBestRecordForEchoes) == "function"
+                and type(build.echoes) == "table" then
+                ok2, dpsRow = pcall(
+                    D.GetBestRecordForEchoes, build.echoes, cat)
+            end
+            if ok2 and type(dpsRow) == "table" and dpsRow.lockedEchoes then
+                lockedEchoes = dpsRow.lockedEchoes
             end
             if lockedEchoes then break end
         end

@@ -2,19 +2,19 @@
 --
 -- This module owns no frames, timers, SavedVariables, transport, or gameplay
 -- actions. It reads only the public BuildCatalog/DpsCapture surfaces and keeps
--- one last-good build and leaderboard projection per view kind.
+-- bounded last-good projections for the build and leaderboard views.
 
 Nexus = Nexus or {}
 local Projections = {}
 Nexus.ViewProjections = Projections
 
-local caches = {builds={}, leaderboard={}}
+local caches = {builds={}, leaderboard={}, leaderboardSources={}}
 local MAX_REQUESTED_BUILD_ROWS = 100
 local counters = {
     builds={hits=0,rebuilds=0,failures=0,catalogWalks=0,dpsReads=0,
         sorts=0,defensiveCopies=0},
     leaderboard={hits=0,rebuilds=0,failures=0,boardReads=0,sorts=0,
-        defensiveCopies=0},
+        defensiveCopies=0,sourceHits=0,sourceRebuilds=0},
 }
 
 local function DeepCopy(value, seen)
@@ -351,8 +351,10 @@ local function Board(category)
     return rows
 end
 
+local LeaderboardSource
+
 local function CombinedRows()
-    local dummy, lk = Board("dummy"), Board("lk")
+    local dummy, lk = LeaderboardSource("dummy"), LeaderboardSource("lk")
     local dummyByKey, dummyByBuild = {}, {}
     for _, row in ipairs(dummy) do
         dummyByKey[RecordKey(row)] = row
@@ -397,9 +399,32 @@ local function CombinedRows()
     return out
 end
 
+local function LeaderboardSourceKey(category)
+    local revisions = Nexus and Nexus.Revisions or {}
+    return CacheKey({
+        Revision(revisions.BUILD_LIBRARY_CHANGED),
+        Revision(revisions.DPS_CHANGED),
+        category,
+    })
+end
+
+LeaderboardSource = function(category)
+    local key = LeaderboardSourceKey(category)
+    local cache = caches.leaderboardSources[category]
+    if cache and cache.key == key and type(cache.rows) == "table" then
+        counters.leaderboard.sourceHits =
+            counters.leaderboard.sourceHits + 1
+        return cache.rows
+    end
+    local rows = category == "combined" and CombinedRows() or Board(category)
+    caches.leaderboardSources[category] = {key=key, rows=rows}
+    counters.leaderboard.sourceRebuilds =
+        counters.leaderboard.sourceRebuilds + 1
+    return rows
+end
+
 local function LeaderboardProjection(filters)
-    local source = filters.category == "combined"
-        and CombinedRows() or Board(filters.category)
+    local source = LeaderboardSource(filters.category)
     local out = {}
     for _, row in ipairs(source) do
         local build = type(row.build) == "table" and row.build or {}
@@ -442,7 +467,7 @@ function Projections.Leaderboard(category, filters)
 end
 
 function Projections.Reset()
-    caches = {builds={}, leaderboard={}}
+    caches = {builds={}, leaderboard={}, leaderboardSources={}}
 end
 
 function Projections.Stats()

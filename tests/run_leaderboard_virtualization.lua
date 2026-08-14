@@ -101,6 +101,30 @@ assert(tickAfter.statusRefreshes==tickBefore.statusRefreshes+10
     and statusReads>=11,
     "status ticks rebuilt Leaderboard data, detail, projection, or theme")
 
+-- Search input coalesces rapid keystrokes, then filters the cached category
+-- source without rematerializing the full DPS board.
+local searchRefreshes=L.VirtualStats().dataRefreshes
+local searchBoardReads=boardReads
+NexusLeaderboardSearch:SetText("Player 001")
+NexusLeaderboardSearch:GetScript("OnTextChanged")()
+assert(L.VirtualStats().dataRefreshes==searchRefreshes,
+    "Leaderboard search rebuilt synchronously on a keystroke")
+onUpdate(NexusLeaderboardFrame,0.10)
+assert(L.VirtualStats().dataRefreshes==searchRefreshes,
+    "Leaderboard search fired before its debounce window")
+onUpdate(NexusLeaderboardFrame,0.10)
+assert(L.VirtualStats().dataRefreshes==searchRefreshes+1
+    and L.VirtualStats().results==1 and boardReads==searchBoardReads,
+    string.format("debounced Leaderboard search mismatch refresh=%d/%d results=%d reads=%d/%d",
+        L.VirtualStats().dataRefreshes,searchRefreshes+1,
+        L.VirtualStats().results,boardReads,searchBoardReads))
+NexusLeaderboardSearch:SetText("")
+NexusLeaderboardSearch:GetScript("OnTextChanged")()
+onUpdate(NexusLeaderboardFrame,0.20)
+assert(L.VirtualStats().results==150 and boardReads==searchBoardReads,
+    "clearing Leaderboard search rematerialized its DPS board")
+local dataBinds=L.VirtualStats().dataBinds
+
 local virtualScroll=NexusLeaderboardFrame._virtualListScrollFrame
 local onSizeChanged=virtualScroll and virtualScroll:GetScript("OnSizeChanged")
 assert(type(onSizeChanged)=="function","Leaderboard viewport resize did not install a rebind")
@@ -108,7 +132,7 @@ virtualScroll:SetHeight(200)
 onSizeChanged(virtualScroll,590,200)
 local resized=L.VirtualStats()
 assert(resized.active==7 and resized.resizeBinds==1
-    and resized.dataBinds==tickAfter.dataBinds,
+    and resized.dataBinds==dataBinds,
     "Leaderboard viewport growth rebuilt data or escaped its bounded window")
 virtualScroll:SetHeight(100)
 onSizeChanged(virtualScroll,590,100)
@@ -116,7 +140,6 @@ assert(L.VirtualStats().active<=5 and L.VirtualStats().resizeBinds==2,
     "Leaderboard viewport shrink did not clamp the bounded window")
 
 -- Every exact rank is reachable with one bounded reusable row pool.
-local dataBinds=tickAfter.dataBinds
 for index=1,150 do
     assert(L.ScrollTo((index-1)*40))
     local window=L.VirtualStats()

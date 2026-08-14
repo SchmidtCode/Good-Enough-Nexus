@@ -1153,6 +1153,18 @@ function DPS.GetLeaderboardForIdentity(buildId, fingerprint, fingerprintHash, ca
     return SortedEntries(GlobalForIdentity(buildId, key, hash, category))
 end
 
+-- Detail-facing lookup. Unlike the compact leaderboard result above, this
+-- returns one defensive full record so locked-Echo metadata can be rendered
+-- without materializing and scanning every public character row.
+function DPS.GetBestRecordForIdentity(buildId, fingerprint, fingerprintHash,
+                                      category)
+    local key = type(fingerprint) == "string" and fingerprint or nil
+    local hash = fingerprintHash ~= nil and tostring(fingerprintHash) or nil
+    if not key and not hash then return nil end
+    return DPS.MaterializeRecord(
+        GlobalForIdentity(buildId, key, hash, category))
+end
+
 function DPS.IdentityLookupStats()
     local stats = identityIndex.stats
     return {

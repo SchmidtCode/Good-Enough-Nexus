@@ -16,6 +16,7 @@ local currentRows = {}
 local renderRowsWindow, applySelection, setScrollValue
 local rowBinding = false
 local scrollValue, scrollMax = 0, 0
+local searchPending, searchElapsed = false, 0
 local virtualStats = {
     created=0, active=0, peakActive=0, results=0,
     dataRefreshes=0, statusRefreshes=0, detailRenders=0,
@@ -25,6 +26,7 @@ local virtualStats = {
 
 local ROW_H = 38
 local LIST_W = 590
+local SEARCH_DEBOUNCE = 0.18
 local CLASS_COLOR = {
     DEATHKNIGHT={0.77,0.12,0.23}, DRUID={1.00,0.49,0.04}, HUNTER={0.67,0.83,0.45},
     MAGE={0.25,0.78,0.92}, PALADIN={0.96,0.55,0.73}, PRIEST={1,1,1},
@@ -413,7 +415,7 @@ local function EnsureFrame()
     local board=MakeNavButton(frame,"Leaderboard",102); board:SetPoint("LEFT",builds,"RIGHT",4,0); board:SetText("|cffffd200Leaderboard|r"); board:Disable()
     local wish=MakeNavButton(frame,"Wishlists",92); wish:SetPoint("LEFT",board,"RIGHT",4,0); wish:SetScript("OnClick",function() M.Hide(); if Nexus.WishlistEditor then Nexus.WishlistEditor.Show() end end)
 
-    searchBox=CreateFrame("EditBox","NexusLeaderboardSearch",frame,"InputBoxTemplate"); searchBox:SetSize(265,22); searchBox:SetPoint("TOPLEFT",18,-50); searchBox:SetAutoFocus(false); searchBox:SetScript("OnTextChanged",function() M.RefreshData() end)
+    searchBox=CreateFrame("EditBox","NexusLeaderboardSearch",frame,"InputBoxTemplate"); searchBox:SetSize(265,22); searchBox:SetPoint("TOPLEFT",18,-50); searchBox:SetAutoFocus(false); searchBox:SetScript("OnTextChanged",function() searchPending=true; searchElapsed=0 end)
     local ph=frame:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); ph:SetPoint("LEFT",searchBox,"LEFT",6,0); ph:SetText("Search player or build...")
     searchBox:SetScript("OnEditFocusGained",function() ph:Hide() end); searchBox:SetScript("OnEditFocusLost",function(self) if self:GetText()=="" then ph:Show() end end)
 
@@ -470,7 +472,17 @@ local function EnsureFrame()
     listScroll:SetScript("OnMouseDown",function() classMenu:Hide() end)
     EnsureDetail(frame)
     frame:SetScript("OnMouseDown",function(self) if classMenu:IsShown() then classMenu:Hide() end end)
-    frame:SetScript("OnUpdate",function(self,elapsed) self._tick=(self._tick or 0)+elapsed; if self._tick>1 then self._tick=0; M.RefreshStatus() end end)
+    frame:SetScript("OnUpdate",function(self,elapsed)
+        if searchPending then
+            searchElapsed=searchElapsed+elapsed
+            if searchElapsed>=SEARCH_DEBOUNCE then
+                searchPending,searchElapsed=false,0
+                M.RefreshData()
+            end
+        end
+        self._tick=(self._tick or 0)+elapsed
+        if self._tick>1 then self._tick=0; M.RefreshStatus() end
+    end)
     return frame
 end
 
@@ -500,6 +512,7 @@ end
 
 function M.RefreshData()
     if not frame or not frame:IsShown() then return end
+    searchPending,searchElapsed=false,0
     local tabs={{dummyBtn,"dummy"},{lkBtn,"lk"},{combinedBtn,"combined"}}
     for _,v in ipairs(tabs) do if category==v[2] then v[1].active:Show() else v[1].active:Hide() end; v[1].text:SetTextColor(category==v[2] and 1 or 0.82, category==v[2] and 0.82 or 0.82, category==v[2] and 0 or 0.82) end
     classBtn.text:SetText(classFilter=="ALL" and "All Classes" or CLASS_LABEL[classFilter] or classFilter)
