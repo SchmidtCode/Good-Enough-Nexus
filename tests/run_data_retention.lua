@@ -237,8 +237,10 @@ local crossRealm = {
         communityRetentionMaxPerAuthor=1},
     communityBuilds={}, syncTombstones={},
     dpsCapture={personalBest={},buildBest={},characterBest={
-        dummy={a={player="Twin-RealmA",buildId="same",fingerprint="same",dps=10}},
-        lk={b={player="Twin-RealmB",buildId="same",fingerprint="same",dps=20}},
+        dummy={a={player="Twin",ownerKey="twin@realma",realm="realma",
+            buildId="same",fingerprint="same",dps=10}},
+        lk={b={player="Twin",ownerKey="twin@realmb",realm="realmb",
+            buildId="same",fingerprint="same",dps=20}},
     }},
 }
 local crossSummary = Nexus.DataRetention.Enforce(crossRealm, "realm identity")

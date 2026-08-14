@@ -98,6 +98,7 @@ local AUTO_SYNC_MAX_PASSES  = 0   -- retained for diagnostics; convergence now e
 local PENDING_TTL           = 30  -- inactivity cap for pending response work
 local PENDING_MAX_AGE       = 300 -- absolute cap even while backpressured
 local RESPONSE_QUEUE_HEADROOM = 8 -- do no response preparation near saturation
+local MAX_FUTURE_SKEW = 300 -- tolerate ordinary clock skew, reject poisoned epochs
 
 ------------------------------------------------------------------------
 -- Module state
@@ -364,6 +365,7 @@ function Sync.WorkState()
         pendingResponses=pendingResponseCount,
         pendingLoadouts=pendingLoadoutCount,
         pendingDeletes=pendingDeleteCount,
+        manualPublishing=Responder.manualPublish ~= nil,
         knownPeers=peerCount,
         maxOutboundQueue=MAX_OUTBOUND_QUEUE,
         maxControlQueue=MAX_CONTROL_QUEUE,
@@ -458,6 +460,7 @@ function Sync._Suspend(reason)
     inflight, dpsInflight = {}, {}
     pendingResponses, pendingLoadouts = {}, {}
     legacyRecoveryQueue, legacyRecoveryHead, legacyRecoveryTail = {}, 1, 0
+    Responder.manualPublish = nil
     receiveWindowUntil = 0
     autoConverge.active = false
     pendingStatusReply = nil
@@ -478,6 +481,20 @@ end
 local function FiniteNumber(value)
     return type(value) == "number" and value == value
         and value < math.huge and value > -math.huge
+end
+
+function Sync._WallNow()
+    if type(time) ~= "function" then return 0 end
+    local ok, value = pcall(time)
+    value = ok and tonumber(value) or 0
+    return FiniteNumber(value) and value > 0 and value or 0
+end
+
+function Sync._ValidRemoteEpoch(value, minimum)
+    value = tonumber(value)
+    if not FiniteNumber(value) or value < (minimum or 0) then return false end
+    local now = Sync._WallNow()
+    return now <= 1000000000 or value <= now + MAX_FUTURE_SKEW
 end
 
 local function ValidText(value, maxBytes, allowEmpty)
@@ -707,6 +724,7 @@ local function CompactDecode(data)
     local ownerKey = data.o or data.ownerKey
     local class  = data.c or data.class
     local lastMod = tonumber(data.m or data.lastModified or data.postedAt) or 0
+    local postedAt = tonumber(data.postedAt) or lastMod
     local rawE   = data.e or data.echoes
     if not (ValidIdentifier(data.id, MAX_BUILD_ID_BYTES)
         and type(title) == "string" and title ~= ""
@@ -714,6 +732,8 @@ local function CompactDecode(data)
         and type(rawE) == "table" and #rawE <= MAX_BUILD_ECHOES) then
         return nil
     end
+    if not Sync._ValidRemoteEpoch(lastMod, 0)
+        or not Sync._ValidRemoteEpoch(postedAt, 0) then return nil end
     if not OwnerKeyMatchesAuthor(ownerKey, author) then return nil end
     local echoes = {}
     for _, e in ipairs(rawE) do
@@ -747,7 +767,7 @@ local function CompactDecode(data)
         description = type(data.d or data.description) == "string"
                       and (data.d or data.description):sub(1, 4000) or "",
         lastModified = lastMod,
-        postedAt     = tonumber(data.postedAt) or lastMod,
+        postedAt     = postedAt,
         echoes       = echoes,
         autoDps      = data.x == 1 or data.autoDps == true,
         link         = (type(data.lk) == "string" and data.lk ~= "") and data.lk or nil,
@@ -1204,8 +1224,7 @@ local function StoreSummary(data, transportSender)
         or not ValidPeerName(data.a)
         or not ValidHash(tostring(data.h or ""))
         or (data.lh ~= nil and not ValidHash(tostring(data.lh)))
-        or not FiniteNumber(tonumber(data.m))
-        or tonumber(data.m) < 0
+        or not Sync._ValidRemoteEpoch(data.m, 0)
         or (data.n ~= nil and (not FiniteNumber(tonumber(data.n))
             or tonumber(data.n) < 0 or tonumber(data.n) > 10000)) then
         return false, false
@@ -2040,6 +2059,143 @@ local function StoreReceivedBuild(payload, ownerVerified, relaySender)
     Sync._RequestRetention("full build received")
 end
 
+function Responder.StartManualPublish()
+    Responder.manualPublish = {
+        phase="build", cursor=nil, pending=nil,
+        dpsProgress={}, scanned=0, sentBuilds=0,
+        sentTombstones=0, sentDps=0, restarts=0,
+    }
+    LogEvent("SYNC", "manual outbound reconciliation started")
+end
+
+function Responder.FinishManualPublish()
+    local state = Responder.manualPublish
+    if not state then return end
+    LogEvent("SYNC", "manual outbound reconciliation complete: %d build(s), %d delete(s), %d DPS record(s)",
+        tonumber(state.sentBuilds) or 0,
+        tonumber(state.sentTombstones) or 0,
+        tonumber(state.sentDps) or 0)
+    Responder.manualPublish = nil
+end
+
+function Responder.AdvanceManualCursor(state, id)
+    state.cursor = id
+    state.pending = nil
+end
+
+function Responder.PumpManualBuilds(state)
+    local catalog = Catalog()
+    if not (catalog and type(catalog.SyncDeltaNext) == "function") then
+        state.phase, state.cursor, state.pending = "tombstone", nil, nil
+        return
+    end
+    if not state.pending then
+        local ok, id, build, done = pcall(catalog.SyncDeltaNext, state.cursor)
+        if not ok then
+            state.restarts = (tonumber(state.restarts) or 0) + 1
+            state.cursor = nil
+            if state.restarts > 3 then
+                LogEvent("SYNC", "manual build scan abandoned after catalog churn")
+                state.phase = "tombstone"
+            end
+            return
+        end
+        if done then
+            state.phase, state.cursor = "tombstone", nil
+            return
+        end
+        state.scanned = (tonumber(state.scanned) or 0) + 1
+        if not build or not SamePeer(build.author, MyName()) then
+            state.cursor = id
+            return
+        end
+        local prepared, why = Responder.PrepareSummary(build)
+        if not prepared then
+            LogEvent("TX", "manual publish skipped build '%s': %s",
+                tostring(id), tostring(why or "invalid summary"))
+            state.cursor = id
+            return
+        end
+        state.pending = {id=id, message=prepared.messages[1]}
+    end
+    local pending = state.pending
+    local queued, why = Enqueue(pending.message)
+    if queued then
+        state.sentBuilds = state.sentBuilds + 1
+        Responder.AdvanceManualCursor(state, pending.id)
+    elseif why ~= "sync queue full" then
+        LogEvent("TX", "manual publish dropped build '%s': %s",
+            tostring(pending.id), tostring(why or "invalid packet"))
+        Responder.AdvanceManualCursor(state, pending.id)
+    end
+end
+
+function Responder.PumpManualTombstones(state)
+    if not state.pending then
+        local ok, id, tomb = pcall(next, tombstones or {}, state.cursor)
+        if not ok then
+            state.restarts = (tonumber(state.restarts) or 0) + 1
+            state.cursor = nil
+            if state.restarts > 6 then
+                LogEvent("SYNC", "manual delete scan abandoned after catalog churn")
+                state.phase = "dps"
+            end
+            return
+        end
+        if id == nil then
+            state.phase, state.cursor = "dps", nil
+            return
+        end
+        if not SamePeer(TombAuthor(tomb), MyName())
+            or not Sync._ValidRemoteEpoch(TombStamp(tomb), 1) then
+            state.cursor = id
+            return
+        end
+        state.pending = {
+            id=id, tomb=tomb, message=DeleteWireMessage(id, tomb),
+        }
+    end
+    local pending = state.pending
+    local queued, why = Enqueue(pending.message)
+    if queued then
+        state.sentTombstones = state.sentTombstones + 1
+        ClearPendingDelete(pending.id, pending.tomb)
+        Responder.AdvanceManualCursor(state, pending.id)
+    elseif why ~= "sync queue full" then
+        LogEvent("TX", "manual publish dropped delete '%s': %s",
+            tostring(pending.id), tostring(why or "invalid packet"))
+        Responder.AdvanceManualCursor(state, pending.id)
+    end
+end
+
+function Responder.PumpManualDps(state)
+    local dps = Nexus and Nexus.DpsCapture
+    if not (dps and type(dps.BroadcastAllBuildBests) == "function") then
+        Responder.FinishManualPublish()
+        return
+    end
+    local ok, sent, complete, _, why = pcall(dps.BroadcastAllBuildBests,
+        "manual-local", nil, state.dpsProgress, 1, true)
+    if not ok then
+        LogEvent("SYNC", "manual DPS reconciliation failed: %s", tostring(sent))
+        Responder.FinishManualPublish()
+        return
+    end
+    state.sentDps = state.sentDps + (tonumber(sent) or 0)
+    if complete then Responder.FinishManualPublish()
+    elseif why and why ~= "sync queue full" then
+        LogEvent("SYNC", "manual DPS reconciliation deferred: %s", tostring(why))
+    end
+end
+
+function Responder.PumpManualPublish()
+    local state = Responder.manualPublish
+    if not state or Responder.Backpressured() then return end
+    if state.phase == "build" then Responder.PumpManualBuilds(state)
+    elseif state.phase == "tombstone" then Responder.PumpManualTombstones(state)
+    else Responder.PumpManualDps(state) end
+end
+
 local function HandleComplete(buildId, lastMod, fullData, transportSender)
     local json = Codec.Base64Decode(fullData)
     if not json then
@@ -2487,9 +2643,8 @@ local function HandleDelete(sender, buildId, stamp, originAuthor)
         return false
     end
     local deleteStamp = tonumber(stamp) or 0
-    local wallNow = (time and tonumber(time())) or 0
-    if wallNow > 1000000000 and deleteStamp > wallNow + 300 then
-        LogEvent("RX", "REJECT future delete stamp for '%s' from %s",
+    if not Sync._ValidRemoteEpoch(deleteStamp, 1) then
+        LogEvent("RX", "REJECT invalid delete stamp for '%s' from %s",
             tostring(buildId), tostring(sender))
         return false
     end
@@ -2810,6 +2965,7 @@ local function QueueBusy()
     if next(inflight) or next(dpsInflight) then return true end
     if next(pendingResponses) or next(pendingLoadouts) then return true end
     if PendingDeleteCount() > 0 then return true end
+    if Responder.manualPublish then return true end
     if legacyRecoveryHead <= legacyRecoveryTail
         and legacyRecoveryQueue[legacyRecoveryHead] then return true end
     return false
@@ -2846,10 +3002,12 @@ function Sync.RequestSync()
     autoConverge.active = true
     autoConverge.pass = 0
     autoConverge.stable = 0
+    if mode == "manual" then Responder.StartManualPublish() end
     local ok, why = BeginConvergencePass()
     if not ok then
         autoConverge.active = false
         if mode == "manual" then
+            Responder.manualPublish = nil
             manualSessionActive = false
             Sync._LeaveChannel(why or "manual sync failed")
         end
@@ -2866,6 +3024,7 @@ local function SyncWorkCounts()
         receivingRecords = 0,
         preparing = 0,
         recovery = 0,
+        publishing = Responder.manualPublish and 1 or 0,
         pass = tonumber(autoConverge.pass) or 0,
     }
     for i = controlQueueHead, controlQueueTail do
@@ -2879,6 +3038,7 @@ local function SyncWorkCounts()
     for _ in pairs(pendingResponses) do work.preparing = work.preparing + 1 end
     for _ in pairs(pendingLoadouts) do work.preparing = work.preparing + 1 end
     work.preparing = work.preparing + PendingDeleteCount()
+        + work.publishing
     if legacyRecoveryHead <= legacyRecoveryTail
         and legacyRecoveryQueue[legacyRecoveryHead] then
         for i = legacyRecoveryHead, legacyRecoveryTail do
@@ -2990,6 +3150,7 @@ function Sync.SetMode(value)
     local mode = policy and type(policy.SetMode) == "function"
         and policy.SetMode(value) or tostring(value or "automatic"):lower()
     manualSessionActive = false
+    Responder.manualPublish = nil
     autoConverge.active = false
     if mode == "automatic" then
         autoSyncPending, autoSyncElapsed = true, 0
@@ -3055,6 +3216,7 @@ function Sync.OnUpdate(elapsed)
     ProcessPendingResponses(elapsed)
     PumpLegacyRecovery(elapsed)
     if not Sync._pendingDeleteScheduled then PumpPendingDeletes(elapsed) end
+    Responder.PumpManualPublish()
     PumpQueue(elapsed)
     if Sync.FlushStatusReply then Sync.FlushStatusReply() end
     if autoSyncPending then
@@ -3224,6 +3386,7 @@ function Sync.Init(codec, adapter)
         end
     end
     manualSessionActive = false
+    Responder.manualPublish = nil
     suspendReason = nil
     autoSyncPending = Sync.Mode() == "automatic"
     autoSyncElapsed = 0

@@ -6,6 +6,7 @@ dofile("core/Codec.lua")
 dofile("core/SyncPolicy.lua")
 dofile("core/Sync.lua")
 
+time = function() return 50000 end
 NexusDB = { settings={syncMode="off"}, chars={} }
 Nexus.Store.Init()
 local Sync = Nexus.Sync
@@ -23,6 +24,26 @@ assert(not Sync.HandleIncoming("WLNP|Peer|1.20.0", "Peer"),
 Sync.SetMode("manual")
 assert(Sync.GetEffectiveState().key == "manual-idle" and not Sync.IsConnected(),
     "Manual mode did background transport work")
+local manualBuild = {
+    id="manual-local", title="Manual Local", author="Boganic",
+    ownerKey="boganic@ebonhold", class="MAGE", isMine=true,
+    postedAt=50000, lastModified=50000,
+    echoes={{spellId=200100,quality=3,stacks=1}},
+}
+assert(Nexus.BuildCatalog.Put(manualBuild),
+    "Manual publication fixture was not stored durably")
+assert(not Sync.BroadcastBuild(manualBuild),
+    "Manual idle unexpectedly sent an immediate build broadcast")
+local deletedBuild = {
+    id="manual-delete", title="Manual Delete", author="Boganic",
+    ownerKey="boganic@ebonhold", class="MAGE", isMine=true,
+    postedAt=50001, lastModified=50001,
+    echoes={{spellId=200101,quality=3,stacks=1}},
+}
+assert(Nexus.BuildCatalog.Put(deletedBuild),
+    "Manual delete fixture was not stored durably")
+assert(not Sync.BroadcastDelete(deletedBuild),
+    "Manual idle unexpectedly sent an immediate delete")
 H.resting = false
 assert(not Sync.RequestSync() and not Sync.IsConnected(),
     "Manual Sync started while not resting")
@@ -30,10 +51,24 @@ H.resting = true
 assert(Sync.RequestSync() and Sync.IsConnected()
     and Sync.WorkState().outbound > 0,
     "Manual Sync did not start after an explicit safe request")
+H.sentChatMessages = {}
+for _ = 1, 12 do
+    H.now = H.now + 1.2
+    Sync.OnUpdate(1.2)
+end
+local sentBuild, sentDelete = false, false
+for _, message in ipairs(H.sentChatMessages) do
+    sentBuild = sentBuild or message.text:find("WLBI||Boganic||", 1, true) ~= nil
+    sentDelete = sentDelete
+        or message.text:find("WLRD||Boganic||manual-delete||", 1, true) ~= nil
+end
+assert(sentBuild and sentDelete,
+    "Manual Sync Now did not publish durable local build/delete deltas")
 
 H.inCombat = true
 Sync.ContextChanged("combat")
 assert(not Sync.IsConnected() and Sync.WorkState().outbound == 0
+    and not Sync.WorkState().manualPublishing
     and Sync.GetEffectiveState().key == "suspended",
     "combat suspension retained a channel or queued burst")
 

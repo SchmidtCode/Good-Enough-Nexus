@@ -77,10 +77,29 @@ local function PlayerKey(v)
     return tostring(v or "?"):lower():gsub("%s+", "")
 end
 
+local function CharacterKey(row)
+    row = type(row) == "table" and row or {}
+    if type(row.ownerKey) == "string" then
+        local name, realm = row.ownerKey:match("^([^@]+)@([^@]+)$")
+        name = PlayerKey(name)
+        realm = tostring(realm or ""):lower():gsub("%s+", "")
+        if name ~= "?" and realm ~= "" and realm ~= "unknown" then
+            return name .. "@" .. realm
+        end
+    end
+    local realm = tostring(row.realm or ""):lower():gsub("%s+", "")
+    if realm ~= "" and realm ~= "unknown" then
+        local name = PlayerKey(row.player):match("^([^-]+)")
+            or PlayerKey(row.player)
+        return name .. "@" .. realm
+    end
+    return PlayerKey(row.player)
+end
+
 local function RecordKey(row)
     if not row then return "" end
     local identity = row.fingerprint or row.buildId
-    return PlayerKey(row.player) .. "|" .. type(identity) .. ":"
+    return CharacterKey(row) .. "|" .. type(identity) .. ":"
         .. tostring(identity or "")
 end
 

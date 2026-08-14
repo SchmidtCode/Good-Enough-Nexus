@@ -84,7 +84,7 @@ assert(NexusDB == legacy and WishlistRealizerDB == nil,
 assert(NexusDB.settings == settings and NexusDB.chars.Hero == state,
     "migration replaced live settings or character tables")
 assert(NexusDB.settingsVersion == Store.SettingsVersion()
-    and NexusDB.settingsVersion == 4, "ordered migration version was not recorded")
+    and NexusDB.settingsVersion == 5, "ordered migration version was not recorded")
 assert(settings.autoPick == false and settings.autoActivate == false
     and settings.updateNotifications == false,
     "existing false preferences were overwritten by defaults")
@@ -193,5 +193,31 @@ local futureOnce = Copy(NexusDB)
 Store.Init()
 assert(Equal(NexusDB, futureOnce),
     "repeat initialization changed a future-version save")
+
+-- ADDON_LOADED can precede realm availability. Never persist or trust the
+-- temporary name@unknown identity; register the real key once it is known.
+local realmReady = false
+UnitName = function() return "Earlyhero" end
+GetNormalizedRealmName = function()
+    return realmReady and "Real Realm" or nil
+end
+GetRealmName = function() return nil end
+NexusDB = {
+    settingsVersion=4, settings={}, chars={},
+    accountCharacters={
+        ["earlyhero@unknown"]={name="Earlyhero",realm="unknown"},
+    },
+}
+Store.Init()
+assert(NexusDB.settingsVersion == 5
+    and NexusDB.accountCharacters["earlyhero@unknown"] == nil
+    and Store.CurrentOwnerKey() == nil
+    and not Store.IsAccountOwnerKey("earlyhero@unknown"),
+    "startup retained or trusted a provisional unknown-realm identity")
+realmReady = true
+Store.State()
+assert(Store.IsAccountOwnerKey("earlyhero@realrealm")
+    and NexusDB.accountCharacters["earlyhero@unknown"] == nil,
+    "real realm identity was not registered after player data became ready")
 
 print("additive settings migrations preserve preferences, safety state, rename paths, and future fields -- OK")

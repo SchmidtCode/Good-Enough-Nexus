@@ -139,6 +139,25 @@ combinedAgain[1].player = "mutated"
 assert(P.Leaderboard("combined", {classFilter="MAGE",search="player"})[1].player ~= "mutated",
     "caller mutated cached leaderboard projection")
 
+local mainBoards = boards
+boards = {
+    dummy={{player="Twin",ownerKey="twin@realma",realm="realma",
+        buildId="same",fingerprint="same",class="MAGE",dps=100,
+        duration=60,ts=1,echoes={{spellId=1,count=1}}}},
+    lk={{player="Twin",ownerKey="twin@realmb",realm="realmb",
+        buildId="same",fingerprint="same",class="MAGE",dps=200,
+        duration=60,ts=1,echoes={{spellId=1,count=1}}}},
+}
+Revisions.Advance(Revisions.DPS_CHANGED, {scope="all"})
+assert(#P.Leaderboard("combined", {classFilter="ALL"}) == 0,
+    "Average projection cross-paired same-name characters from different realms")
+boards.lk[1].ownerKey, boards.lk[1].realm = "twin@realma", "realma"
+Revisions.Advance(Revisions.DPS_CHANGED, {scope="all"})
+assert(#P.Leaderboard("combined", {classFilter="ALL"}) == 1,
+    "Average projection did not pair matching realm-qualified records")
+boards = mainBoards
+Revisions.Advance(Revisions.DPS_CHANGED, {scope="all"})
+
 local healthyAll = Nexus.BuildCatalog.All
 Nexus.BuildCatalog.All = function() error("forced catalog failure") end
 Revisions.Advance(Revisions.BUILD_LIBRARY_CHANGED, {scope="all"})

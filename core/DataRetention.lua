@@ -96,12 +96,32 @@ local function PlayerKey(value)
     return tostring(value or ""):lower():gsub("%s+", "")
 end
 
+local function CharacterKey(row, fallback)
+    row = type(row) == "table" and row or {}
+    if type(row.ownerKey) == "string" then
+        local name, realm = row.ownerKey:match("^([^@]+)@([^@]+)$")
+        name = PlayerKey(name)
+        realm = tostring(realm or ""):lower():gsub("%s+", "")
+        if name ~= "" and realm ~= "" and realm ~= "unknown" then
+            return name .. "@" .. realm
+        end
+    end
+    local realm = tostring(row.realm or ""):lower():gsub("%s+", "")
+    if realm ~= "" and realm ~= "unknown" then
+        local name = PlayerKey(row.player or fallback):match("^([^-]+)")
+            or PlayerKey(row.player or fallback)
+        return name .. "@" .. realm
+    end
+    return PlayerKey(row.player or fallback)
+end
+
 local function CurrentOwnerKey()
     local name = UnitName and UnitName("player") or nil
     if not name or name == "" or name == "Unknown" then return nil end
     local realm = GetNormalizedRealmName and GetNormalizedRealmName()
     if not realm or realm == "" then realm = GetRealmName and GetRealmName() end
-    realm = tostring(realm or "unknown"):lower():gsub("%s+", "")
+    realm = tostring(realm or ""):lower():gsub("%s+", "")
+    if realm == "" or realm == "unknown" then return nil end
     return PlayerKey(name) .. "@" .. realm
 end
 
@@ -129,11 +149,13 @@ local function IsLocalDpsRow(row)
     local overlay = NexusDB and NexusDB.communityBuilds
     if type(overlay) == "table" and type(row.buildId) == "string"
         and IsLocalBuild(overlay[row.buildId]) then return true end
-    local me = UnitName and PlayerKey(UnitName("player")) or ""
-    if me ~= "" and PlayerKey(row.player) == me then return true end
     local owner = CurrentOwnerKey()
-    return owner ~= nil and type(row.ownerKey) == "string"
-        and row.ownerKey:lower() == owner
+    if owner ~= nil and CharacterKey(row) == owner then return true end
+    -- Realm-less legacy rows retain the historical same-name fallback. New
+    -- rows carrying owner/realm metadata must match the full identity.
+    local me = UnitName and PlayerKey(UnitName("player")) or ""
+    return me ~= "" and row.ownerKey == nil and row.realm == nil
+        and PlayerKey(row.player) == me
 end
 
 local function RowStamp(row)
@@ -242,7 +264,7 @@ local function SelectCharacterBest(dps, limits, overlay)
     -- loadout identity used by ViewProjections and reserve both raw rows.
     local dummyByIdentity, dummyByBuild = {}, {}
     for _, entry in ipairs(entries.dummy) do
-        local player = PlayerKey(entry.row.player or entry.key)
+        local player = CharacterKey(entry.row, entry.key)
         local identity = RowIdentity(entry.row)
         if identity then dummyByIdentity[player .. "|" .. identity] = entry end
         if entry.row.buildId ~= nil then
@@ -251,7 +273,7 @@ local function SelectCharacterBest(dps, limits, overlay)
     end
     local averages = {}
     for _, lkEntry in ipairs(entries.lk) do
-        local player = PlayerKey(lkEntry.row.player or lkEntry.key)
+        local player = CharacterKey(lkEntry.row, lkEntry.key)
         local identity = RowIdentity(lkEntry.row)
         local dummyEntry = identity and dummyByIdentity[player .. "|" .. identity] or nil
         if not dummyEntry and lkEntry.row.buildId ~= nil then

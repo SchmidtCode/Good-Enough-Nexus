@@ -317,8 +317,27 @@ local function PlayerKey(value)
     return tostring(value or "?"):lower():gsub("%s+", "")
 end
 
+local function CharacterKey(row)
+    row = type(row) == "table" and row or {}
+    if type(row.ownerKey) == "string" then
+        local name, realm = row.ownerKey:match("^([^@]+)@([^@]+)$")
+        name = PlayerKey(name)
+        realm = tostring(realm or ""):lower():gsub("%s+", "")
+        if name ~= "?" and realm ~= "" and realm ~= "unknown" then
+            return name .. "@" .. realm
+        end
+    end
+    local realm = tostring(row.realm or ""):lower():gsub("%s+", "")
+    if realm ~= "" and realm ~= "unknown" then
+        local name = PlayerKey(row.player):match("^([^-]+)")
+            or PlayerKey(row.player)
+        return name .. "@" .. realm
+    end
+    return PlayerKey(row.player)
+end
+
 local function RecordKey(row)
-    return PlayerKey(row and row.player)
+    return CharacterKey(row)
         .. "|" .. TypedIdentity(row and (row.fingerprint or row.buildId))
 end
 
@@ -338,7 +357,7 @@ local function CombinedRows()
     for _, row in ipairs(dummy) do
         dummyByKey[RecordKey(row)] = row
         if row.buildId then
-            dummyByBuild[PlayerKey(row.player) .. "|"
+            dummyByBuild[CharacterKey(row) .. "|"
                 .. TypedIdentity(row.buildId)] = row
         end
     end
@@ -346,7 +365,7 @@ local function CombinedRows()
     for _, lrow in ipairs(lk) do
         local drow = dummyByKey[RecordKey(lrow)]
         if not drow and lrow.buildId then
-            drow = dummyByBuild[PlayerKey(lrow.player)
+            drow = dummyByBuild[CharacterKey(lrow)
                 .. "|" .. TypedIdentity(lrow.buildId)]
         end
         if drow then
@@ -360,6 +379,8 @@ local function CombinedRows()
                     tonumber(lrow.level) or 0),
                 ts=math.min(tonumber(drow.ts) or 0, tonumber(lrow.ts) or 0),
                 category="combined",
+                ownerKey=lrow.ownerKey or drow.ownerKey,
+                realm=lrow.realm or drow.realm,
                 fingerprint=lrow.fingerprint or drow.fingerprint,
                 echoes=lrow.echoes or drow.echoes,
                 lockedEchoes=lrow.lockedEchoes or drow.lockedEchoes,

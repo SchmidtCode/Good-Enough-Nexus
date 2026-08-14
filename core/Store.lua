@@ -11,7 +11,7 @@ Nexus.Store = Store
 -- Versioned shape changes are additive and ordered. User preferences,
 -- per-character safety state, and unknown/future fields are never rebuilt
 -- merely because the shipped defaults or schema version changed.
-local SETTINGS_VERSION = 4
+local SETTINGS_VERSION = 5
 
 local function DeepCopy(t)
     if type(t) ~= "table" then return t end
@@ -125,11 +125,24 @@ local function MigrateAccountCharacters(db)
     if type(db.accountCharacters) ~= "table" then db.accountCharacters = {} end
 end
 
+local function RemoveUnknownAccountCharacters(db)
+    local characters = type(db.accountCharacters) == "table"
+        and db.accountCharacters or {}
+    db.accountCharacters = characters
+    for ownerKey in pairs(characters) do
+        if type(ownerKey) == "string"
+            and ownerKey:lower():match("@unknown$") then
+            characters[ownerKey] = nil
+        end
+    end
+end
+
 local MIGRATIONS = {
     [1] = function() end, -- baseline for previously unversioned saves
     [2] = MigratePendingToggleRecords,
     [3] = MigrateSyncAndRetentionSettings,
     [4] = MigrateAccountCharacters,
+    [5] = RemoveUnknownAccountCharacters,
 }
 
 local function ApplyMigrations(db)
@@ -199,6 +212,14 @@ function Store.Init()
     if Nexus.BuildCatalog and Nexus.BuildCatalog.Init then
         catalogSummary = Nexus.BuildCatalog.Init(db, Nexus.BundledBuilds)
     end
+    -- Legacy DPS rows still own their generated build pages. Migrate those
+    -- references before compaction/retention can classify an autoDps page as
+    -- orphaned and delete it permanently during ADDON_LOADED.
+    if Nexus.DpsCapture
+        and type(Nexus.DpsCapture.MigrateLegacyLeaderboard) == "function"
+        and not (catalogSummary and catalogSummary.readOnly) then
+        Nexus.DpsCapture.MigrateLegacyLeaderboard()
+    end
     if Nexus.DataCompaction and Nexus.DataCompaction.Init
         and not (catalogSummary and catalogSummary.readOnly) then
         Nexus.DataCompaction.Init(db)
@@ -214,7 +235,8 @@ local function CurrentIdentity()
     if not name or name == "" or name == "Unknown" then return nil end
     local realm = GetNormalizedRealmName and GetNormalizedRealmName()
     if not realm or realm == "" then realm = GetRealmName and GetRealmName() end
-    realm = tostring(realm or "unknown"):lower():gsub("%s+", "")
+    realm = tostring(realm or ""):lower():gsub("%s+", "")
+    if realm == "" or realm == "unknown" then return nil end
     local normalizedName = tostring(name):lower():gsub("^%s+", ""):gsub("%s+$", "")
     if normalizedName == "" then return nil end
     return normalizedName .. "@" .. realm, tostring(name), realm
@@ -229,6 +251,10 @@ function Store.RegisterCurrentCharacter()
     local db = NexusDB
     if not ownerKey or type(db) ~= "table" then return nil end
     if type(db.accountCharacters) ~= "table" then db.accountCharacters = {} end
+    local normalizedName = ownerKey:match("^([^@]+)@")
+    if normalizedName then
+        db.accountCharacters[normalizedName .. "@unknown"] = nil
+    end
     local row = type(db.accountCharacters[ownerKey]) == "table"
         and db.accountCharacters[ownerKey] or {}
     row.name = name
@@ -243,6 +269,7 @@ end
 
 function Store.IsAccountOwnerKey(ownerKey)
     if type(ownerKey) ~= "string" or ownerKey == "" then return false end
+    if ownerKey:lower():match("@unknown$") then return false end
     local db = NexusDB
     local characters = type(db) == "table" and db.accountCharacters or nil
     return type(characters) == "table"
