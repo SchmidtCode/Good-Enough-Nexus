@@ -84,16 +84,22 @@ and writes deterministic catalog metadata plus an exclusion report.
 parser in read-only mode and prints aggregate compaction metrics without
 evaluating Lua, exposing record contents, or writing the input.
 
-For the repository's local offline gate, run these commands from PowerShell:
+Bootstrap the repository's pinned development-only validation dependencies from
+tracked files, then run the local offline gate from PowerShell:
 
 ```powershell
-node .tools/fengari/parse-lua51.js . --tests
+./tools/Bootstrap-QualityTools.ps1
+node tools/parse-lua51.js . --tests
 node tools/check-lua51-upvalues.js . --toc Nexus.toc
-Get-ChildItem -LiteralPath tests -Filter 'run_*.lua' | Sort-Object Name | ForEach-Object { node .tools/fengari/run-lua.js $_.FullName; if ($LASTEXITCODE -ne 0) { throw "failed: $($_.Name)" } }
+Get-ChildItem -LiteralPath tests -Filter 'run_*.lua' | Sort-Object Name | ForEach-Object { node tools/run-lua.js $_.FullName; if ($LASTEXITCODE -ne 0) { throw "failed: $($_.Name)" } }
 node tests/run-bundled-build-export.js
 node tests/run-savedvariables-analyzer.js
 git diff --check
 ```
+
+The bootstrap requires Node.js 20 or newer with npm and runs `npm ci` against
+the exact tracked lockfile. It never uses a developer's ignored `.tools`
+directory, and `node_modules` remains ignored development state.
 
 The adjacent upvalue command audits every TOC-loaded function against the WoW 3.3.5a hard limit of 60. It reports a production advisory above 48 to retain a practical 12-upvalue maintenance margin where feasible; the regression fixture keeps every reviewed exception explicit.
 

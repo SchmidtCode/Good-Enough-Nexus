@@ -9,9 +9,8 @@
 
 const fs = require("fs");
 const path = require("path");
-const toolModules = path.resolve(__dirname, "../.tools/fengari/node_modules");
-const luaparse = require(path.join(toolModules, "luaparse"));
-const fengari = require(path.join(toolModules, "fengari"));
+const luaparse = require("luaparse");
+const fengari = require("fengari");
 
 const { lua, lauxlib, to_jsstring, to_luastring } = fengari;
 const MAX_UPVALUES = 60;

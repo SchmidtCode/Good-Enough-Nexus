@@ -1,0 +1,16 @@
+{
+  "name": "better-nexus-quality-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned development-only validation dependencies for Better-Nexus.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test:toolchain": "node tests/run-quality-toolchain.js"
+  },
+  "dependencies": {
+    "fengari": "0.1.5",
+    "luaparse": "0.3.1"
+  }
+}

@@ -1,0 +1,15 @@
+# EVIDENCE
+
+Record concise command/result receipts here. A skipped or unavailable command is not a pass.
+
+## Bootstrap
+
+- Generated project-aware Vibe state with package 0.1.0+codex.20260812081901, state schema 1.0, and prompt catalog 1.1.0.
+- Working tree dirty before bootstrap: no.
+
+## 38.1 - Tracked Lua 5.1 validation bootstrap
+
+- Expected red on the exact clean PR #10 base: `node` was unavailable on PATH and tracked `tools/run-lua.js`, `tools/parse-lua51.js`, `package.json`, and `package-lock.json` were absent. This is a missing development-toolchain capability, not a product-test failure.
+- The ignored historical runner uses Fengari `0.1.5`, `luaparse` `0.3.1`, a custom `io.open`, and the `unpack`/`math.atan2`/empty-`bit` prelude. The tracked wrappers preserve those semantics while resolving dependencies from the root lockfile.
+- `tools/Bootstrap-QualityTools.ps1` completed `npm ci` with Node `v24.19.0`; local npm `11.6.2` was provisioned only under ignored `.tools/npm` because the bundled Node runtime omits npm.
+- Focused validation passed: Lua 5.1 parse `272/272`; integration `70/70`; upvalue boundary `60 pass / 61 fail`, 66 TOC files, 2,893 functions, maximum 60 at `ui/Panel.lua:385 EnsureFrame`, `AutomationRuntime.Step=16`; toolchain self-test passed; `git diff --check` passed.
