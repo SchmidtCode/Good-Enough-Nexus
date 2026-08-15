@@ -55,9 +55,9 @@ $upstreamPath = Join-Path $repositoryRoot 'UPSTREAM.md'
 $releaseSecurityPath = Join-Path $repositoryRoot 'RELEASE_SECURITY.md'
 $securityPath = Join-Path $repositoryRoot 'SECURITY.md'
 
-Require-Text $licensePath 'Copyright'
-Require-Text $licensePath 'reserved for material'
-Require-Text $aiPolicyPath 'AI-assisted tooling'
+Require-Text $licensePath 'Limited permitted use'
+Require-Text $licensePath 'Reserved rights'
+Require-Text $aiPolicyPath 'Allowed AI-assisted activities'
 Require-Text $upstreamPath 'Better Nexus begins from a locally installed Nexus 1.19.3 snapshot'
 Require-Text $releaseSecurityPath 'Release Security'
 Require-Text $securityPath 'Security Policy'
@@ -71,30 +71,37 @@ if ($PSBoundParameters.ContainsKey('Archive') -and $Archive) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
     try {
-        $entries = @()
-        $seenCaseInsensitive = @{}
+        $entries = New-Object 'System.Collections.Generic.List[string]'
+        $seenCaseInsensitive = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 
         foreach ($entry in $zip.Entries) {
             $entryName = $entry.FullName -replace '\\', '/'
-            if ($entryName -match '\\') {
+            if ($entryName.Contains('\')) {
                 throw "Archive entry uses unsupported path separator: $entryName"
             }
-            if ($entryName -match '(?i)(^|/)\.\.(?:/|$)') {
+
+            if ($entryName -match '(?:^|/)\.\.(?:/|$)' -or [System.IO.Path]::IsPathRooted($entryName)) {
+                throw "Archive entry contains path traversal or rooted path: $entryName"
+            }
+
+            $parts = $entryName -split '/'
+            if ($parts -contains '..') {
                 throw "Archive entry contains path traversal: $entryName"
             }
 
-            $lower = $entryName.ToLowerInvariant()
-            if ($seenCaseInsensitive.ContainsKey($lower)) {
+            $normalized = $entryName.TrimEnd('/')
+            if (-not $seenCaseInsensitive.Add($normalized)) {
                 throw "Archive contains case-insensitive duplicate entry: $entryName"
             }
-            $seenCaseInsensitive[$lower] = $true
-            $entries += $entryName
+            $entries.Add($normalized)
         }
 
-        $topLevels = $entries |
-            ForEach-Object { $_ -split '/' | Select-Object -First 1 } |
-            Where-Object { $_ -and $_ -ne '__MACOSX' } |
-            Select-Object -Unique
+        $topLevels = @(
+            $entries |
+                ForEach-Object { ($_ -split '/')[0] } |
+                Where-Object { $_ -and $_ -ne '__MACOSX' } |
+                Select-Object -Unique
+        )
 
         if ($topLevels.Count -ne 1 -or $topLevels[0] -ne 'Nexus') {
             throw "Archive must contain exactly one top-level folder named Nexus. Found: $($topLevels -join ', ')"
@@ -108,7 +115,7 @@ if ($PSBoundParameters.ContainsKey('Archive') -and $Archive) {
         )
 
         foreach ($requiredEntry in $requiredEntries) {
-            if (-not ($entries -contains $requiredEntry)) {
+            if (-not ($entries.Contains($requiredEntry))) {
                 throw "Release archive is missing required entry: $requiredEntry"
             }
         }
