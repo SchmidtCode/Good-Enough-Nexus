@@ -14,28 +14,28 @@
 ## Current focus
 
 - Stage: 38
-- Checkpoint: 38.2
-- Status: IN_REVIEW
+- Checkpoint: 38.3
+- Status: NOT_STARTED
 
 ## Objective (current checkpoint)
 
-Provide one deterministic local quality-gate entry point with Fast, Full, Package, and Security profiles, changed-path routing, compact summaries, and self-tests.
+Bind installed VibeRun implementation, review, hygiene, and consolidation roles to the deterministic validation profiles while keeping hot context compact.
 
 ## Deliverables (current checkpoint)
 
-- Fast, Full, Package, and Security orchestration in `tools/Invoke-QualityGate.ps1`.
-- Changed-path routing from `tests/validation-map.json` through `tools/Get-ChangedTestPlan.ps1`.
-- Compact deterministic `summary.json`, `summary.md`, and separate check logs.
-- Temporary package parity/manifest/checksum validation with no retained artifact.
-- Self-tests covering modes, failure propagation, ordering, portability, unavailable tools, and summary bounds.
+- Compact `AGENTS.md` role policy for Fast implementation, one Full review, bounded hygiene, and consolidation.
+- Compact branch-local `STATE`, active `PLAN`, and `CONTEXT` hot files.
+- Bounded current-checkpoint evidence lookup and exact receipt policy.
+- Supported installed VibeRun schema/prompt integration without another dispatcher or role schema.
 
 ## Acceptance (current checkpoint)
 
-- [x] Fast selects focused changed-path checks without suppressing final Full review.
-- [ ] Full covers every current repository gate required by issue #12.
-- [x] Package validates safe one-root source parity and cleans all temporary output.
-- [x] Security reports blocking, advisory, skipped, and unavailable states honestly.
-- [x] Compact output is deterministic, private-data-safe, and preserves multiple failure evidence with a failing exit status.
+- [ ] VibeRun remains the only dispatcher, state owner, and roadmap owner.
+- [ ] Implementation uses expected red, mapped checks, Fast, one clean commit, and review handoff.
+- [ ] Review runs Full once and reads detailed logs only for failure or suspicion.
+- [ ] Hygiene avoids Full when product/test bytes did not change.
+- [ ] Evidence/history reads are bounded and no Stage 35–37 bulk is copied.
+- [ ] No `.ai/**`, local prompt catalog, second plugin, or unsupported role field exists.
 
 ## Work log (current session)
 
@@ -46,6 +46,7 @@ Provide one deterministic local quality-gate entry point with Fast, Full, Packag
 - Reviewed checkpoint 38.1 from a separate dependency-clean worktree; all focused gates and scope checks passed at committed `266d510` and the pointer advanced to 38.2.
 - Completed bounded 38.1 hygiene with no code change, debt item, or acceptance defect; wrapper simplicity and exact dependency ownership are retained.
 - Implemented 38.2 Fast/Full/Package/Security orchestration, deterministic changed-path mapping, compact summaries, logical package parity, complete Lua-suite aggregation, and adversarial self-tests.
+- Reviewed 38.2 at exact `b71ee32`; repaired clean-worktree routing, ran Full once to 16/16 PASS, and advanced to 38.3.
 
 ## Evidence
 
@@ -61,6 +62,7 @@ Provide one deterministic local quality-gate entry point with Fast, Full, Packag
 - 38.1 hygiene: CLEAN with no product/tool byte change; no new gate was needed because the reviewed committed bytes were unchanged.
 - 38.2 Fast `11 pass / 0 fail / 0 unavailable / 0 skip`; Package `8/0/0/0`; self-tests PASS; Security intentionally fails `4 pass / 4 unavailable` pending checkpoint 38.4.
 - 38.2 Package manifest: 70 files, 66 Lua, 5,049,868 bytes, SHA-256 `e7bda27ac7f638a4603d6068545264830220a91973da980a841440149a02f288`, no retained artifact.
+- 38.2 Full exact-head: 16/16 checks, Lua `202/202`, parse `272/272`, integration `70/70`, hostile `4,000/4,000`, upvalue `60 pass / 61 fail`, duration 252.596s, no private path in compact output.
 
 ## Workflow state
 
@@ -93,8 +95,8 @@ Provide one deterministic local quality-gate entry point with Fast, Full, Packag
 
 ## Last completed loop
 
-- Checkpoint 38.2 implementation is ready for review; Full was intentionally reserved for the review role.
+- Checkpoint 38.2 adversarial review passed after one clean-worktree repair and auto-advanced to 38.3.
 
 ## Recommended next action
 
-- Review committed 38.2, run Full exactly once, inspect `summary.json`, and open only failing or suspicious logs.
+- Run mandatory bounded 38.2 hygiene, then implement 38.3 role/profile and hot-context policy without repeating Full.

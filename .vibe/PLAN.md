@@ -32,9 +32,9 @@
 - Evidence:
   - Expected-red missing dependency receipt; clean-bootstrap result; focused parser/runner/upvalue totals.
 
-### 38.2 — Add deterministic local quality-gate profiles and compact summaries
+### 38.2 — Add deterministic local quality-gate profiles and compact summaries (DONE)
 
-- Status: `NOT_STARTED`
+- Status: `DONE`
 - Objective:
   - Provide one local entry point whose Fast, Full, Package, and Security profiles route exact checks and retain compact deterministic results.
 - Deliverables:
