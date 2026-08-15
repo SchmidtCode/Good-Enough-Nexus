@@ -635,7 +635,7 @@ local function EnsurePostPopup()
     local dl = p:CreateFontString(nil,"OVERLAY","GameFontNormalSmall"); dl:SetPoint("TOPLEFT",16,-88); dl:SetText("Description (what makes this build stand out):")
     local descBg = CreateFrame("Frame",nil,p); descBg:SetPoint("TOPLEFT",14,-104); descBg:SetSize(334,180)
     pcall(function() descBg:SetBackdrop({bgFile="Interface\\Tooltips\\UI-Tooltip-Background",edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",tile=true,tileSize=16,edgeSize=12,insets={left=3,right=3,top=3,bottom=3}}); descBg:SetBackdropColor(0,0,0,0.5) end)
-    local descScroll = CreateFrame("ScrollFrame",nil,descBg,
+    local descScroll = CreateFrame("ScrollFrame","NexusPostDescriptionScroll",descBg,
         "UIPanelScrollFrameTemplate")
     descScroll:SetPoint("TOPLEFT",6,-6)
     descScroll:SetPoint("BOTTOMRIGHT",-24,6)
@@ -795,7 +795,7 @@ local function EnsureEditPopup()
             tile=true,tileSize=16,edgeSize=12, insets={left=3,right=3,top=3,bottom=3} })
         descBg:SetBackdropColor(0,0,0,0.5)
     end)
-    local descScroll = CreateFrame("ScrollFrame",nil,descBg,
+    local descScroll = CreateFrame("ScrollFrame","NexusEditDescriptionScroll",descBg,
         "UIPanelScrollFrameTemplate")
     descScroll:SetPoint("TOPLEFT",6,-6)
     descScroll:SetPoint("BOTTOMRIGHT",-24,6)

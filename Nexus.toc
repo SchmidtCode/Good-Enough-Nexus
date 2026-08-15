@@ -23,6 +23,7 @@ core\LoadoutEvidence.lua
 core\CandidateEvidence.lua
 core\DataCompaction.lua
 core\BuildCatalog.lua
+core\DataRetention.lua
 core\BuildHashCache.lua
 core\Store.lua
 core\Errors.lua
@@ -44,6 +45,7 @@ core\SyncDiagnostics.lua
 core\SyncSession.lua
 core\Sync.lua
 core\DpsCapture.lua
+core\LegacyDataMigration.lua
 core\LegacyQualificationRepair.lua
 core\ViewProjections.lua
 core\CommunityProjection.lua

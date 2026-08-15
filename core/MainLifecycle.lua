@@ -254,12 +254,11 @@ function Lifecycle.New(options)
         elseif event == "CHAT_MSG_WHISPER" then
             if initialized and Nexus.Sync and type(arg1) == "string"
                 and arg1:sub(1,5) == "WLRQ|" then
-                local parts = {}
-                for part in arg1:gmatch("([^|]*)") do
-                    parts[#parts + 1] = part
-                end
-                if parts[4] == "dev" and Nexus.Sync.HandleStatusRequest then
-                    pcall(Nexus.Sync.HandleStatusRequest, arg2, parts[3])
+                local code, _, token, mode =
+                    arg1:match("^([^|]+)|([^|]*)|([^|]*)|([^|]*)$")
+                if code == "WLRQ" and mode == "dev"
+                    and token ~= "" and Nexus.Sync.HandleStatusRequest then
+                    pcall(Nexus.Sync.HandleStatusRequest, arg2, token)
                 end
             end
         elseif event == "CHAT_MSG_CHANNEL" then

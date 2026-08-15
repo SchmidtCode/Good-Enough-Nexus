@@ -15,7 +15,7 @@ local dummy = {
     exactlow=Row("exact-full", 100, "ExactLow"),
     exacthigh=Row("exact-full", 150, "ExactHigh"),
     onesided=Row("one-sided", 300, "OneSided"),
-    collision=Row("collision-a", 400, "CollisionDummy", "shared-id", "same-short"),
+    collisiondummy=Row("collision-a", 400, "CollisionDummy", "shared-id", "same-short"),
     zero=Row("zero-pair", 0, "Zero"),
     negative=Row("negative-pair", -1, "Negative"),
     malformed=Row("malformed-pair", "bad", "Malformed"),
@@ -23,12 +23,12 @@ local dummy = {
     badfingerprint=Row({}, 500, "BadFingerprint"),
 }
 local lk = {
-    exact=Row("exact-full", 200, "ExactLk"),
-    collision=Row("collision-b", 500, "CollisionLk", "shared-id", "same-short"),
-    zero=Row("zero-pair", 250, "ZeroLk"),
-    negative=Row("negative-pair", 250, "NegativeLk"),
-    malformed=Row("malformed-pair", 250, "MalformedLk"),
-    infinite=Row("infinite-pair", 250, "InfiniteLk"),
+    exactlk=Row("exact-full", 200, "ExactLk"),
+    collisionlk=Row("collision-b", 500, "CollisionLk", "shared-id", "same-short"),
+    zerolk=Row("zero-pair", 250, "ZeroLk"),
+    negativelk=Row("negative-pair", 250, "NegativeLk"),
+    malformedlk=Row("malformed-pair", 250, "MalformedLk"),
+    infinitelk=Row("infinite-pair", 250, "InfiniteLk"),
 }
 NexusDB = {
     dpsCapture={
@@ -81,8 +81,10 @@ assert(cachedStats.rebuilds == 1
     and cachedStats.intersections == 1,
     "unchanged eligibility reads rebuilt or rescanned DPS storage")
 
-lk.onesided = Row("one-sided", 350, "OneSidedLk")
-assert(R.Advance(R.DPS_CHANGED, "eligibility fixture") == 1)
+lk.onesidedlk = Row("one-sided", 350, "OneSidedLk")
+local advancedRevision = R.Advance(R.DPS_CHANGED, "eligibility fixture")
+assert(advancedRevision == 1, "unexpected prior DPS revision: "
+    .. tostring(advancedRevision))
 local stale, staleWhy = DPS.GetCachedCommunityQualification(
     "one-id", "one-sided", nil)
 assert(stale==nil and staleWhy=="cache cold",

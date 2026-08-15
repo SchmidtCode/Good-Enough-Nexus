@@ -784,7 +784,7 @@ local staleDirectOutcome = RequestOutcome()
 local staleDirectStored = NexusDB and NexusDB.dpsCapture
     and NexusDB.dpsCapture.characterBest
     and NexusDB.dpsCapture.characterBest.dummy
-    and NexusDB.dpsCapture.characterBest.dummy.staledirectdps ~= nil
+    and NexusDB.dpsCapture.characterBest.dummy["staledirectdps@ebonhold"] ~= nil
 clock = staleDirectSent + 61
 Check(staleDirectAccepted and staleDirectStored
         and staleDirectOutcome.requestId == staleDirectId
@@ -806,7 +806,7 @@ local foreignDirectOutcome = RequestOutcome()
 local foreignDirectStored = NexusDB and NexusDB.dpsCapture
     and NexusDB.dpsCapture.characterBest
     and NexusDB.dpsCapture.characterBest.dummy
-    and NexusDB.dpsCapture.characterBest.dummy.foreigndirectdps ~= nil
+    and NexusDB.dpsCapture.characterBest.dummy["foreigndirectdps@ebonhold"] ~= nil
 clock = foreignDirectSent + 61
 Check(foreignDirectAccepted and foreignDirectStored
         and foreignDirectOutcome.requestId == foreignDirectId

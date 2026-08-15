@@ -326,7 +326,7 @@ Check(deferredComplete == false and deferredWhy == "sync queue full"
         and afterDeferred.queue_deferred
             == beforeDeferred.queue_deferred + 1,
     "deferred response did not retain exactly its eligible pending rows")
-NexusDB.dpsCapture.characterBest.dummy.authority.ownerVerified = true
+NexusDB.dpsCapture.characterBest.dummy.badauthority.ownerVerified = true
 Nexus.Revisions.Advance(Nexus.Revisions.DPS_CHANGED, {
     scope="metadata",category="dummy",player="authority",
 })

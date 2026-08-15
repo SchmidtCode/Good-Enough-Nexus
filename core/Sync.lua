@@ -189,6 +189,24 @@ local function CatalogClearTombstone(id)
         and catalog.ClearTombstone(id) or false
 end
 
+local function RequestRetention(reason)
+    local retention = Nexus and Nexus.DataRetention
+    if retention and type(retention.Request) == "function" then
+        pcall(retention.Request, reason)
+    end
+end
+
+local function AllowsRemoteRevision(author, stamp, buildId)
+    local retention = Nexus and Nexus.DataRetention
+    if not (retention
+        and type(retention.AllowsRemoteRevision) == "function") then
+        return true
+    end
+    local ok, allowed = pcall(retention.AllowsRemoteRevision,
+        author, stamp, NexusDB, buildId)
+    return not ok or allowed ~= false
+end
+
 local function NormalizePeerName(name)
     return Identity.PlayerKey(name) or ""
 end
@@ -1335,6 +1353,12 @@ local function StoreSummary(data, transportSender, context)
         return false, false
     end
     local stamp = tonumber(data.m) or 0
+    if not AllowsRemoteRevision(data.a, stamp, id) then
+        LogEvent("RX", "skip summary '%s': older than retention floor",
+            tostring(data.t))
+        Responder.NoteContextOutcome(context, "duplicate", "stale")
+        return true, false
+    end
     local tomb = tombstones[id]
     if tomb and stamp <= TombStamp(tomb) then
         LogEvent("RX","skip summary '%s': tombstoned", tostring(data.t))
@@ -1424,6 +1448,7 @@ local function StoreSummary(data, transportSender, context)
     if not keepEchoes or linkChanged then
         Session.QueueLegacyRecovery(id, recoveryRequestId)
     end
+    RequestRetention("build summary received")
     return true, true
 end
 
@@ -2070,6 +2095,7 @@ function Sync.BroadcastDelete(build)
     end
     tombstones[id] = tomb
     hotBuilds[id] = nil
+    RequestRetention("local delete stored")
     local status = Operation.NewDelete(id, tomb)
     Operation.latestDelete = status
     local queued, why = Transport.Enqueue(DeleteWireMessage(id, tomb),
@@ -2110,6 +2136,9 @@ end
 ------------------------------------------------------------------------
 
 local function ShouldStore(id, lastMod, author)
+    if not AllowsRemoteRevision(author, lastMod, id) then
+        return false, "retention floor"
+    end
     local tomb = tombstones[id]
     if tomb and (tonumber(lastMod) or 0) <= TombStamp(tomb) then return false, "deleted" end
     if tomb and (TombAuthor(tomb) == ""
@@ -2161,6 +2190,7 @@ local function StoreReceivedBuild(payload, ownerVerified, relaySender)
     seenRemoteIds[payload.id] = payload.lastModified
     Session.ClearRequestedLoadout(payload.id)
     stats.received = stats.received + 1
+    RequestRetention("full build received")
     return true, storedAs
 end
 
@@ -2372,6 +2402,7 @@ local function HandleDelete(sender, buildId, stamp, originAuthor, context)
     LogEvent("RX","DELETED '%s' from origin %s (relay %s)",
         tostring(existing.title), author, tostring(sender))
     Sync.RequestDataViewRefresh()
+    RequestRetention("remote delete received")
     Responder.NoteContextOutcome(context, "updated", "accepted")
     return true
 end

@@ -1255,6 +1255,34 @@ function Catalog.RemoveOverlay(id)
     return existed
 end
 
+-- Retention is a local cache operation, not a network-visible delete. Batch
+-- removals publish one library revision while keeping the per-record indexes
+-- and aggregate status counters consistent for every affected id.
+function Catalog.RemoveOverlayBatch(ids)
+    EnsureBound()
+    if catalogReadOnly then
+        return 0, "future build catalog schema is read-only"
+    end
+    if type(ids) ~= "table" then return 0, "build id list required" end
+    local overlay = Overlay()
+    local removed, changedIds = 0, {}
+    for _, id in ipairs(ids) do
+        if overlay[id] ~= nil then
+            local statusBefore = StatusState(id)
+            overlay[id] = nil
+            recordRevisions[id] = (recordRevisions[id] or 0) + 1
+            AdjustStatus(statusBefore, StatusState(id))
+            changedIds[#changedIds + 1] = id
+            removed = removed + 1
+        end
+    end
+    if removed > 0 then
+        BumpBuild("overlay retention")
+        for _, id in ipairs(changedIds) do UpdateRelatedRow(id) end
+    end
+    return removed
+end
+
 function Catalog.SetTombstone(id, tombstone)
     EnsureBound()
     if catalogReadOnly then
@@ -1286,6 +1314,38 @@ function Catalog.ClearTombstone(id)
         UpdateRelatedRow(id)
     end
     return existed
+end
+
+-- Tombstones masking immutable bundled rows are permanent: removing one would
+-- resurrect the bundled record. Retention may compact only non-baseline ids.
+function Catalog.HasBaseline(id)
+    EnsureBound()
+    return type(baseline[id]) == "table"
+end
+
+function Catalog.RemoveTombstonesBatch(ids)
+    EnsureBound()
+    if catalogReadOnly then
+        return 0, "future build catalog schema is read-only"
+    end
+    if type(ids) ~= "table" then return 0, "tombstone id list required" end
+    local source = Tombstones()
+    local removed, changedIds = 0, {}
+    for _, id in ipairs(ids) do
+        if source[id] ~= nil and type(baseline[id]) ~= "table" then
+            local statusBefore = StatusState(id)
+            source[id] = nil
+            recordRevisions[id] = (recordRevisions[id] or 0) + 1
+            AdjustStatus(statusBefore, StatusState(id))
+            changedIds[#changedIds + 1] = id
+            removed = removed + 1
+        end
+    end
+    if removed > 0 then
+        BumpBuild("tombstone retention")
+        for _, id in ipairs(changedIds) do UpdateRelatedRow(id) end
+    end
+    return removed
 end
 
 function Catalog.OverlaySnapshot()

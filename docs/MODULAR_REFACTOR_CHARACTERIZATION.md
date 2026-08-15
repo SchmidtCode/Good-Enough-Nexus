@@ -303,6 +303,11 @@ Sync extraction parity is complete.
 | Surface | Responsibility | Called by | Reads -> writes | Failure | Coverage/gap |
 | --- | --- | --- | --- | --- | --- |
 | `Store.Init` | Bind, decide/complete legacy retirement, and run ordered additive migrations | Main/tests | globals/defaults -> SV | throw/retry without false success or legacy release | ST/ST-C/ST-L |
+| `Store.CurrentOwnerKey` | Canonical current character identity | Store/data owners | live name+realm -> owner key | nil until both are authoritative | ST/A-I |
+| `Store.RegisterCurrentCharacter` | Upsert the account character ledger | Store/State | live identity/class/time -> SV | no write for unknown identity | ST/A-I |
+| `Store.IsAccountOwnerKey` | Test canonical account membership | retention/UI | owner key + SV -> boolean | rejects unknown/noncanonical keys | ST/A-I |
+| `Store.IsAccountBuild` | Protect account-owned build rows | retention/UI | build + ledger -> boolean | explicit local/imported markers remain protected | ST/A-I |
+| `Store.AccountCharacters` | Live account character ledger | account views/tests | SV -> SV table | empty view before availability | ST/ST-C |
 | `Store.SettingsVersion` | Supported settings schema | Store/tests | constant -> - | none | ST |
 | `Store.Settings` | Account settings owner | all runtime consumers | SV -> SV missing defaults | preserves unknown/future | ST/ST-C |
 | `Store.State` | Character-scoped safety state | Main/GameAdapter/tests | SV/player identity -> SV | nil until real character | ST/A-I/ST-C |

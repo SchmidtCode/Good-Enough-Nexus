@@ -43,6 +43,19 @@ DefaultProfile.defaultSettings = {
     -- exactly as falsy as `false` -- no SETTINGS_VERSION bump needed.
     autoLockEchoes = false,
     updateNotifications = true, -- chat + persistent panel notice; manual install only
+    -- Community persistence is a local cache over the immutable bundled
+    -- catalog. Ranked pruning is opt-in; when disabled, the relaxed limits
+    -- remain hard safety ceilings so hostile/noisy peers cannot grow the
+    -- SavedVariables file without bound.
+    communityRetentionEnabled = false,
+    communityRetentionTopPerCategory = 100,
+    communityRetentionMinPerClassPerCategory = 15,
+    communityRetentionTopAverage = 50,
+    communityRetentionMinAveragePerClass = 10,
+    communityRetentionOtherRemoteBuilds = 75,
+    communityRetentionMaxPerAuthor = 12,
+    communityRetentionPersonalFingerprints = 128,
+    communityRetentionBuildFingerprints = 128,
     anchorSpellId = nil, -- explicit override; honored only when on the wishlist
     -- Diversity-anchor auto-detection: if no explicit anchorSpellId, the
     -- anchor is the wishlist echo whose name matches one of these. Adaptive

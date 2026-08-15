@@ -605,5 +605,11 @@ function Repair.Stats()
 end
 
 function Repair.Init()
+    local migration = Nexus and Nexus.LegacyDataMigration
+    if migration and type(migration.BlocksDpsMigration) == "function"
+        and migration.BlocksDpsMigration(NexusDB) then
+        runtime.lastReason="legacy-data-migration-pending"
+        return true,"deferred"
+    end
     return Repair.Request("startup")
 end

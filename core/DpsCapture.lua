@@ -266,6 +266,20 @@ local function PlayerKey(name)
     return Identity.PlayerKey(name) or "invalid"
 end
 
+-- Durable public records are keyed by account character whenever verified
+-- realm metadata exists. Realm-less legacy rows retain their historical
+-- player-only key until a later direct-owner record safely enriches them.
+local function CharacterKey(name, ownerKey, realm)
+    local canonical = Identity.CanonicalOwnerKey(ownerKey)
+    if canonical and not canonical:match("@unknown$") then return canonical end
+    if type(realm) == "string" and realm ~= ""
+        and realm:lower() ~= "unknown" then
+        local inferred = Identity.OwnerKey(name, realm)
+        if inferred and not inferred:match("@unknown$") then return inferred end
+    end
+    return PlayerKey(name)
+end
+
 local function CurrentRealm()
     local realm = GetNormalizedRealmName and GetNormalizedRealmName()
     if not realm or realm == "" then realm = GetRealmName and GetRealmName() end
@@ -274,6 +288,21 @@ end
 
 local function OwnerKey(name, realm)
     return Identity.OwnerKey(name, realm or CurrentRealm())
+end
+
+local function CurrentCharacterKey(name)
+    name = name or ((UnitName and UnitName("player")) or "?")
+    return CharacterKey(name, OwnerKey(name), CurrentRealm())
+end
+
+local function SameLocalCharacter(row, localName)
+    if type(row) ~= "table" then return false end
+    localName = localName or ((UnitName and UnitName("player")) or "?")
+    local localKey = CurrentCharacterKey(localName)
+    local rowKey = CharacterKey(row.player, row.ownerKey, row.realm)
+    if localKey ~= "invalid" and rowKey == localKey then return true end
+    return row.ownerKey == nil and row.realm == nil
+        and PlayerKey(row.player) == PlayerKey(localName)
 end
 
 -- Repair legacy class metadata only for the exact character currently logged
@@ -344,7 +373,7 @@ local function RepairCurrentCharacterClass()
     return changed
 end
 
-local legacyMigrated = false
+local legacyMigratedOwner
 local function BetterRow(candidate, existing)
     if not existing then return true end
     local nd = math.floor(tonumber(candidate and candidate.dps) or 0)
@@ -357,32 +386,49 @@ local function BetterRow(candidate, existing)
 end
 
 local function MigrateLegacyLeaderboard()
-    if legacyMigrated then return false end
-    legacyMigrated = true
+    local root = type(NexusDB) == "table" and NexusDB or nil
+    if legacyMigratedOwner == root then return false end
+    local coordinator = Nexus and Nexus.LegacyDataMigration
+    if coordinator and type(coordinator.BlocksDpsMigration) == "function"
+        and coordinator.BlocksDpsMigration(root) then
+        return false
+    end
+    if coordinator and type(coordinator.IsComplete) == "function"
+        and coordinator.IsComplete(root)
+        and type(root and root.legacyDataMigration) == "table" then
+        legacyMigratedOwner = root
+        return false
+    end
     local db = DB()
     local me = (UnitName and UnitName("player")) or "?"
     local personal = PersonalBestStore()
     local character = CharacterBestStore()
     local changed = false
 
-    -- Normalize any existing CharacterBestStore keys that were stored
-    -- with original casing (pre-PlayerKey-lowercase era). Collect all
-    -- non-lowercase keys and merge them into the canonical lowercase key.
+    -- Normalize existing rows to realm-qualified keys where their own
+    -- metadata proves the identity. Remove sources before merging targets so
+    -- a same-name character on another realm cannot overwrite its peer.
     for _, category in ipairs({ "dummy", "lk" }) do
         local bucket = character[category]
         if type(bucket) == "table" then
             local toMerge = {}
-            for k in pairs(bucket) do
-                if k ~= k:lower() then toMerge[#toMerge+1] = k end
+            for key, row in pairs(bucket) do
+                local target = CharacterKey(
+                    type(row) == "table" and row.player or key,
+                    type(row) == "table" and row.ownerKey or nil,
+                    type(row) == "table" and row.realm or nil)
+                if key ~= target then
+                    toMerge[#toMerge + 1] = {
+                        source=key,target=target,row=row,
+                    }
+                end
             end
-            for _, k in ipairs(toMerge) do
-                local lk = k:lower()
-                local row = bucket[k]
-                if BetterRow(row, bucket[lk]) then
-                    bucket[lk] = row
+            for _, item in ipairs(toMerge) do bucket[item.source] = nil end
+            for _, item in ipairs(toMerge) do
+                if BetterRow(item.row, bucket[item.target]) then
+                    bucket[item.target] = item.row
                     changed = true
                 end
-                bucket[k] = nil
                 changed = true
             end
         end
@@ -399,7 +445,7 @@ local function MigrateLegacyLeaderboard()
             changed = true
         end
         if ReferenceEvidence(row) then changed = true end
-        if PlayerKey(row.player) == PlayerKey(me) and fingerprint then
+        if SameLocalCharacter(row, me) and fingerprint then
             personal[fingerprint] = personal[fingerprint] or {}
             if BetterRow(row, personal[fingerprint][category]) then
                 personal[fingerprint][category] = row
@@ -408,7 +454,7 @@ local function MigrateLegacyLeaderboard()
         end
         local bucket = character[category]
         if bucket then
-            local pk = PlayerKey(row.player)
+            local pk = CharacterKey(row.player, row.ownerKey, row.realm)
             if BetterRow(row, bucket[pk]) then
                 bucket[pk] = row
                 changed = true
@@ -441,7 +487,12 @@ local function MigrateLegacyLeaderboard()
         end
     end
     if changed then BumpDps("legacy DPS migrated") end
+    legacyMigratedOwner = root
     return changed
+end
+
+function DPS.MigrateLegacyLeaderboard()
+    return MigrateLegacyLeaderboard()
 end
 
 ------------------------------------------------------------------------
@@ -593,11 +644,14 @@ local function BackfillLocalLockedRows()
     end)() or nil)
     if not snap then return false end
 
-    local me = PlayerKey((UnitName and UnitName("player")) or "?")
+    local localName = (UnitName and UnitName("player")) or "?"
+    local me = CurrentCharacterKey(localName)
+    local legacyMe = PlayerKey(localName)
     local changed = false
     local changedRows = {}
     for _, category in ipairs({ "dummy", "lk" }) do
-        local row = CharacterBestStore()[category][me]
+        local rows = CharacterBestStore()[category]
+        local row = rows[me] or rows[legacyMe]
         if row and LockedKey(StoredEchoes(row, true)) ~= LockedKey(snap) then
             row.lockedEchoes = snap
             ReferenceEvidence(row)
@@ -1414,6 +1468,8 @@ end
 -- digest do not resend any DPS payloads during Sync Now.
 local DPS_BUCKETS = 8
 local function DpsBucket(category, player)
+    -- The wire bucket remains player-name based for protocol-7 compatibility.
+    -- Realm identity belongs in the hashed entry/storage key, not in routing.
     local text = tostring(category or "") .. ":" .. PlayerKey(player)
     local h = 5381
     for i = 1, #text do h = ((h * 33) + text:byte(i)) % 2147483648 end
@@ -1497,7 +1553,8 @@ local function DpsResponseClaimInfo(category, playerKey, row)
     local authorityValid = row.ownerVerified == true
         or (me and Identity.SamePlayer(player, me))
     local safe = authorityValid and Identity.ValidPlayer(player)
-        and #player <= 64 and PlayerKey(player) == PlayerKey(playerKey)
+        and #player <= 64
+        and CharacterKey(player, row.ownerKey, row.realm) == tostring(playerKey)
         and FiniteNumber(dps) and dps >= 1000 and dps <= 500000000
         and DPS.IsDurationEligible(category, row.duration)
         and FiniteNumber(stamp) and stamp > 0
@@ -1507,7 +1564,7 @@ local function DpsResponseClaimInfo(category, playerKey, row)
         and fingerprint ~= nil and fingerprint == row.fingerprint
         and loadoutHash ~= nil and EchoHashFromKey(fingerprint) == loadoutHash
         and ownerValid and realmValid
-    return safe, safe and PlayerKey(player) or nil
+    return safe, safe and CharacterKey(player, row.ownerKey, row.realm) or nil
 end
 
 local function ComputeDpsSyncHash()
@@ -1517,7 +1574,7 @@ local function ComputeDpsSyncHash()
     for _, category in ipairs({ "dummy", "lk" }) do
         for playerKey, row in pairs(store[category] or {}) do
             if row and (tonumber(row.dps) or 0) > 0 then
-                local b = DpsBucket(category, playerKey)
+                local b = DpsBucket(category, row.player or playerKey)
                 buckets[b][#buckets[b]+1] = DpsHashEntry(category, playerKey, row)
             end
         end
@@ -1575,7 +1632,8 @@ local function WarmDpsHashCache()
     dpsHashCache.stats.collectionWalks = dpsHashCache.stats.collectionWalks + 1
     for _, category in ipairs({ "dummy", "lk" }) do
         for playerKey, row in pairs(store[category] or {}) do
-            local bucket = DpsBucket(category, playerKey)
+            local bucket = DpsBucket(category,
+                type(row) == "table" and row.player or playerKey)
             local entryKey = category .. "|" .. tostring(playerKey)
             local classification = DpsHashClass(category, row)
             classifications[bucket][entryKey] = classification
@@ -1628,14 +1686,27 @@ local function AdjustDpsHashClass(classification, delta)
         (tonumber(dpsHashCache.stats[key]) or 0) + delta)
 end
 
-local function UpdateDpsHashRecord(category, player)
+local function UpdateDpsHashRecord(category, player, ownerKey, realm,
+        characterKey, previousCharacterKey)
     if not dpsHashCache.initialized then return end
     if category ~= "dummy" and category ~= "lk" then
         InvalidateAllDpsHashes()
         return
     end
-    local playerKey = PlayerKey(player)
-    local bucket = DpsBucket(category, playerKey)
+    local playerKey = characterKey
+        or CharacterKey(player, ownerKey, realm)
+    if previousCharacterKey and previousCharacterKey ~= playerKey then
+        local previousBucket = DpsBucket(category, player)
+        local previousEntry = category .. "|" .. previousCharacterKey
+        local previousClass = dpsHashCache.classifications[previousBucket]
+            [previousEntry]
+        AdjustDpsHashClass(previousClass, -1)
+        dpsHashCache.entries[previousBucket][previousEntry] = nil
+        dpsHashCache.classifications[previousBucket][previousEntry] = nil
+        dpsHashCache.responseRows[previousBucket][previousEntry] = nil
+        dpsHashCache.dirty[previousBucket] = true
+    end
+    local bucket = DpsBucket(category, player)
     local entryKey = category .. "|" .. playerKey
     local previousClass = dpsHashCache.classifications[bucket][entryKey]
     local row = CharacterBestStore()[category][playerKey]
@@ -1660,7 +1731,9 @@ local function OnDpsRevision(_, revision, detail)
     dpsHashCache.observedRevision = revision
     if type(detail) == "table" and detail.scope == "record"
         and detail.category and detail.player then
-        UpdateDpsHashRecord(detail.category, detail.player)
+        UpdateDpsHashRecord(detail.category, detail.player,
+            detail.ownerKey, detail.realm, detail.characterKey,
+            detail.previousCharacterKey)
     elseif type(detail) ~= "table"
         or (detail.scope ~= "local" and detail.scope ~= "metadata") then
         InvalidateAllDpsHashes()
@@ -1970,7 +2043,8 @@ function DPS.BroadcastAllBuildBests(peerHash, onlyBucket, progress, maxItems,
                     state.cursor = nil
                 else
                     state.cursor = playerKey
-                    local bucket = DpsBucket(category, playerKey)
+                    local bucket = DpsBucket(category,
+                        type(row) == "table" and row.player or playerKey)
                     local skipReason
                     if onlyBucket and bucket ~= onlyBucket then
                         skipReason = "outside_bucket"
@@ -2188,7 +2262,7 @@ function DPS.DpsBoardCursorNext(cursor)
     if key == nil then cursor.done = true; return true end
     local entry = DpsBoardEntry(row, cursor.category, true)
     if entry then
-        local player = PlayerKey(entry.player)
+        local player = CharacterKey(entry.player, entry.ownerKey, entry.realm)
         local existing = cursor.seen[player]
         if not existing then
             cursor.rows[#cursor.rows + 1] = entry
@@ -2221,7 +2295,7 @@ function DPS.GetDpsBoard(category)
     for _, row in pairs(CharacterBestStore()[category] or {}) do
         local entry = DpsBoardEntry(row, category)
         if entry then
-            local pkey = PlayerKey(entry.player)
+            local pkey = CharacterKey(entry.player, entry.ownerKey, entry.realm)
             local existing = seenPlayer[pkey]
             if not existing then
                 out[#out + 1] = entry
@@ -2243,12 +2317,32 @@ end
 -- if they have no record in the local leaderboard. Rank is 1-based across
 -- all players for their best category (dummy preferred over lk when tied).
 -- Used by the nameplate module to decorate moused-over players.
+local function FindCharacterRow(rows, name)
+    local currentRealmKey = CharacterKey(name, nil, CurrentRealm())
+    local legacyKey = PlayerKey(name)
+    local row = rows[currentRealmKey] or rows[legacyKey]
+    if row then return row end
+    -- Some legacy/UI callers know only the displayed name. Realm-qualified
+    -- storage remains collision-free; the read fallback selects the strongest
+    -- matching row when that caller cannot express a realm.
+    for _, candidate in pairs(rows) do
+        if type(candidate) == "table"
+            and Identity.SamePlayer(candidate.player, name)
+            and BetterRow(candidate, row) then
+            row = candidate
+        end
+    end
+    return row
+end
+
 function DPS.GetCharacterBest(category, playerName)
     if category ~= "dummy" and category ~= "lk" then return nil end
     MigrateLocalLockedBaseline()
     MigrateLegacyLeaderboard()
     local name = playerName or ((UnitName and UnitName("player")) or "?")
-    local row = CharacterBestStore()[category][PlayerKey(name)]
+    local rows = CharacterBestStore()[category]
+    local row = playerName and FindCharacterRow(rows, name)
+        or rows[CurrentCharacterKey(name)] or rows[PlayerKey(name)]
     if not row or (tonumber(row.dps) or 0) <= 0
         or not DPS.IsDurationEligible(category, row.duration) then return nil end
     return DPS.MaterializeRecord(row)
@@ -2259,9 +2353,12 @@ function DPS.GetPlayerInfo(playerName)
     MigrateLocalLockedBaseline()
     MigrateLegacyLeaderboard()
     local pk = PlayerKey(playerName)
+    local qualified = CurrentCharacterKey(playerName)
     local best
     for _, category in ipairs({"dummy", "lk"}) do
-        local row = CharacterBestStore()[category][pk]
+        local rows = CharacterBestStore()[category]
+        local row = rows[qualified] or rows[pk]
+            or FindCharacterRow(rows, playerName)
         if row and (tonumber(row.dps) or 0) > 0
             and DPS.IsDurationEligible(category, row.duration) then
             if not best or (tonumber(row.dps) or 0) > (tonumber(best.dps) or 0) then
@@ -2275,6 +2372,7 @@ function DPS.GetPlayerInfo(playerName)
     local category = best.category
     local rank = 1
     local bucket = CharacterBestStore()[category]
+    if bucket[qualified] then pk = qualified end
     for opk, row in pairs(bucket) do
         if opk ~= pk and (tonumber(row.dps) or 0) > best.dps
             and DPS.IsDurationEligible(category, row.duration) then
@@ -2454,7 +2552,8 @@ local function CommitSession(category)
         -- public mesh. Exact-set personal bests remain local, so experimenting
         -- with weaker loadouts cannot create or sync leaderboard bloat.
         local characterBucket = CharacterBestStore()[category]
-        local pk = PlayerKey(player)
+        local pk = CharacterKey(player, personalRow.ownerKey,
+            personalRow.realm)
         local previousCharacterBest = characterBucket[pk]
         local becameCharacterBest = BetterRow(personalRow, previousCharacterBest)
         if becameCharacterBest then
@@ -2486,7 +2585,12 @@ local function CommitSession(category)
         end
         BumpDps("personal best committed", becameCharacterBest and {
             scope="record", category=category, player=player,
+            ownerKey=personalRow.ownerKey, realm=personalRow.realm,
+            characterKey=pk,
         } or {scope="local"})
+        if Nexus.DataRetention and Nexus.DataRetention.Request then
+            Nexus.DataRetention.Request("personal DPS best committed")
+        end
         local catLabel = category == "lk" and "Lich King" or "Training Dummy"
         local setLabel = build and build.title or "current Echo set"
         print(string.format(
@@ -2497,7 +2601,7 @@ local function CommitSession(category)
 
         -- Global comparison is only meaningful when the exact current Echo
         -- set is already a published community build.
-        local characterNow = CharacterBestStore()[category][PlayerKey(player)]
+        local characterNow = CharacterBestStore()[category][pk]
         if characterNow == personalRow and Sync and Sync.BroadcastDpsRecord then
             pcall(Sync.BroadcastDpsRecord, {
                 protocolVersion = PROTOCOL_VERSION, fingerprint = key,
@@ -2547,10 +2651,12 @@ function DPS.LocalOwnsDpsBucket(bucket)
     if not bucket or bucket ~= math.floor(bucket)
         or bucket < 1 or bucket > DPS_BUCKETS then return false end
     local me = (UnitName and UnitName("player")) or nil
-    local playerKey = me and PlayerKey(me) or nil
+    local playerKey = me and CurrentCharacterKey(me) or nil
     if not playerKey or playerKey == "invalid" then return false end
     local store = CharacterBestStore()
-    local row = store.dummy and store.dummy[playerKey]
+    local legacyKey = me and PlayerKey(me) or nil
+    local row = store.dummy
+        and (store.dummy[playerKey] or store.dummy[legacyKey])
     if type(row) == "table"
         and Identity.SamePlayer(row.player, me)
         and (tonumber(row.dps) or 0) > 0
@@ -2558,7 +2664,7 @@ function DPS.LocalOwnsDpsBucket(bucket)
         and DpsBucket("dummy", me) == bucket then
         return true
     end
-    row = store.lk and store.lk[playerKey]
+    row = store.lk and (store.lk[playerKey] or store.lk[legacyKey])
     if type(row) == "table"
         and Identity.SamePlayer(row.player, me)
         and (tonumber(row.dps) or 0) > 0
@@ -2669,7 +2775,21 @@ local function ReceiveRecord(record, transportSender, relayed)
 
     MigrateLegacyLeaderboard()
     local bucket = CharacterBestStore()[category]
-    local existing = bucket[PlayerKey(player)]
+    local characterKey = CharacterKey(player, canonicalOwner,
+        realm or ownerRealm)
+    local existing = bucket[characterKey]
+    local existingKey = characterKey
+    local legacyKey = PlayerKey(player)
+    if not existing and legacyKey ~= characterKey then
+        local legacy = bucket[legacyKey]
+        local sameLegacyRecord = legacy
+            and math.floor(tonumber(legacy.dps) or 0) == math.floor(dps)
+            and tonumber(legacy.ts or 0) == tonumber(ts or 0)
+            and tostring(legacy.fingerprint or "") == tostring(fingerprint or "")
+        if sameLegacyRecord then
+            existing, existingKey = legacy, legacyKey
+        end
+    end
     local rawLocked = record.lk or record.lockedEchoes
     if rawLocked ~= nil and not ValidWireEchoList(rawLocked) then
         return RejectReceive("schema")
@@ -2736,8 +2856,20 @@ local function ReceiveRecord(record, transportSender, relayed)
                 existing.relaySender = nil
                 enriched = true
             end
+            local rekeyed = existingKey ~= characterKey
+            if rekeyed then
+                bucket[existingKey] = nil
+                bucket[characterKey] = existing
+                enriched = true
+            end
             if enriched then
-                BumpDps("public record enriched", {scope="metadata"})
+                BumpDps(rekeyed and "public record identity enriched"
+                    or "public record enriched", rekeyed and {
+                        scope="record",category=category,player=player,
+                        ownerKey=existing.ownerKey,realm=existing.realm,
+                        characterKey=characterKey,
+                        previousCharacterKey=existingKey,
+                    } or {scope="metadata"})
                 return true
             end
         end
@@ -2765,10 +2897,15 @@ local function ReceiveRecord(record, transportSender, relayed)
             if safeOk and safeId then row.buildId = safeId end
         end
     end
-    bucket[PlayerKey(player)] = row
+    if existingKey ~= characterKey and existing then bucket[existingKey] = nil end
+    bucket[characterKey] = row
     BumpDps("public record received", {
         scope="record", category=category, player=player,
+        ownerKey=row.ownerKey, realm=row.realm, characterKey=characterKey,
     })
+    if Nexus.DataRetention and Nexus.DataRetention.Request then
+        Nexus.DataRetention.Request("public DPS record received")
+    end
     RequestDataViewRefresh()
     return true
 end
@@ -2793,7 +2930,8 @@ function DPS.ReceiveSubmission(buildId, player, dps, level, category, ts,
     if not (key and player and dps and dps > 0
         and DPS.IsDurationEligible(category, duration)) then return false end
     local bucket = CharacterBestStore()[category]
-    local existing = bucket[PlayerKey(player)]
+    local characterKey = CharacterKey(player)
+    local existing = bucket[characterKey]
     local row = {
         dps = dps, level = level, ts = ts or 0, duration=duration,
         player = player, buildId = buildId,
@@ -2802,10 +2940,14 @@ function DPS.ReceiveSubmission(buildId, player, dps, level, category, ts,
     }
     ReferenceEvidence(row)
     if not IsBetterPublicRecord(row, existing) then return false end
-    bucket[PlayerKey(player)] = row
+    bucket[characterKey] = row
     BumpDps("legacy submission received", {
         scope="record", category=category, player=player,
+        characterKey=characterKey,
     })
+    if Nexus.DataRetention and Nexus.DataRetention.Request then
+        Nexus.DataRetention.Request("legacy DPS record received")
+    end
     RequestDataViewRefresh()
     return true
 end
@@ -2846,8 +2988,8 @@ function DPS.Init(adapter, sync)
         Catalog().Init(NexusDB, Nexus.BundledBuilds)
     end
     MigrateLocalLockedBaseline()
-    MigrateLegacyLeaderboard()
-    if RepairCurrentCharacterClass() then
+    local migrated = MigrateLegacyLeaderboard()
+    if RepairCurrentCharacterClass() and not migrated then
         BumpDps("local class repaired", {scope="metadata"})
     end
     Debug("initialized; current tracked key=" .. tostring(DPS.GetCurrentEchoKey()))
