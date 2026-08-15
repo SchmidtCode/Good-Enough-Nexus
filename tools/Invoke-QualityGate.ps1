@@ -149,7 +149,7 @@ function Invoke-QualityCheck {
 
 function Add-ArtifactPathCheck {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string[]] $Paths)
+    param([Parameter(Mandatory)][AllowEmptyCollection()][string[]] $Paths)
 
     $forbidden = @(
         '(?i)(^|/)(build|dist|node_modules|\.tools|\.ai|\.codex|\.chatgpt)/',
