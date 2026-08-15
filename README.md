@@ -1,4 +1,4 @@
-# Better Nexus
+﻿# Better Nexus
 
 Better Nexus is a community-maintained continuation of the deprecated
 Nexus addon for Project Ebonhold.
@@ -14,8 +14,7 @@ compatibility with existing installations and user data.
 - Current test release: Nexus 1.20 Beta (`1.20.0-beta.1`).
 - Client target: World of Warcraft 3.3.5a / Project Ebonhold.
 - Language target: Lua 5.1.
-- Current TOC maintainer metadata identifies Valentine. Original upstream
-  author attribution is preserved in [UPSTREAM.md](UPSTREAM.md).
+- Current TOC maintainer metadata identifies Valentine. Original upstream author attribution is preserved in [UPSTREAM.md](UPSTREAM.md).
 
 ## What it does
 
@@ -27,11 +26,20 @@ DPS records, and Snapshot convergence for Project Ebonhold.
 - Project Ebonhold on World of Warcraft 3.3.5a.
 - Details! for DPS capture and leaderboard records.
 
+## License, policy, and AI use
+
+- Better Nexus is source-available, not open source.
+- Personal gameplay use follows [LICENSE.md](LICENSE.md).
+- Provenance and redistribution boundaries are documented in [UPSTREAM.md](UPSTREAM.md).
+- AI-assisted development rules are documented in [AI_POLICY.md](AI_POLICY.md).
+- Release safety and archive controls are documented in [RELEASE_SECURITY.md](RELEASE_SECURITY.md).
+- Security and suspected compromises are documented in [SECURITY.md](SECURITY.md).
+
 ## Installation
 
 1. Keep the runtime addon folder named `Nexus`.
-2. Place it under `Interface\AddOns`.
-3. Confirm `Interface\AddOns\Nexus\Nexus.toc` exists.
+2. Place it under `Interface\\AddOns`.
+3. Confirm `Interface\\AddOns\\Nexus\\Nexus.toc` exists.
 4. Start the game or use `/reload`.
 
 Do not rename the installed addon folder to `Better-Nexus`; the repository name
@@ -61,6 +69,8 @@ is different from the runtime addon identity by design.
 - Keep policy decisions deterministic and data-driven.
 - Do not include tests, backups, local logs, or development artifacts in player
   release archives.
+- Include `LICENSE.md`, `AI_POLICY.md`, and `UPSTREAM.md` beside `Nexus.toc` in
+  every player release archive, without adding those Markdown files to the TOC.
 - Validate changes offline and in game before claiming a live issue fixed.
 - Update notices come only from versions on already accepted Nexus Sync traffic.
   Nexus never downloads or installs updates; the notice exposes the stable
@@ -85,10 +95,7 @@ node tests/run-savedvariables-analyzer.js
 git diff --check
 ```
 
-The adjacent upvalue command audits every TOC-loaded function against the WoW
-3.3.5a hard limit of 60. It reports a production advisory above 48 to retain a
-practical 12-upvalue maintenance margin where feasible; the regression fixture
-keeps every reviewed exception explicit.
+The adjacent upvalue command audits every TOC-loaded function against the WoW 3.3.5a hard limit of 60. It reports a production advisory above 48 to retain a practical 12-upvalue maintenance margin where feasible; the regression fixture keeps every reviewed exception explicit.
 
 These checks do not prove in-game behavior; `/reload` and live Project Ebonhold
 verification must still be reported separately.
