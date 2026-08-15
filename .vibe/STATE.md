@@ -15,7 +15,7 @@
 
 - Stage: 38
 - Checkpoint: 38.2
-- Status: NOT_STARTED
+- Status: IN_REVIEW
 
 ## Objective (current checkpoint)
 
@@ -31,11 +31,11 @@ Provide one deterministic local quality-gate entry point with Fast, Full, Packag
 
 ## Acceptance (current checkpoint)
 
-- [ ] Fast selects focused changed-path checks without suppressing final Full review.
+- [x] Fast selects focused changed-path checks without suppressing final Full review.
 - [ ] Full covers every current repository gate required by issue #12.
-- [ ] Package validates safe one-root source parity and cleans all temporary output.
-- [ ] Security reports blocking, advisory, skipped, and unavailable states honestly.
-- [ ] Compact output is deterministic, private-data-safe, and preserves multiple failure evidence with a failing exit status.
+- [x] Package validates safe one-root source parity and cleans all temporary output.
+- [x] Security reports blocking, advisory, skipped, and unavailable states honestly.
+- [x] Compact output is deterministic, private-data-safe, and preserves multiple failure evidence with a failing exit status.
 
 ## Work log (current session)
 
@@ -45,6 +45,7 @@ Provide one deterministic local quality-gate entry point with Fast, Full, Packag
 - Implemented checkpoint 38.1 with exact root dependencies, tracked Lua 5.1/Fengari wrappers, one PowerShell bootstrap, a deterministic self-test, and updated validation documentation.
 - Reviewed checkpoint 38.1 from a separate dependency-clean worktree; all focused gates and scope checks passed at committed `266d510` and the pointer advanced to 38.2.
 - Completed bounded 38.1 hygiene with no code change, debt item, or acceptance defect; wrapper simplicity and exact dependency ownership are retained.
+- Implemented 38.2 Fast/Full/Package/Security orchestration, deterministic changed-path mapping, compact summaries, logical package parity, complete Lua-suite aggregation, and adversarial self-tests.
 
 ## Evidence
 
@@ -58,6 +59,8 @@ Provide one deterministic local quality-gate entry point with Fast, Full, Packag
 - 38.1 focused green: parse `272/272`, integration `70/70`, upvalue `60 pass / 61 fail`, toolchain self-test PASS, and diff check PASS.
 - 38.1 clean-review green: exact `266d510`, bootstrap PASS, clean status, no forbidden runtime/TOC/artifact/cache path, and no checkpoint-hygiene signal beyond preserving deterministic wrapper simplicity.
 - 38.1 hygiene: CLEAN with no product/tool byte change; no new gate was needed because the reviewed committed bytes were unchanged.
+- 38.2 Fast `11 pass / 0 fail / 0 unavailable / 0 skip`; Package `8/0/0/0`; self-tests PASS; Security intentionally fails `4 pass / 4 unavailable` pending checkpoint 38.4.
+- 38.2 Package manifest: 70 files, 66 Lua, 5,049,868 bytes, SHA-256 `e7bda27ac7f638a4603d6068545264830220a91973da980a841440149a02f288`, no retained artifact.
 
 ## Workflow state
 
@@ -90,8 +93,8 @@ Provide one deterministic local quality-gate entry point with Fast, Full, Packag
 
 ## Last completed loop
 
-- Checkpoint 38.1 adversarial review passed and auto-advanced Stage 38 to checkpoint 38.2.
+- Checkpoint 38.2 implementation is ready for review; Full was intentionally reserved for the review role.
 
 ## Recommended next action
 
-- Run the required bounded checkpoint-hygiene pass for 38.1, then implement 38.2 expected-red orchestration and self-tests.
+- Review committed 38.2, run Full exactly once, inspect `summary.json`, and open only failing or suspicious logs.

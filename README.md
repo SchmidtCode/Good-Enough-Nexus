@@ -101,6 +101,22 @@ The bootstrap requires Node.js 20 or newer with npm and runs `npm ci` against
 the exact tracked lockfile. It never uses a developer's ignored `.tools`
 directory, and `node_modules` remains ignored development state.
 
+After bootstrap, use one quality-gate entry point:
+
+```powershell
+./tools/Invoke-QualityGate.ps1 -Mode Fast
+./tools/Invoke-QualityGate.ps1 -Mode Full
+./tools/Invoke-QualityGate.ps1 -Mode Package
+./tools/Invoke-QualityGate.ps1 -Mode Security
+```
+
+`Fast` maps changed paths through `tests/validation-map.json`; `Full` runs the
+complete offline matrix; `Package` verifies a temporary logical `Nexus` package
+manifest without retaining an archive; and `Security` owns artifact, secret,
+workflow, Lua, and PowerShell policy. Results are written under ignored
+`build/verify/`: compact `summary.json` and `summary.md` files plus detailed
+per-check logs. Successful logs are not copied into the summary.
+
 The adjacent upvalue command audits every TOC-loaded function against the WoW 3.3.5a hard limit of 60. It reports a production advisory above 48 to retain a practical 12-upvalue maintenance margin where feasible; the regression fixture keeps every reviewed exception explicit.
 
 These checks do not prove in-game behavior; `/reload` and live Project Ebonhold

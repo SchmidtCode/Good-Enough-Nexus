@@ -8,9 +8,9 @@
 - Stage boundary: infrastructure, tooling, workflow, static-analysis configuration, documentation, and compact branch-local Vibe state only.
 - Hard exclusions: production Lua, `Nexus.toc`, bundled data, runtime tests, historical artifacts, test.17, installation, live SavedVariables, WoW launch, release, and publication.
 
-### 38.1 — Bootstrap the tracked Lua 5.1 validation toolchain
+### 38.1 — Bootstrap the tracked Lua 5.1 validation toolchain (DONE)
 
-- Status: `NOT_STARTED`
+- Status: `DONE`
 - Objective:
   - Replace ignored `.tools/fengari` dependency state with one exact lockfile-backed bootstrap that works from a clean checkout.
 - Deliverables:

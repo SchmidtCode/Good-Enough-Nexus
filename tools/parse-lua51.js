@@ -16,6 +16,17 @@ const ignoredDirectories = new Set([
 const failures = [];
 let parsed = 0;
 
+function parseFile(fullPath) {
+    try {
+        luaparse.parse(fs.readFileSync(fullPath, "utf8"), {
+            luaVersion: "5.1",
+        });
+        parsed += 1;
+    } catch (error) {
+        failures.push(`${path.relative(root, fullPath) || path.basename(fullPath)}: ${error.message}`);
+    }
+}
+
 function visit(directory) {
     const entries = fs.readdirSync(directory, { withFileTypes: true })
         .sort((left, right) => left.name.localeCompare(right.name, "en"));
@@ -26,19 +37,13 @@ function visit(directory) {
         if (entry.isDirectory()) {
             visit(fullPath);
         } else if (entry.isFile() && entry.name.endsWith(".lua")) {
-            try {
-                luaparse.parse(fs.readFileSync(fullPath, "utf8"), {
-                    luaVersion: "5.1",
-                });
-                parsed += 1;
-            } catch (error) {
-                failures.push(`${path.relative(root, fullPath)}: ${error.message}`);
-            }
+            parseFile(fullPath);
         }
     }
 }
 
-visit(root);
+if (fs.statSync(root).isFile()) parseFile(root);
+else visit(root);
 for (const failure of failures) console.error(failure);
 console.log(`Lua 5.1 parse: ${parsed} passed, ${failures.length} failed`);
 process.exit(failures.length === 0 ? 0 : 1);

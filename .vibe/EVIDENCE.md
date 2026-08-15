@@ -16,3 +16,11 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Formal review PASS at committed `266d51032f806083b40d4167071c47a70685280a`: a separate detached dependency-clean worktree completed the tracked bootstrap, then repeated parse `272/272`, integration `70/70`, upvalue boundary `60/61`, and the toolchain self-test with clean status.
 - Adversarial scope proof found no production/test Lua, `Nexus.toc`, build output, ZIP, `.tools`, or dependency cache in the commit. The tracked runner differs from the historical ignored runner only in its usage path; the parser adds deterministic traversal and excludes generated/dependency directories.
 - Bounded checkpoint hygiene at unchanged product/tool head found no redundant wrapper, unnecessary compatibility branch, stale marker, or high-ROI simplification. No product/tool byte changed; the committed focused and clean-checkout results remain applicable.
+
+## 38.2 - Deterministic local quality-gate profiles
+
+- Expected red: `tools/Invoke-QualityGate.ps1`, `tools/Get-ChangedTestPlan.ps1`, `tools/Write-ValidationSummary.js`, and `tests/validation-map.json` were absent at clean checkpoint start.
+- Fast PASS: 11 checks, zero failures/unavailable/skips; changed-path routing selected tooling/package/integration checks, package metadata and release policy passed, and the compact summary contained no absolute local path or successful log body.
+- Package PASS: 8 checks, zero failures/unavailable/skips; logical package has one `Nexus` root, 70 files, 66 Lua files, 5,049,868 bytes, no substitutions, and manifest SHA-256 `e7bda27ac7f638a4603d6068545264830220a91973da980a841440149a02f288`; no ZIP or package tree was retained.
+- Security correctly FAILS before checkpoint 38.4: 4 passed and 4 required checks marked `unavailable` (`gitleaks`, `actionlint`, `zizmor`, `psscriptanalyzer`) with reasons. No unavailable check was reported as passed.
+- Quality-gate self-tests PASS for modes, changed-path mapping, path portability, deterministic ordering, failure exit status, two-failure retention, unavailable-tool failure, compact summary generation, and successful-log omission.

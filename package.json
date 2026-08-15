@@ -7,7 +7,12 @@
     "node": ">=20"
   },
   "scripts": {
-    "test:toolchain": "node tests/run-quality-toolchain.js"
+    "test:toolchain": "node tests/run-quality-toolchain.js",
+    "test:quality-gate": "node tests/run-quality-gate-self-tests.js",
+    "quality:fast": "pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Fast",
+    "quality:full": "pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Full",
+    "quality:package": "pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Package",
+    "quality:security": "pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Security"
   },
   "dependencies": {
     "fengari": "0.1.5",
