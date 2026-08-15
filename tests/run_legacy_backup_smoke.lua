@@ -98,6 +98,9 @@ if sourceSettingsVersion <= 2 then
     assert(root.settingsVersion == Nexus.Store.SettingsVersion()
             and root.legacyDataMigration == nil,
         "v1.19.5 save did not take the guarded current-owner migration path")
+    assert(type(root.buildFilters) == "table"
+            and root.buildFilters.qualifiedOnly == false,
+        "v1.19.5 upgrade defaulted to an empty Qualified Only view")
     for _, id in ipairs(buildIds) do
         assert(Nexus.BuildCatalog.Get(id) ~= nil,
             "v1.19.5 build became unreachable after catalog migration: "
@@ -131,6 +134,56 @@ if sourceSettingsVersion <= 2 then
             and retentionLimits.contentUnlimited == true,
         "v1.19.5 migration unexpectedly enabled content retention limits")
 
+    Nexus.DpsCapture.Init({}, {})
+    Nexus.ViewProjections.Reset()
+    local visibleBuilds, visibleSummary, visibleReason =
+        Nexus.ViewProjections.RequestBuilds(root.buildFilters)
+    local buildPumps = 0
+    while type(visibleBuilds) ~= "table" do
+        assert(visibleReason == "pending", tostring(visibleReason))
+        local published, pumpError = Nexus.ViewProjections.PumpBuilds()
+        assert(not pumpError, tostring(pumpError))
+        buildPumps = buildPumps + 1
+        assert(buildPumps < 10000, "legacy Builds projection did not converge")
+        if published then
+            visibleBuilds, visibleSummary, visibleReason =
+                Nexus.ViewProjections.RequestBuilds(root.buildFilters)
+        end
+    end
+    assert(#visibleBuilds > 0
+            and (tonumber(visibleSummary and visibleSummary.availableCount) or 0) > 0,
+        "v1.19.5 upgrade opened on an empty migrated Builds projection")
+
+    local function ProjectLeaderboard(category)
+        Nexus.ViewProjections.Reset()
+        local rows, _, reason = Nexus.ViewProjections.RequestLeaderboard(
+            category, {classFilter="ALL",search=""})
+        local pumps = 0
+        while type(rows) ~= "table" do
+            assert(reason == "pending", tostring(reason))
+            local published, pumpError = Nexus.ViewProjections.PumpLeaderboard()
+            assert(not pumpError, tostring(pumpError))
+            pumps = pumps + 1
+            assert(pumps < 10000, "legacy leaderboard projection did not converge")
+            if published then
+                rows, _, reason = Nexus.ViewProjections.RequestLeaderboard(
+                    category, {classFilter="ALL",search=""})
+            end
+        end
+        local classified = 0
+        for _, row in ipairs(rows) do
+            if type(row.resolvedClass) == "string" then
+                classified = classified + 1
+            end
+        end
+        return #rows, classified, pumps
+    end
+    local dummyRows, dummyClasses, dummyPumps = ProjectLeaderboard("dummy")
+    local lkRows, lkClasses, lkPumps = ProjectLeaderboard("lk")
+    assert(dummyRows > 0 and lkRows > 0
+            and dummyClasses > 0 and lkClasses > 0,
+        "v1.19.5 leaderboard lost exact build-id/hash class recovery")
+
     local encoded = assert(Nexus.Codec.JSONEncode(root))
     local evidenceEntries = Nexus.LoadoutEvidence.Snapshot()
     local evidenceCount = Count(evidenceEntries)
@@ -154,10 +207,12 @@ if sourceSettingsVersion <= 2 then
             .. table.concat(changed, ","))
     end
     print(string.format(
-        "real v1.19.5 backup migration: builds=%d personal=%d build=%d DPS=%d/%d accounts=%d evidence=%d constants=%d jsonBytes=%d compactionPumps=%d elapsed=%.3fs -- OK",
+        "real v1.19.5 backup migration: builds=%d personal=%d build=%d DPS=%d/%d accounts=%d evidence=%d constants=%d jsonBytes=%d compactionPumps=%d visible=%d buildPumps=%d classes=%d/%d,%d/%d classPumps=%d/%d elapsed=%.3fs -- OK",
         #buildIds,after.personal,after.build,after.dummy,after.lk,
         after.accounts,evidenceCount,constantCount,#encoded,
-        compactionPumps,elapsed))
+        compactionPumps,#visibleBuilds,buildPumps,
+        dummyClasses,dummyRows,lkClasses,lkRows,
+        dummyPumps,lkPumps,elapsed))
     return
 end
 

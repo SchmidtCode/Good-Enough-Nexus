@@ -70,6 +70,7 @@ local CONFLICT_SPELL = 930007
 local INCOMPLETE_SPELL = 930008
 local NOCLASS_SPELL = 930009
 local SAME_PLAYER_SPELL = 930010
+local LEGACY_HASH_SPELL = 930011
 
 local targetFingerprint = Fingerprint(TARGET_SPELL)
 local rawId = "stage36-class-raw-collision"
@@ -78,6 +79,8 @@ local invalidId = "stage36-class-invalid"
 local mismatchId = "stage36-class-mismatch"
 local noClassId = "stage36-class-no-class-evidence"
 local incompleteId = "stage36-class-incomplete-build"
+local legacyHashId = "stage36-class-legacy-hash"
+local legacyHash = "1a2b3c4d"
 
 local bundle = {
     schemaVersion=1,catalogVersion="stage36-class-red",sourceVersion="test",
@@ -124,6 +127,12 @@ local bundle = {
             id=incompleteId,title="Recovered but incomplete",author="Incomplete",
             ownerKey=Identity.OwnerKey("Incomplete", realm),class="DRUID",
             fingerprint=Fingerprint(INCOMPLETE_SPELL),
+            autoDps=true,lastModified=10,
+        },
+        [legacyHashId]={
+            id=legacyHashId,title="Legacy hash record",author="Legacyhash",
+            class="PRIEST",fingerprint=Fingerprint(LEGACY_HASH_SPELL),
+            fingerprintHash=legacyHash,echoes=Echoes(LEGACY_HASH_SPELL),
             autoDps=true,lastModified=10,
         },
     },
@@ -183,6 +192,16 @@ characterBest.dummy.noClassEvidence = {
     player="Classless",dps=839000,duration=60,level=80,ts=7.5,
     protocolVersion=6,buildId=noClassId,fingerprint=Fingerprint(NOCLASS_SPELL),
     echoes=Echoes(NOCLASS_SPELL),
+}
+characterBest.dummy.legacyHash = {
+    player="Legacyhash",dps=838000,duration=60,level=80,ts=7.6,
+    protocolVersion=6,buildId=legacyHashId,
+    fingerprint="@" .. legacyHash,loadoutHash=legacyHash,
+}
+characterBest.dummy.legacyHashMismatch = {
+    player="Legacyhashmismatch",dps=837000,duration=60,level=80,ts=7.7,
+    protocolVersion=6,buildId=legacyHashId,
+    fingerprint="@deadbeef",loadoutHash="deadbeef",
 }
 characterBest.lk.conflict = {
     player="Categoryconflict",class="ROGUE",dps=830000,duration=30,
@@ -282,6 +301,8 @@ local targetPlayerRows = allByPlayerRows[targetPlayer] or {}
 local classless = allByPlayer.Classless
 local incompleteRecovered = allByPlayer.Incompletetest
 local incompletePlayer = "Incompletetest"
+local legacyHashRow = allByPlayer.Legacyhash
+local legacyHashMismatch = allByPlayer.Legacyhashmismatch
 local targetResolvedByPlayer = FindByPlayerBuild(targetPlayerRows, targetPlayer, rawId)
 if incompleteRecovered ~= nil then
     print("incomplete", incompleteRecovered.player, tostring(incompleteRecovered.ordinaryEvidenceSource),
@@ -291,7 +312,7 @@ if incompleteRecovered ~= nil then
 end
 local targetByResolvedMap = targetResolvedByPlayer or target
 
-Control(#allRows == 9 and allSummary.filtered == 9,
+Control(#allRows == 11 and allSummary.filtered == 11,
     "All Classes did not retain every accepted row")
 Control(targetByResolvedMap and targetByResolvedMap.buildId == rawId
         and targetByResolvedMap.resolvedBuildId == resolvedId
@@ -325,6 +346,11 @@ Desired(targetByResolvedMap and targetByResolvedMap.classSource == "exact-build"
     "inline recovered class did not retain exact-build provenance")
 Desired(incompleteRecovered and incompleteRecovered.classSource == "exact-build",
     "same-player row with recovered incomplete identity did not use exact-build class source")
+Desired(legacyHashRow and legacyHashRow.resolvedClass == "PRIEST"
+        and legacyHashRow.classSource == "exact-build",
+    "legacy @hash fingerprint did not recover class from its exact build id/hash")
+Control(legacyHashMismatch and legacyHashMismatch.resolvedClass == nil,
+    "mismatched legacy hash gained catalog class authority")
 
 local currentToken = select(2, UnitClass("player"))
 local currentRows = Project("dummy", currentToken)
@@ -349,8 +375,8 @@ Desired(druidByTarget ~= nil,
 liveClass = "MAGE"
 
 local priestRows = Project("dummy", "PRIEST")
-Control(#priestRows == 0,
-    "unknown, invalid, ambiguous, or mismatched class passed a specific filter")
+Control(#priestRows == 1 and priestRows[1].player == "Legacyhash",
+    "legacy hash recovery or unknown/mismatched class filtering changed")
 
 local combinedRows = Project("combined", "ALL")
 local combined = ByPlayer(combinedRows).Categoryconflict

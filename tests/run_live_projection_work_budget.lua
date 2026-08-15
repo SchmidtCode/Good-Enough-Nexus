@@ -262,11 +262,12 @@ assert(leaderboardSearch:GetScript("OnTextChanged"),
     "real Leaderboard search callback unavailable")(leaderboardSearch)
 Finish()
 
--- Revisions and filter churn during active Sync must remain invalidation-only.
+-- Revision-driven work and Community churn remain deferred during active
+-- Sync, but an explicit Leaderboard category/class/search request must finish
+-- through the same bounded pumps instead of leaving stale rows indefinitely.
 receiving, remaining = true, 3
 local beforeReceive = PublicationSnapshot()
 local beforeCommunityRows = C.VirtualStats().results
-local beforeLeaderboardRows = L.VirtualStats().publishedRows
 Start("active-sync.invalidate")
 for index = 1, 100 do
     Nexus.Revisions.Advance(Nexus.Revisions.BUILD_LIBRARY_CHANGED,
@@ -287,25 +288,31 @@ leaderboardSearch:SetText("")
 assert(leaderboardSearch:GetScript("OnTextChanged"))(
     leaderboardSearch)
 Finish()
-for index = 1, 10 do
+for index = 1, 600 do
     Start("active-sync.pump." .. index)
     PumpOne(0.05)
     Finish()
+    if index == 2 then
+        Nexus.Revisions.Advance(Nexus.Revisions.DPS_CHANGED,
+            {source="interactive-sync-restart"})
+    end
+    if not L.VirtualStats().interactivePending then break end
 end
 local duringReceive = PublicationSnapshot()
 local activeCommunity = C.VirtualStats()
 local activeLeaderboard = L.VirtualStats()
 local communityFrame = activeCommunityFrame
-assert(duringReceive.publications == beforeReceive.publications
-    and duringReceive.binds == beforeReceive.binds,
-    "active Sync published a heavy Community or Leaderboard view")
+assert(duringReceive.publications == beforeReceive.publications + 1
+    and duringReceive.binds == beforeReceive.binds + 1,
+    "active Sync did not publish exactly one explicit Leaderboard query")
 assert(activeCommunity.results == beforeCommunityRows
-    and activeLeaderboard.publishedRows == beforeLeaderboardRows
+    and activeLeaderboard.publishedRows > 0
     and activeLeaderboard.category == "combined"
     and activeLeaderboard.classFilter == "ALL"
+    and activeLeaderboard.interactivePending == false
     and communityFrame._classDropBtn:GetText() == "All Classes"
     and communityFrame._qualifiedBtn:GetText() == "All Shared",
-    "active Sync lost last-good rows or froze visible control state")
+    "active Sync changed Community data or left Leaderboard controls stale")
 assert(communityFrame._pageText:GetText():find("2 / ",1,true)==1,
     "active Sync froze the visible Community page state")
 

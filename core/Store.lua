@@ -156,7 +156,7 @@ local function CompleteLegacyMigration(db, decision)
     WishlistRealizerDB = nil
 end
 
-local function MigratePendingToggleRecords(db)
+local function MigratePendingToggleRecords(db, sourceVersion)
     for _, state in pairs(db.chars) do
         local pending = type(state) == "table" and state.tomeTogglePending
         if type(pending) == "table" then
@@ -168,6 +168,18 @@ local function MigratePendingToggleRecords(db)
             end
         end
     end
+
+    -- v1.19.x had no qualification toggle.  Defaulting that newly introduced
+    -- filter on during an upgrade can make a successfully migrated library
+    -- appear empty when the legacy cache has only one DPS category per
+    -- loadout.  Preserve an explicit newer preference, but let legacy users
+    -- see their converted builds on first open.
+    local legacyBuildFilters = type(db.buildFilters) == "table"
+        and db.buildFilters or nil
+    if sourceVersion == 1 and legacyBuildFilters
+        and legacyBuildFilters.qualifiedOnly == nil then
+        legacyBuildFilters.qualifiedOnly = false
+    end
 end
 
 local MIGRATIONS = {
@@ -177,11 +189,12 @@ local MIGRATIONS = {
 
 local function ApplyMigrations(db)
     local version = NormalizeVersion(db.settingsVersion)
+    local sourceVersion = version
     if version > SETTINGS_VERSION then return end -- future owner wins
     while version < SETTINGS_VERSION do
         local nextVersion = version + 1
         local migrate = MIGRATIONS[nextVersion]
-        if migrate then migrate(db) end
+        if migrate then migrate(db, sourceVersion) end
         version = nextVersion
         -- Stamp only after the idempotent migration completed successfully.
         db.settingsVersion = version

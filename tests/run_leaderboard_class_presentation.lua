@@ -48,9 +48,28 @@ local bundle = {schemaVersion=1,catalogVersion="class-test",sourceVersion="test"
     tombstoned=Build("tombstoned",810003,"PRIEST"),
     ambiguousA=Build("ambiguousA",810004,"SHAMAN"),
     ambiguousB=Build("ambiguousB",810004,"SHAMAN"),
+    authorOnly=Build("authorOnly",810005,"HUNTER"),
+    authorConflictA=Build("authorConflictA",810006,"MAGE"),
+    authorConflictB=Build("authorConflictB",810007,"ROGUE"),
 }}
+bundle.builds.authorOnly.author = "Authoronly"
+bundle.builds.authorConflictA.author = "Authorconflict"
+bundle.builds.authorConflictB.author = "Authorconflict"
 local db = {communityBuilds={},syncTombstones={tombstoned={stamp=50,author="Owner"}}}
 Nexus.BuildCatalog.Init(db,bundle)
+local authorClass, authorSource = Nexus.BuildCatalog.ResolveAuthorClass("Authoronly")
+assert(authorClass=="HUNTER" and authorSource=="author-consensus",
+    "author class index did not resolve its single class")
+local conflictBuild = Build("authorOnlyConflict",810008,"MAGE")
+conflictBuild.author = "Authoronly"
+assert(Nexus.BuildCatalog.Put(conflictBuild))
+local conflictedClass, conflictReason =
+    Nexus.BuildCatalog.ResolveAuthorClass("Authoronly")
+assert(conflictedClass==nil and conflictReason=="author class evidence conflicts",
+    "incremental author class conflict did not fail closed")
+assert(Nexus.BuildCatalog.RemoveOverlay(conflictBuild.id))
+assert(Nexus.BuildCatalog.ResolveAuthorClass("Authoronly")=="HUNTER",
+    "author class index did not recover after incremental removal")
 
 local rows = {
     {player="Protocolmage",class="MAGE",dps=1000000,duration=60,ts=1,
@@ -82,8 +101,14 @@ local rows = {
     {player="Categoryconflict",class="MAGE",dps=989000,duration=60,ts=12,
         buildId="conflict",fingerprint="820012x1",classEvidenceMismatch=true,
         echoes={{spellId=820012,stacks=1}}},
+    {player="Authoronly",dps=988000,duration=60,ts=13,
+        buildId="missing-author",fingerprint="820013x1",
+        echoes={{spellId=820013,stacks=1}}},
+    {player="Authorconflict",dps=987000,duration=60,ts=14,
+        buildId="missing-author-conflict",fingerprint="820014x1",
+        echoes={{spellId=820014,stacks=1}}},
 }
-for index = 13, 200 do
+for index = 15, 200 do
     local spellId = 820000 + index
     rows[index] = {player=string.format("Bulk%03d",index),
         class=index%2==0 and "MAGE" or "ROGUE",
@@ -118,9 +143,12 @@ assert(byPlayer.Exactwarrior.resolvedClass=="WARRIOR"
 assert(byPlayer.Currenthero.resolvedClass=="DRUID"
     and byPlayer.Currenthero.classSource=="current-player",
     "proven current-player class repair failed")
+assert(byPlayer.Authoronly.resolvedClass=="HUNTER"
+    and byPlayer.Authoronly.classSource=="author-consensus",
+    "conflict-free author catalog class was not recovered")
 for _, player in ipairs({"Unknownlegacy","Invalidlegacy","Mismatchedrow",
         "Laterrogue","Tombstonedpriest","Ambiguousshaman","Stalehunter",
-        "Categoryconflict"}) do
+        "Categoryconflict","Authorconflict"}) do
     assert(byPlayer[player].resolvedClass==nil
         and byPlayer[player].classUnavailable==true,
         player.." gained unproven class authority")
@@ -138,6 +166,7 @@ assert(#warm==200 and boardReads==coldReads
     and warmStats.classFromRecord==coldStats.classFromRecord
     and warmStats.classFromBuild==coldStats.classFromBuild
     and warmStats.classFromCurrentPlayer==coldStats.classFromCurrentPlayer
+    and warmStats.classFromAuthor==coldStats.classFromAuthor
     and warmStats.classUnavailable==coldStats.classUnavailable,
     "warm Leaderboard projection repeated source/class work")
 for key, value in pairs(warmStats) do
@@ -147,6 +176,9 @@ end
 local paladin = assert(P.Leaderboard("dummy",{classFilter="PALADIN"}))
 assert(#paladin==1 and paladin[1].player=="Recoveredpaladin",
     "exact recovered class did not pass its filter")
+local hunter = assert(P.Leaderboard("dummy",{classFilter="HUNTER"}))
+assert(#hunter==1 and hunter[1].player=="Authoronly",
+    "author-consensus class did not pass its filter")
 local unavailableFiltered = assert(P.Leaderboard("dummy",{classFilter="PRIEST"}))
 assert(#unavailableFiltered==0,
     "tombstoned/unavailable class passed a specific filter")
@@ -209,6 +241,7 @@ assert(Nexus.Leaderboard.VirtualStats().results==200
 
 local finalStats = P.WorkStats()
 print(string.format(
-    "leaderboard class presentation: rows=%d record=%d build=%d current=%d unavailable=%d warm_delta=0 -- OK",
+    "leaderboard class presentation: rows=%d record=%d build=%d current=%d author=%d unavailable=%d warm_delta=0 -- OK",
     #all,finalStats.classFromRecord,finalStats.classFromBuild,
-    finalStats.classFromCurrentPlayer,finalStats.classUnavailable))
+    finalStats.classFromCurrentPlayer,finalStats.classFromAuthor,
+    finalStats.classUnavailable))
