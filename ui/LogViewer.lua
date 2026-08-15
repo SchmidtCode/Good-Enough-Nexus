@@ -18,14 +18,40 @@ local TABS = {
     { key = "sync",     label = "Sync" },
     { key = "dps",      label = "DPS" },
     { key = "autolock", label = "AutoLock" },
+    { key = "perf",     label = "Perf" },
+    { key = "errors",   label = "Errors" },
+    { key = "peer",     label = "Peer Test" },
 }
 
 local frame, editBox, scroll, tabButtons, statusFS, exportButton
+local peerLabel, peerEdit, peerStart, peerStop
 local exportRunner, exportJob, exportGeneration = nil, nil, 0
 local provider, clearProvider
 local activeTab = "state"
 local repaintPending = false
+local peerRefreshElapsed, peerRefreshActive = 0, false
 local MAX_TEXT_CHARS = 60000
+
+local function SyncPeerRefreshState()
+    peerRefreshElapsed, peerRefreshActive = 0, false
+    if activeTab ~= "peer" then return false end
+    local debugOwner = Nexus and Nexus.PeerDebug
+    if not (debugOwner and type(debugOwner.IsEnabled) == "function") then
+        return false
+    end
+    local ok, active = pcall(debugOwner.IsEnabled)
+    peerRefreshActive = ok and active == true
+    return peerRefreshActive
+end
+
+local function UpdatePeerControls()
+    local shown = activeTab == "peer"
+    for _, control in ipairs({peerLabel,peerEdit,peerStart,peerStop}) do
+        if control then
+            if shown then control:Show() else control:Hide() end
+        end
+    end
+end
 
 local function Repaint()
     repaintPending = false
@@ -55,6 +81,7 @@ local function Repaint()
     for _, b in ipairs(tabButtons or {}) do
         if b.tabKey == activeTab then b:LockHighlight() else b:UnlockHighlight() end
     end
+    UpdatePeerControls()
     if activeTab == "ai_export" and editBox then
         editBox:SetFocus()
         editBox:HighlightText()
@@ -191,7 +218,9 @@ local function EnsureFrame()
     for i, tab in ipairs(TABS) do
         local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
         b:SetSize(76, 22)
-        if prev then
+        if i == 6 then
+            b:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -56)
+        elseif prev then
             b:SetPoint("LEFT", prev, "RIGHT", 4, 0)
         else
             b:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -30)
@@ -201,6 +230,7 @@ local function EnsureFrame()
         b:SetScript("OnClick", function(self)
             StopExport()
             activeTab = self.tabKey
+            SyncPeerRefreshState()
             ScheduleRepaint()
         end)
         tabButtons[i] = b
@@ -226,6 +256,46 @@ local function EnsureFrame()
         if activeTab == "ai_export" then StartExport() else ScheduleRepaint() end
     end)
 
+    peerLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    peerLabel:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 12, 42)
+    peerLabel:SetText("Peer event filter (optional)")
+
+    peerEdit = CreateFrame("EditBox", "NexusPeerTestTarget", frame,
+        "InputBoxTemplate")
+    peerEdit:SetSize(118, 22)
+    peerEdit:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 150, 36)
+    peerEdit:SetAutoFocus(false)
+    peerEdit:SetMaxLetters(40)
+    peerEdit:SetText("")
+
+    peerStart = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    peerStart:SetSize(62, 22)
+    peerStart:SetPoint("LEFT", peerEdit, "RIGHT", 4, 0)
+    peerStart:SetText("Start")
+    peerStart:SetScript("OnClick", function()
+        local debugOwner = Nexus and Nexus.PeerDebug
+        if debugOwner and type(debugOwner.Start) == "function" then
+            local ok, started = pcall(debugOwner.Start, peerEdit:GetText())
+            peerRefreshActive = ok and started ~= false
+            peerRefreshElapsed = 0
+        end
+        ScheduleRepaint()
+    end)
+
+    peerStop = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    peerStop:SetSize(62, 22)
+    peerStop:SetPoint("LEFT", peerStart, "RIGHT", 4, 0)
+    peerStop:SetText("Stop")
+    peerStop:SetScript("OnClick", function()
+        local debugOwner = Nexus and Nexus.PeerDebug
+        if debugOwner and type(debugOwner.Stop) == "function" then
+            pcall(debugOwner.Stop)
+        end
+        peerRefreshActive, peerRefreshElapsed = false, 0
+        ScheduleRepaint()
+    end)
+    UpdatePeerControls()
+
     exportButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     exportButton:SetSize(148, 22)
     exportButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -12, 7)
@@ -245,14 +315,20 @@ local function EnsureFrame()
     clearButton:SetText("Clear Log")
     clearButton:SetScript("OnClick", function(self)
         StopExport()
+        local errorsOnly = activeTab == "errors"
         local ok, result = false, nil
         if type(clearProvider) == "function" then
-            ok, result = pcall(clearProvider)
+            ok, result = pcall(clearProvider, activeTab)
         end
-        activeTab = "state"
+        if activeTab ~= "errors" and activeTab ~= "peer" then
+            activeTab = "state"
+        end
         if ok and result ~= false then
             self:SetText("Cleared")
-            if statusFS then statusFS:SetText("Diagnostic history cleared") end
+            if statusFS then
+                statusFS:SetText(errorsOnly and "Error history cleared"
+                    or "Diagnostic history cleared")
+            end
         else
             self:SetText("Clear Failed")
             if statusFS then statusFS:SetText("Could not clear diagnostic history") end
@@ -270,15 +346,15 @@ local function EnsureFrame()
     clearButton:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText("Clear diagnostic history")
-        GameTooltip:AddLine("Clears retained boards, save/guarantee audits, UI probes, sync events, and DPS debug lines in one click. This does not change settings, builds, or automation.", 1, 1, 1, true)
+        GameTooltip:AddLine("On Errors, clears only retained errors. On Peer Test, clears only that session. Other tabs clear retained boards, audits, UI probes, sync events, DPS debug lines, and errors. Settings, builds, and automation are unchanged.", 1, 1, 1, true)
         GameTooltip:Show()
     end)
     clearButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     scroll = CreateFrame("ScrollFrame", "NexusLogScroll", frame,
         "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -58)
-    scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 36)
+    scroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -84)
+    scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 64)
 
     editBox = CreateFrame("EditBox", nil, scroll)
     editBox:SetMultiLine(true)
@@ -295,6 +371,24 @@ local function EnsureFrame()
     statusFS:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 12, 10)
     statusFS:SetJustifyH("LEFT")
 
+    -- Active Peer Test age/counters repaint once per second only while this
+    -- visible tab is selected. Hidden, stopped, and disabled diagnostics do
+    -- no recurring provider work.
+    frame:SetScript("OnUpdate", function(self, elapsed)
+        if not self:IsShown() or activeTab ~= "peer"
+            or not peerRefreshActive then
+            peerRefreshElapsed = 0
+            return
+        end
+        peerRefreshElapsed = peerRefreshElapsed + (tonumber(elapsed) or 0)
+        if peerRefreshElapsed < 1 then return end
+        peerRefreshElapsed = 0
+        local debugOwner = Nexus and Nexus.PeerDebug
+        local ok, active = pcall(debugOwner.IsEnabled)
+        if not ok or active ~= true then peerRefreshActive = false end
+        Repaint()
+    end)
+
     frame:Hide()
     return frame
 end
@@ -309,8 +403,8 @@ function M.Show(tabKey)
     if Nexus.Panel and Nexus.Panel.AttachMenuFrame then Nexus.Panel.AttachMenuFrame(frame) end
     if Nexus.Theme and Nexus.Theme.StyleWindow then Nexus.Theme.StyleWindow(frame, 0.96) end
     if Nexus.Panel and Nexus.Panel.CloseOtherWindows then Nexus.Panel.CloseOtherWindows("NexusLogViewer") end
-    if Nexus.Panel and Nexus.Panel.CloseOtherWindows then Nexus.Panel.CloseOtherWindows("NexusLogViewer") end
     if tabKey then activeTab = tabKey end
+    SyncPeerRefreshState()
     frame:Show()
     if editBox then editBox:SetText("Loading " .. tostring(activeTab) .. " log...") end
     ScheduleRepaint()

@@ -4,7 +4,7 @@
 --   3. Nothing may ever appear twice in the library.
 local H = dofile("tests/harness.lua")
 dofile("core/Codec.lua")
-dofile("core/Sync.lua")
+dofile("core/SyncProtocol.lua"); dofile("core/SyncTransport.lua"); dofile("core/SyncCompatibility.lua"); dofile("core/SyncReconciler.lua"); dofile("core/SyncInbound.lua"); dofile("core/SyncDiagnostics.lua"); dofile("core/SyncSession.lua"); dofile("core/Sync.lua")
 dofile("data/DefaultProfile.lua")
 dofile("logic/Model.lua")
 dofile("logic/Strategy.lua")
@@ -19,6 +19,11 @@ local provider
 Nexus.LogViewer = { Init = function(p) provider = p end,
     Show = function() end, Toggle = function() end }
 dofile("ui/CommunityBuilds.lua")
+dofile("core/AutomationRuntime.lua")
+dofile("core/MainLifecycle.lua")
+dofile("core/MainCommands.lua")
+dofile("core/MainViewModel.lua")
+dofile("core/MainDiagnostics.lua")
 dofile("core/Main.lua")
 
 local Codec, Sync = Nexus.Codec, Nexus.Sync
@@ -131,7 +136,52 @@ text = provider("sync")
 assert(text:find("tombstoned"), "the tombstone rejection was not logged")
 print("a deleted build stays deleted, even if a stale copy arrives later -- OK")
 
--- 5. A delete from someone who is NOT the author must be REFUSED
+-- 5. A different author cannot seize a tombstoned ID with a newer stamp.
+UnitName = function() return "Griefer" end
+H.sentChatMessages = {}
+assert(Sync.BroadcastBuild({ id=id, title="Hijacked ID", description="bad",
+    author="Griefer", class="ROGUE",
+    echoes={{spellId=200999,quality=0,stacks=1}},
+    postedAt=100000, lastModified=100000 }))
+local hijackMsgs = Drain()
+UnitName = function() return "Solkr" end
+clock = clock + 10
+Sync.RequestSync()
+Deliver(hijackMsgs, "Griefer")
+assert(NexusDB.communityBuilds[id] == nil
+    and NexusDB.syncTombstones[id] ~= nil,
+    "a different author seized a tombstoned build ID with a newer revision")
+print("a tombstoned build ID cannot be seized by a different author -- OK")
+
+H.sentChatMessages = {}
+assert(Sync.BroadcastBuildSummary({ id=id, title="Summary hijack",
+    author="Griefer", class="ROGUE", fingerprintHash="deadbeef",
+    echoCount=1, postedAt=100002, lastModified=100002 }))
+local summaryHijackMsgs = Drain()
+clock = clock + 10
+Sync.RequestSync()
+Deliver(summaryHijackMsgs, "Griefer")
+assert(NexusDB.communityBuilds[id] == nil
+    and NexusDB.syncTombstones[id] ~= nil,
+    "a different author seized a tombstoned build ID through a summary")
+print("summary-only sync cannot bypass tombstone ownership -- OK")
+
+H.sentChatMessages = {}
+assert(Sync.BroadcastBuild({ id=id, title="Authorized return", description="good",
+    author="Solkr", ownerKey="solkr@unknown", class="ROGUE",
+    echoes={{spellId=200100,quality=3,stacks=1}},
+    postedAt=100001, lastModified=100001 }))
+local returnMsgs = Drain()
+clock = clock + 10
+Sync.RequestSync()
+Deliver(returnMsgs, "Solkr")
+assert(NexusDB.communityBuilds[id]
+    and NexusDB.communityBuilds[id].title == "Authorized return"
+    and NexusDB.syncTombstones[id] == nil,
+    "the original author could not explicitly supersede their tombstone")
+print("the original author can supersede their tombstone with a newer revision -- OK")
+
+-- 6. A delete from someone who is NOT the author must be REFUSED
 NexusDB.communityBuilds = { ["victim"] = { id = "victim",
     title = "Someone Else's Build", description = "d", author = "Solkr",
     class = "ROGUE", echoes = { { spellId = 1, quality = 0, stacks = 1 } },
@@ -145,7 +195,7 @@ text = provider("sync")
 assert(text:find("is not the author"), "the refused delete was not logged with a reason")
 print("a delete from a non-author is refused and logged -- OK")
 
--- 6. Nobody can delete YOUR OWN build out from under you
+-- 7. Nobody can delete YOUR OWN build out from under you
 NexusDB.communityBuilds = { ["mine"] = { id = "mine", title = "My Build",
     description = "d", author = "Solkr", class = "ROGUE",
     echoes = { { spellId = 1, quality = 0, stacks = 1 } },

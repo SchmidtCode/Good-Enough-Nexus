@@ -42,6 +42,7 @@ DefaultProfile.defaultSettings = {
     -- fully on. Existing saves simply lack this key (nil), which is
     -- exactly as falsy as `false` -- no SETTINGS_VERSION bump needed.
     autoLockEchoes = false,
+    updateNotifications = true, -- chat + persistent panel notice; manual install only
     anchorSpellId = nil, -- explicit override; honored only when on the wishlist
     -- Diversity-anchor auto-detection: if no explicit anchorSpellId, the
     -- anchor is the wishlist echo whose name matches one of these. Adaptive
