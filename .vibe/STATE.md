@@ -14,26 +14,28 @@
 ## Current focus
 
 - Stage: 38
-- Checkpoint: 38.1
-- Status: IN_REVIEW
+- Checkpoint: 38.2
+- Status: NOT_STARTED
 
 ## Objective (current checkpoint)
 
-Replace ignored `.tools/fengari` dependency state with an exact tracked `npm ci` bootstrap and compatible Lua 5.1 parser/test-runner wrappers.
+Provide one deterministic local quality-gate entry point with Fast, Full, Package, and Security profiles, changed-path routing, compact summaries, and self-tests.
 
 ## Deliverables (current checkpoint)
 
-- Exact Node dependency manifest and lockfile.
-- Tracked parser and runner preserving current Lua 5.1/Fengari semantics.
-- One PowerShell bootstrap entry point and focused self-tests.
-- Clean-checkout bootstrap documentation and evidence.
+- Fast, Full, Package, and Security orchestration in `tools/Invoke-QualityGate.ps1`.
+- Changed-path routing from `tests/validation-map.json` through `tools/Get-ChangedTestPlan.ps1`.
+- Compact deterministic `summary.json`, `summary.md`, and separate check logs.
+- Temporary package parity/manifest/checksum validation with no retained artifact.
+- Self-tests covering modes, failure propagation, ordering, portability, unavailable tools, and summary bounds.
 
 ## Acceptance (current checkpoint)
 
-- [x] Missing tracked parser/runner state is reproduced as expected red.
-- [x] A dependency-clean checkout bootstraps using tracked files and `npm ci`.
-- [x] Lua 5.1 parsing, integration execution, and 60-pass/61-fail upvalue boundary pass.
-- [x] No dependency cache, generated output, runtime/test/TOC, or artifact byte is committed.
+- [ ] Fast selects focused changed-path checks without suppressing final Full review.
+- [ ] Full covers every current repository gate required by issue #12.
+- [ ] Package validates safe one-root source parity and cleans all temporary output.
+- [ ] Security reports blocking, advisory, skipped, and unavailable states honestly.
+- [ ] Compact output is deterministic, private-data-safe, and preserves multiple failure evidence with a failing exit status.
 
 ## Work log (current session)
 
@@ -41,6 +43,7 @@ Replace ignored `.tools/fengari` dependency state with an exact tracked `npm ci`
 - Reconciled completed root Stage 37.1/product head `7aee1d9` with PR #10 publication tree and selected remote PR head `36f187824b8a24f6fb51562e6ec1101c300308ef` as the infrastructure base.
 - Designed Stage 38 as six bounded infrastructure checkpoints tracked by issue #12.
 - Implemented checkpoint 38.1 with exact root dependencies, tracked Lua 5.1/Fengari wrappers, one PowerShell bootstrap, a deterministic self-test, and updated validation documentation.
+- Reviewed checkpoint 38.1 from a separate dependency-clean worktree; all focused gates and scope checks passed at committed `266d510` and the pointer advanced to 38.2.
 
 ## Evidence
 
@@ -52,6 +55,7 @@ Replace ignored `.tools/fengari` dependency state with an exact tracked `npm ci`
 - Root coordination state and independently owned `.lag-hotfix-worktree` are read-only and outside this worktree.
 - 38.1 expected red: tracked parser/runner/manifests absent and `node` unavailable on PATH; no product test failed.
 - 38.1 focused green: parse `272/272`, integration `70/70`, upvalue `60 pass / 61 fail`, toolchain self-test PASS, and diff check PASS.
+- 38.1 clean-review green: exact `266d510`, bootstrap PASS, clean status, no forbidden runtime/TOC/artifact/cache path, and no checkpoint-hygiene signal beyond preserving deterministic wrapper simplicity.
 
 ## Workflow state
 
@@ -84,8 +88,8 @@ Replace ignored `.tools/fengari` dependency state with an exact tracked `npm ci`
 
 ## Last completed loop
 
-- Checkpoint 38.1 implementation is committed and ready for independent review.
+- Checkpoint 38.1 adversarial review passed and auto-advanced Stage 38 to checkpoint 38.2.
 
 ## Recommended next action
 
-- Review committed checkpoint 38.1, run the exact focused gates plus a dependency-clean checkout bootstrap, and inspect only failures or suspicious output.
+- Run the required bounded checkpoint-hygiene pass for 38.1, then implement 38.2 expected-red orchestration and self-tests.
