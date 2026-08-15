@@ -2000,12 +2000,21 @@ function DPS.BroadcastAllBuildBests(peerHash, onlyBucket, progress, maxItems,
     local revisionChanged = state and state.revision ~= localRevision
     if state and (state.key ~= stateKey or revisionChanged) then
         local pending = math.max(0, math.floor(tonumber(state.pending) or 0))
+        local superseded = state.localHash ~= localHash or revisionChanged
         if pending > 0 then
-            TerminalOutbound((state.localHash ~= localHash or revisionChanged)
+            TerminalOutbound(superseded
                 and "stale_record" or "outside_request", pending)
         end
         progress._responseState = nil
         state = nil
+        -- A superseded immutable snapshot is a complete accounting boundary.
+        -- Do not start walking its replacement in this call: doing so makes
+        -- diagnostics and work performed depend on Lua's table iteration
+        -- order. The reconciler will begin the fresh snapshot on its retry.
+        if superseded then
+            return 0, false, true, "stale candidate snapshot",
+                0, 0, 0, false
+        end
     end
     if not state then
         state = {key=stateKey, localHash=localHash, revision=localRevision,
