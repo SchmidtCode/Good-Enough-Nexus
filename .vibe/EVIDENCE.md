@@ -27,3 +27,10 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Review repair `b71ee3240d52d39aa7a1b9a476cb722cf4116653` permits a clean committed worktree to supply an empty changed-path collection; focused self-tests and Fast passed after the one-line fix.
 - Formal Full review PASS at exact clean `b71ee32`: 16 checks passed in 252.596 seconds; complete Lua `202/202`, Lua 5.1 parse `272/272`, integration `70/70`, hostile Sync `4,000/4,000`, and exact upvalue `60 pass / 61 fail` across 66 TOC files / 2,893 functions with maximum 60 at `ui/Panel.lua:385 EnsureFrame` and `AutomationRuntime.Step=16`.
 - Full also passed exporter, read-only SavedVariables analyzer, package metadata/source parity, module contracts, privacy, StutterAlert, release policy, and diff checks. Compact summaries contained no absolute user path, raw record data, packets, credentials, or successful log bodies.
+## Checkpoint 38.2 hygiene
+
+- Bounded scope: the files delivered by `1b096cb` plus the clean-worktree repair in `b71ee32`.
+- Hot spots: none; the profile registry, deterministic writer, path mapper, and package verifier remain intentionally direct and independently testable.
+- Quick wins: none; no behavior-preserving simplification had enough value to justify churn after the passing exact-head review.
+- Debt items: none; checkpoint 38.4 already owns the explicitly unavailable security tools.
+- Validation: status clean, stale/debug marker scan clean except the intentional self-test result line, and `git diff --check` passed. No product or test byte changed, so Full was not repeated.
