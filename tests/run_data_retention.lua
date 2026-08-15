@@ -275,11 +275,50 @@ local relaxedLimits = Nexus.DataRetention.Limits({settings={
     communityRetentionMaxPerAuthor=1,
 }})
 assert(relaxedLimits.enabled == false
-    and relaxedLimits.topPerCategory == 1000
-    and relaxedLimits.minPerClassPerCategory == 100
-    and relaxedLimits.topAverage == 1000
-    and relaxedLimits.otherRemoteBuilds == 1000
-    and relaxedLimits.remotePerAuthor == 1000,
-    "disabled ranked retention did not retain hard safety ceilings")
+    and relaxedLimits.contentUnlimited == true
+    and relaxedLimits.topPerCategory == 25
+    and relaxedLimits.minPerClassPerCategory == 1
+    and relaxedLimits.topAverage == 10
+    and relaxedLimits.otherRemoteBuilds == 0
+    and relaxedLimits.remotePerAuthor == 1,
+    "disabled ranked retention did not preserve its dormant configuration")
+
+local unlimited = {
+    settings={communityRetentionEnabled=false},
+    communityBuilds={},syncTombstones={},
+    dpsCapture={personalBest={},buildBest={},characterBest={dummy={},lk={}}},
+}
+local function UnlimitedCount(source)
+    local total = 0
+    for _ in pairs(source or {}) do total = total + 1 end
+    return total
+end
+for index = 1, 1100 do
+    local key = string.format("unlimited-%04d", index)
+    unlimited.communityBuilds[key] = {
+        id=key,author="Remote",lastModified=index,
+    }
+    unlimited.dpsCapture.characterBest.dummy[key] = {
+        player=key,dps=index,fingerprint=key,buildId=key,
+    }
+    unlimited.dpsCapture.characterBest.lk[key] = {
+        player=key,dps=index,fingerprint=key,buildId=key,
+    }
+    unlimited.dpsCapture.personalBest[key] = {dummy={dps=index}}
+    unlimited.dpsCapture.buildBest[key] = {dummy={dps=index}}
+end
+local unlimitedSummary = Nexus.DataRetention.Enforce(
+    unlimited, "disabled content retention")
+assert(unlimitedSummary.contentUnlimited == true
+        and unlimitedSummary.characterBestRemoved == 0
+        and unlimitedSummary.personalRemoved == 0
+        and unlimitedSummary.buildBestRemoved == 0
+        and unlimitedSummary.overlayRemoved == 0
+        and UnlimitedCount(unlimited.communityBuilds) == 1100
+        and UnlimitedCount(unlimited.dpsCapture.characterBest.dummy) == 1100
+        and UnlimitedCount(unlimited.dpsCapture.characterBest.lk) == 1100
+        and UnlimitedCount(unlimited.dpsCapture.personalBest) == 1100
+        and UnlimitedCount(unlimited.dpsCapture.buildBest) == 1100,
+    "disabled retention still capped build or DPS content")
 
 print("bounded community/DPS retention and tombstone compaction -- OK")

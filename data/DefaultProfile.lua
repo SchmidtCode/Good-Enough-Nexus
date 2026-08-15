@@ -44,9 +44,9 @@ DefaultProfile.defaultSettings = {
     autoLockEchoes = false,
     updateNotifications = true, -- chat + persistent panel notice; manual install only
     -- Community persistence is a local cache over the immutable bundled
-    -- catalog. Ranked pruning is opt-in; when disabled, the relaxed limits
-    -- remain hard safety ceilings so hostile/noisy peers cannot grow the
-    -- SavedVariables file without bound.
+    -- catalog. Ranked pruning is opt-in; when disabled, build and DPS content
+    -- is retained without count limits. The values below remain the saved
+    -- policy used if ranked retention is enabled later.
     communityRetentionEnabled = false,
     communityRetentionTopPerCategory = 100,
     communityRetentionMinPerClassPerCategory = 15,

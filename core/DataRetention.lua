@@ -69,20 +69,11 @@ local function ResolveLimits(database)
             limits[name] = math.max(spec.min, math.min(spec.max, value))
         end
     end
-    if not enabled then
-        -- "Off" disables the smaller ranking policy, not the absolute safety
-        -- boundary. A compromised/noisy mesh must never grow SavedVariables
-        -- without limit.
-        for name, spec in pairs(CONFIGURED_LIMITS) do
-            limits[name] = spec.max
-        end
-        -- Per-author fairness is part of ranked retention. With ranking off,
-        -- only the overall remote-cache safety ceiling applies; otherwise one
-        -- legitimate prolific author can unexpectedly lose data at 250 while
-        -- the UI and documented off-mode ceiling both allow 1000 rows.
-        limits.remotePerAuthor = limits.otherRemoteBuilds
-    end
     limits.enabled = enabled
+    -- Retain the user's configured numbers while disabled so opting in later
+    -- restores the same policy. No build or DPS content limit is applied in
+    -- this mode; only bounded deletion/eviction metadata maintenance remains.
+    limits.contentUnlimited = not enabled
     limits.minPerClassPerCategory = math.min(
         limits.minPerClassPerCategory, limits.topPerCategory)
     limits.minAveragePerClass = math.min(
@@ -693,37 +684,44 @@ function Retention.Enforce(database, reason)
         local overlayCount = Count(database.communityBuilds)
         local evictionCount = Count(database.communityRetentionEvictions)
         local tombstoneCount = Count(database.syncTombstones)
-        if dummyCount <= limits.topPerCategory
-            and lkCount <= limits.topPerCategory
-            and personalCount <= limits.personalFingerprints
-            and buildBestCount <= limits.buildBestFingerprints
-            and overlayCount <= limits.otherRemoteBuilds
-            and evictionCount <= limits.evictionMarkers
-            and tombstoneCount <= limits.exactTombstones then
-            local summary = {
-                schemaVersion=SCHEMA_VERSION,
-                reason=tostring(reason or "maintenance"):sub(1,80),
-                characterBestRemoved=0,selectedDummy=dummyCount,
-                selectedLk=lkCount,selectedAverage=0,personalRemoved=0,
-                buildBestRemoved=0,overlayBefore=overlayCount,
-                overlayAfter=overlayCount,overlayRemoved=0,
-                orphanAutoBuildsRemoved=0,perClassRemoved=0,
-                perAuthorRemoved=0,globalRemoved=0,referencedBuildsKept=0,
-                limits=Copy(limits),evictionMarkersAdded=0,
-                evictionMarkersBefore=evictionCount,
-                evictionMarkersAfter=evictionCount,evictionMarkersRemoved=0,
-                buildRetentionFloor=tonumber(database.communityBuildRetentionFloor) or 0,
-                tombstonesBefore=tombstoneCount,tombstonesAfter=tombstoneCount,
-                tombstonesRemoved=0,
-                tombstoneFloor=tonumber(database.syncTombstoneFloor) or 0,
-                evidenceRemoved=0,evidenceGcBlocked=false,fastPath=true,
-            }
-            if type(database.dataRetention.last) ~= "table" then
-                database.dataRetention.lastRun = EpochNow()
-                database.dataRetention.last = Copy(summary)
-            end
-            return summary
+        local now = EpochNow()
+        local evictions = PruneEvictionMarkers(database, now)
+        local tombstones = PruneTombstones(database, now)
+        local evidenceRemoved, evidenceBlocked = 0, false
+        if tombstones.removed > 0 then
+            evidenceRemoved, evidenceBlocked = CollectEvidence(database)
         end
+        local summary = {
+            schemaVersion=SCHEMA_VERSION,
+            reason=tostring(reason or "maintenance"):sub(1,80),
+            contentUnlimited=true,
+            characterBestRemoved=0,selectedDummy=dummyCount,
+            selectedLk=lkCount,selectedAverage=0,personalRemoved=0,
+            buildBestRemoved=0,overlayBefore=overlayCount,
+            overlayAfter=overlayCount,overlayRemoved=0,
+            orphanAutoBuildsRemoved=0,perClassRemoved=0,
+            perAuthorRemoved=0,globalRemoved=0,referencedBuildsKept=0,
+            limits=Copy(limits),evictionMarkersAdded=0,
+            evictionMarkersBefore=evictionCount,
+            evictionMarkersAfter=evictions.after,
+            evictionMarkersRemoved=evictions.removed,
+            buildRetentionFloor=evictions.floor,
+            tombstonesBefore=tombstoneCount,
+            tombstonesAfter=tombstones.after,
+            tombstonesRemoved=tombstones.removed,
+            tombstoneFloor=tombstones.floor,
+            evidenceRemoved=evidenceRemoved,evidenceGcBlocked=evidenceBlocked,
+            fastPath=evictions.removed == 0 and tombstones.removed == 0,
+        }
+        local prior = database.dataRetention.last
+        local modeChanged = type(prior) ~= "table"
+            or prior.contentUnlimited ~= true
+        if modeChanged or evictions.removed > 0 or tombstones.removed > 0
+            or evidenceRemoved > 0 then
+            database.dataRetention.lastRun = now
+            database.dataRetention.last = Copy(summary)
+        end
+        return summary
     end
     local selected, fingerprints, selectedBuildIds, categoryCounts =
         SelectCharacterBest(dps, limits, database.communityBuilds)
