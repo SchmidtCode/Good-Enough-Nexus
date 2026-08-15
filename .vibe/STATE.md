@@ -44,6 +44,7 @@ Provide one deterministic local quality-gate entry point with Fast, Full, Packag
 - Designed Stage 38 as six bounded infrastructure checkpoints tracked by issue #12.
 - Implemented checkpoint 38.1 with exact root dependencies, tracked Lua 5.1/Fengari wrappers, one PowerShell bootstrap, a deterministic self-test, and updated validation documentation.
 - Reviewed checkpoint 38.1 from a separate dependency-clean worktree; all focused gates and scope checks passed at committed `266d510` and the pointer advanced to 38.2.
+- Completed bounded 38.1 hygiene with no code change, debt item, or acceptance defect; wrapper simplicity and exact dependency ownership are retained.
 
 ## Evidence
 
@@ -56,6 +57,7 @@ Provide one deterministic local quality-gate entry point with Fast, Full, Packag
 - 38.1 expected red: tracked parser/runner/manifests absent and `node` unavailable on PATH; no product test failed.
 - 38.1 focused green: parse `272/272`, integration `70/70`, upvalue `60 pass / 61 fail`, toolchain self-test PASS, and diff check PASS.
 - 38.1 clean-review green: exact `266d510`, bootstrap PASS, clean status, no forbidden runtime/TOC/artifact/cache path, and no checkpoint-hygiene signal beyond preserving deterministic wrapper simplicity.
+- 38.1 hygiene: CLEAN with no product/tool byte change; no new gate was needed because the reviewed committed bytes were unchanged.
 
 ## Workflow state
 
