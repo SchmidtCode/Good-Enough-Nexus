@@ -2,6 +2,7 @@ Set-StrictMode -Version Latest
 
 function Invoke-GitByteOutput {
     [CmdletBinding()]
+    [OutputType([object[]])]
     param(
         [Parameter(Mandatory)][string] $RepositoryRoot,
         [Parameter(Mandatory)][string[]] $Arguments
@@ -39,6 +40,7 @@ function Invoke-GitByteOutput {
 
 function ConvertFrom-NulDelimitedUtf8 {
     [CmdletBinding()]
+    [OutputType([object[]])]
     param([Parameter(Mandatory)][AllowEmptyCollection()][byte[]] $Bytes)
 
     if ($Bytes.Length -eq 0) { return @() }
@@ -59,8 +61,9 @@ function ConvertFrom-NulDelimitedUtf8 {
     return @($tokens)
 }
 
-function ConvertFrom-GitNameStatusBytes {
+function ConvertFrom-GitNameStatusOutput {
     [CmdletBinding()]
+    [OutputType([object[]])]
     param([Parameter(Mandatory)][AllowEmptyCollection()][byte[]] $Bytes)
 
     $tokens = @(ConvertFrom-NulDelimitedUtf8 -Bytes $Bytes)
@@ -105,8 +108,9 @@ function ConvertFrom-GitNameStatusBytes {
     return @($records)
 }
 
-function Get-GitChangedPathRecords {
+function Get-GitChangedPathRecord {
     [CmdletBinding()]
+    [OutputType([object[]])]
     param(
         [Parameter(Mandatory)][string] $RepositoryRoot,
         [string] $BaseRef
@@ -122,7 +126,7 @@ function Get-GitChangedPathRecords {
     }
     foreach ($arguments in $diffs) {
         $bytes = Invoke-GitByteOutput -RepositoryRoot $RepositoryRoot -Arguments $arguments
-        foreach ($record in @(ConvertFrom-GitNameStatusBytes -Bytes $bytes)) {
+        foreach ($record in @(ConvertFrom-GitNameStatusOutput -Bytes $bytes)) {
             $records.Add($record)
         }
     }

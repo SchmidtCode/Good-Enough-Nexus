@@ -13,6 +13,7 @@ function ConvertTo-NormalizedArtifactPath {
 
 function Test-ArtifactPathSet {
     [CmdletBinding()]
+    [OutputType([object[]])]
     param(
         [Parameter(Mandatory)][string] $RepositoryRoot,
         [Parameter(Mandatory)][AllowEmptyCollection()][string[]] $Candidates,

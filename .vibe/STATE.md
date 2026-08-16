@@ -8,9 +8,9 @@
 
 - Stage: 42
 - Checkpoint: 42.1
-- Status: NOT_STARTED
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: consolidated Stage 41 head `8a1c35b` plus the current Vibe receipt commit
+- Candidate head: Stage 42.1 implementation candidate at branch `HEAD`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
@@ -26,11 +26,11 @@ Preserve only exact inherited PSScriptAnalyzer findings while detecting ownershi
 
 ## Acceptance (current checkpoint)
 
-- [ ] Exact inherited findings remain advisory and removed findings report improvement.
-- [ ] Same-rule findings in a new file or owner fail as new.
-- [ ] Duplicate same-rule findings remain distinct.
-- [ ] Stale baseline entries cannot hide real findings.
-- [ ] Focused security policy, PSScriptAnalyzer, and Fast pass.
+- [x] Exact inherited findings remain advisory and removed findings report improvement.
+- [x] Same-rule findings in a new file or owner fail as new.
+- [x] Duplicate same-rule findings remain distinct.
+- [x] Stale baseline entries cannot hide real findings.
+- [x] Focused security policy, PSScriptAnalyzer, and Fast pass.
 
 ## Evidence
 
@@ -38,6 +38,7 @@ Preserve only exact inherited PSScriptAnalyzer findings while detecting ownershi
 - Stage 41.1: shared NUL-delimited Git records preserve rename/copy source and destination ownership; policy documents have explicit Full/security owners.
 - Stage 41.2: staged/all-tracked artifact scans consume raw Git paths and share one fail-closed policy; hostile and force-added fixtures pass.
 - Stage 41.3: every blocking non-pass fails, Package is a required exact-base CI job, and Package `10/10` plus Fast `15/15` passed without retained output.
+- Stage 42.1: four exact inherited findings remain advisory; owner/message drift, duplicates, stale entries, and improvements are distinguished; focused policy and Fast `15/15` pass.
 
 ## Work log
 
@@ -51,6 +52,7 @@ Preserve only exact inherited PSScriptAnalyzer findings while detecting ownershi
 - Stage 41 retrospective recorded five actionable lessons from its 10 delivery loops; no repeated review cycle, split, skip, blocker, or decision-required issue occurred.
 - Stage 42 design confirmed two bounded owners: 42.1 exact advisory fingerprints in `Test-SecurityPolicy.ps1`, then 42.2 archive-layout and Python-distribution integrity in `Bootstrap-SecurityTools.ps1`; no split or pointer change was needed.
 - Stage 42 maintenance refactor scan selected pure baseline comparison for 42.1 and pure archive-layout/executable resolution for 42.2; both are already scoped by PLAN, and the 42.1 product pointer remains `NOT_STARTED`.
+- Checkpoint 42.1 replaced rule-count allowances with repository-relative owner/rule/message fingerprints, removed eight Stage 41 helper warnings rather than baselining them, and passed the synthetic matrix, current PSScriptAnalyzer reconciliation, security-policy tests, and Fast `15/15`.
 
 ## Workflow state
 
@@ -63,7 +65,6 @@ Preserve only exact inherited PSScriptAnalyzer findings while detecting ownershi
 
 ## Active issues
 
-- PSScriptAnalyzer baseline is count-only rather than owner-exact.
 - Security bootstrap lacks archive-layout validation and Python distribution hashes.
 - Committed terminal Vibe state conflicts with fresh-checkout dispatcher truth.
 
@@ -84,8 +85,8 @@ Preserve only exact inherited PSScriptAnalyzer findings while detecting ownershi
 
 ## Last completed loop
 
-- Stage 41.3 formal review and bounded hygiene passed; Stage 41 consolidation moved the pointer to 42.1.
+- Stage 42.1 implementation passed focused exact-baseline reconciliation and Fast; formal review is next.
 
 ## Recommended next action
 
-- Follow the dispatcher-selected Stage 42 route, then implement 42.1 expected-red owner/fingerprint fixtures and the smallest exact-baseline repair.
+- Formally review the Stage 42.1 exact-baseline implementation, then run its bounded hygiene pass before advancing to 42.2.

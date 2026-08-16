@@ -7,7 +7,7 @@
 
 ### 42.1 — Replace count-only static-analysis baseline
 
-- Status: `NOT_STARTED`
+- Status: `IN_REVIEW`
 - Objective:
   - Preserve only exact inherited PSScriptAnalyzer findings while detecting ownership drift and same-rule replacements.
 - Deliverables:
@@ -15,11 +15,11 @@
   - Explicit reviewed baseline entries and improvement reporting.
   - Synthetic inheritance, disappearance, move, duplicate, and stale-entry fixtures.
 - Acceptance:
-  - [ ] Exact inherited findings remain advisory and removed findings report improvement.
-  - [ ] Same-rule findings in a new file or owner fail as new.
-  - [ ] Duplicate same-rule findings remain distinct.
-  - [ ] Stale baseline entries cannot hide real findings.
-  - [ ] Focused security policy, PSScriptAnalyzer, and Fast pass.
+  - [x] Exact inherited findings remain advisory and removed findings report improvement.
+  - [x] Same-rule findings in a new file or owner fail as new.
+  - [x] Duplicate same-rule findings remain distinct.
+  - [x] Stale baseline entries cannot hide real findings.
+  - [x] Focused security policy, PSScriptAnalyzer, and Fast pass.
 - Demo commands:
   - `node tests/run-security-policy.js`
   - `pwsh -NoProfile -File tools/Test-SecurityPolicy.ps1 -Check PSScriptAnalyzer`

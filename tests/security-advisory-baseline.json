@@ -1,11 +1,35 @@
 {
-  "schema": 1,
-  "psscriptanalyzer": {
-    "PSReviewUnusedParameter": 2,
-    "PSUseApprovedVerbs": 2,
-    "PSUseOutputTypeCorrectly": 1,
-    "PSUseSingularNouns": 1
-  },
+  "schema": 2,
+  "psscriptanalyzer": [
+    {
+      "path": "tools/Invoke-QualityGate.ps1",
+      "rule": "PSReviewUnusedParameter",
+      "message_sha256": "d5a7f0b5022926ccdb855c5bc536a27ce7ce216a166c8eead0ee4fc7400970da",
+      "occurrence": 1,
+      "fingerprint": "tools/Invoke-QualityGate.ps1|PSReviewUnusedParameter|d5a7f0b5022926ccdb855c5bc536a27ce7ce216a166c8eead0ee4fc7400970da|1"
+    },
+    {
+      "path": "tools/Invoke-QualityGate.ps1",
+      "rule": "PSReviewUnusedParameter",
+      "message_sha256": "a9eea2cf7ee23384b17818d7752111c3a220fe97774dc1c62c59794796fdf678",
+      "occurrence": 1,
+      "fingerprint": "tools/Invoke-QualityGate.ps1|PSReviewUnusedParameter|a9eea2cf7ee23384b17818d7752111c3a220fe97774dc1c62c59794796fdf678|1"
+    },
+    {
+      "path": "tools/Test-ReleasePolicy.ps1",
+      "rule": "PSUseApprovedVerbs",
+      "message_sha256": "16e1a068303056df9257e53c4aa89265e282bb6c20b1a0ac6d25c7f04392fc7d",
+      "occurrence": 1,
+      "fingerprint": "tools/Test-ReleasePolicy.ps1|PSUseApprovedVerbs|16e1a068303056df9257e53c4aa89265e282bb6c20b1a0ac6d25c7f04392fc7d|1"
+    },
+    {
+      "path": "tools/Test-ReleasePolicy.ps1",
+      "rule": "PSUseApprovedVerbs",
+      "message_sha256": "1bc2e111cf447d95b7e140c9f310fabb343d345173a2a05d3d2f9975ad8ca5e8",
+      "occurrence": 1,
+      "fingerprint": "tools/Test-ReleasePolicy.ps1|PSUseApprovedVerbs|1bc2e111cf447d95b7e140c9f310fabb343d345173a2a05d3d2f9975ad8ca5e8|1"
+    }
+  ],
   "zizmor": {
     "reported": 0,
     "default_suppressed": 1

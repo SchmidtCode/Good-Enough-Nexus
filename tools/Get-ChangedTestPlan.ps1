@@ -69,7 +69,7 @@ if ($Paths.Count -gt 0) {
     }
 }
 else {
-    foreach ($record in @(Get-GitChangedPathRecords -RepositoryRoot $repositoryRoot -BaseRef $BaseRef)) {
+    foreach ($record in @(Get-GitChangedPathRecord -RepositoryRoot $repositoryRoot -BaseRef $BaseRef)) {
         Add-ChangedPath -Path $record.Path -DeletedFlag:$record.Deleted
     }
 }

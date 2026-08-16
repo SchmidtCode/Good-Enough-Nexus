@@ -8,6 +8,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'PSScriptAnalyzerBaseline.ps1')
 $binRoot = Join-Path $repositoryRoot '.tools/security/bin'
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'security-tools.json') | ConvertFrom-Json
 $isWindowsPlatform = $env:OS -eq 'Windows_NT'
@@ -70,22 +71,20 @@ try {
             $findings = @(Invoke-ScriptAnalyzer -Path (Join-Path $repositoryRoot 'tools') -Recurse -Settings $settings)
             $blockingRules = @('PSAvoidUsingConvertToSecureStringWithPlainText', 'PSAvoidUsingPlainTextForPassword', 'PSUsePSCredentialType', 'PSAvoidUsingInvokeExpression')
             $blocking = @($findings | Where-Object { $_.Severity -eq 'Error' -or $_.RuleName -in $blockingRules })
-            $baseline = (Get-Content -Raw -LiteralPath (Join-Path $repositoryRoot 'tests/security-advisory-baseline.json') | ConvertFrom-Json).psscriptanalyzer
-            $counts = @{}
-            foreach ($finding in $findings) {
-                $previous = if ($counts.ContainsKey($finding.RuleName)) { [int] $counts[$finding.RuleName] } else { 0 }
-                $counts[$finding.RuleName] = 1 + $previous
-            }
-            $newAdvisory = @($counts.Keys | Where-Object {
-                $property = $baseline.PSObject.Properties[$_]
-                $allowed = if ($property) { [int] $property.Value } else { 0 }
-                $counts[$_] -gt $allowed
-            })
-            $findings | Sort-Object ScriptName,Line,RuleName | ForEach-Object {
+            $advisory = @($findings | Where-Object { $_ -notin $blocking })
+            $baselineDocument = Get-Content -Raw -LiteralPath (Join-Path $repositoryRoot 'tests/security-advisory-baseline.json') | ConvertFrom-Json
+            if ([int] $baselineDocument.schema -ne 2) { throw 'Unsupported security advisory baseline schema.' }
+            $findingRecord = @(ConvertTo-PSScriptAnalyzerFindingRecord -Finding $advisory -RepositoryRoot $repositoryRoot)
+            $comparison = Compare-PSScriptAnalyzerFindingBaseline `
+                -FindingRecord $findingRecord -BaselineRecord @($baselineDocument.psscriptanalyzer)
+            $findings | Sort-Object ScriptPath,Line,RuleName | ForEach-Object {
                 Write-Output "$($_.Severity):$($_.RuleName):$($_.ScriptName):$($_.Line) $($_.Message)"
             }
-            Write-Output "PSScriptAnalyzer: blocking=$($blocking.Count) advisory=$($findings.Count - $blocking.Count) new_advisory=$($newAdvisory.Count)"
-            if ($blocking.Count -gt 0 -or $newAdvisory.Count -gt 0) { exit 1 }
+            $comparison.Resolved | ForEach-Object {
+                Write-Output "PSScriptAnalyzer baseline improvement: $($_.path):$($_.rule):occurrence=$($_.occurrence)"
+            }
+            Write-Output "PSScriptAnalyzer: blocking=$($blocking.Count) advisory=$($advisory.Count) inherited=$($comparison.Inherited.Count) new_advisory=$($comparison.New.Count) baseline_improvements=$($comparison.Resolved.Count)"
+            if ($blocking.Count -gt 0 -or $comparison.New.Count -gt 0) { exit 1 }
         }
         'LuaLS' {
             $command = Get-Command lua-language-server -ErrorAction SilentlyContinue

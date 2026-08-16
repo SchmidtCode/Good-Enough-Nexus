@@ -45,7 +45,7 @@ function parseNameStatusFixture(...tokens) {
     const helper = quote(path.join(root, "tools", "GitPathRecords.ps1"));
     const encoded = bytes.toString("base64");
     const script = `. ${helper}; $bytes = [Convert]::FromBase64String('${encoded}'); `
-        + `@(ConvertFrom-GitNameStatusBytes -Bytes $bytes) | ConvertTo-Json -Depth 3`;
+        + `@(ConvertFrom-GitNameStatusOutput -Bytes $bytes) | ConvertTo-Json -Depth 3`;
     const result = spawnSync(pwsh, ["-NoProfile", "-Command", script], {
         cwd: root,
         encoding: "utf8",
