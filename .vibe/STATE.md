@@ -6,33 +6,30 @@
 
 ## Current focus
 
-- Stage: 39
-- Checkpoint: 39.1
-- Status: DONE
+- Stage: 40
+- Checkpoint: 40.1
+- Status: NOT_STARTED
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: `9708c5879c46dd6cfb13cbc9457c925192bf6116`
+- Candidate head: `63a8c9954be4345f245e81cd3b5e676c58c52b99`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
 ## Objective (current checkpoint)
 
-Reconcile the published infrastructure branch with PR #10's advanced base using one normal merge, then refresh exact-head validation and draft coordination without changing PR #11 product bytes.
+Publish the reviewed PR #10 base reconciliation to the existing draft infrastructure PR, refresh issue #12, inspect exact-head CI/reviews, and stop before merge.
 
 ## Deliverables (current checkpoint)
 
-- Normal merge of current `origin/refactor/nexus-1.20-test17` into the infrastructure branch.
-- Current-base scope proof plus clean-bootstrap, local gate, and policy receipts.
-- Non-force branch refresh, factual PR #13 and issue #12 updates, and exact-head CI inspection.
+- Final Fast and committed-range scope proof at the publishable head.
+- Non-force branch refresh with exact local/remote head equality.
+- Factual PR #13 and issue #12 updates plus exact-head CI/review inspection.
 
 ## Acceptance (current checkpoint)
 
-- [x] The exact current PR #10 base is merged normally without rebase or force-push, preserving all PR #11 bytes.
-- [x] The current-base-to-head diff remains infrastructure-only and every reconciliation-only difference is reported.
-- [x] Leading-dot/deleted routing, committed-range whitespace checks, and runtime-label byte parity have focused red-to-green regression coverage.
-- [x] Clean bootstrap plus Fast, Full, Package, Security, release-policy, pre-commit, and diff validation are factual at one exact head.
+- [ ] Final local head contains only reviewed infrastructure plus compact Vibe receipts and passes Fast/diff validation.
 - [ ] Local and remote heads match; PR #13 stays draft; issue #12 receives the exact reconciliation status.
 - [ ] Exact-head CI and review/thread state are inspected with compact local/CI parity.
-- [x] Root, lag-hotfix, product, runtime, artifact, install, live, release, merge, and settings boundaries remain unchanged.
+- [ ] Root, lag-hotfix, product, runtime, artifact, install, live, release, merge, and settings boundaries remain unchanged.
 
 ## Evidence
 
@@ -65,6 +62,7 @@ Reconcile the published infrastructure branch with PR #10's advanced base using 
 - Current-base scope is 40 authorized paths versus the prior 38: only `tests/run-package-metadata.js` and `tools/Test-GitDiffCheck.ps1` were added; no path was removed and the runtime/TOC/runtime-test diff remains empty.
 - Formal replacement review at exact `9708c58` passed Full `18/18` with `205/205` automatic Lua programs and the authorization-dependent legacy-backup smoke test explicitly skipped, Package `10/10`, Security `12/12` with three advisory analyzers unavailable, Fast `15/15`, release policy, pre-commit, and clean bootstrap.
 - Completed bounded 39.1 hygiene: the reconciliation-only routing, diff, workflow, label, and manual-smoke changes contain no redundant branch, stale/debug residue, or directly attributable debt; Full was not repeated after its exact committed review.
+- Dispatcher-selected Stage 40 keeps the exhausted-plan follow-up to one external publication checkpoint; live PR #13 and issue #12 remain open, and no implementation work is reopened.
 
 ## Workflow state
 
@@ -96,8 +94,8 @@ Reconcile the published infrastructure branch with PR #10's advanced base using 
 
 ## Last completed loop
 
-- Checkpoint 39.1 replacement formal review and bounded hygiene passed; the clean branch is ready for the authorized non-force publication refresh.
+- Stage 40 design preserves the reviewed Stage 39 candidate and isolates only the remaining authorized external publication/CI boundary.
 
 ## Recommended next action
 
-- Non-force push the dedicated branch, then refresh draft PR #13, issue #12, and exact-head CI/review evidence without merging.
+- Run exact-head Fast/diff checks, non-force push only the infrastructure branch, refresh PR #13 and issue #12, and stop after exact-head CI/review inspection.

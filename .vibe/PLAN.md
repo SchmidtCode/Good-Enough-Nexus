@@ -119,3 +119,33 @@ depends_on: [38.6]
   - Merge parents and current-base changed-path list.
   - Compact local summaries and immutable-runtime blob comparison.
   - Remote head, exact-head workflow run IDs, draft/review state, and issue comment URL.
+
+## Stage 40 — Reconciled draft publication boundary
+
+- Goal: publish only the reviewed Stage 39 reconciliation, refresh draft coordination, and stop after exact-head CI/review inspection.
+- Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`.
+- Decision: update the existing draft PR #13 with a normal non-force push; do not create a replacement PR or merge either PR.
+
+### 40.1 — Refresh draft PR and inspect exact-head CI
+
+- Status: `NOT_STARTED`
+- Objective:
+  - Publish the exact reviewed infrastructure head and leave PR #13 as an accurate draft against the current PR #10 branch.
+- Deliverables:
+  - Final exact-head Fast and committed-range scope receipts.
+  - Normal branch push with local/remote head equality.
+  - Factual PR #13 body and issue #12 coordination update.
+  - Exact-head Quality gate, release-policy, mergeability, and review-thread inspection.
+- Acceptance:
+  - [ ] Final local head contains only the reviewed infrastructure range plus compact Vibe receipts and passes Fast/diff validation.
+  - [ ] Remote infrastructure branch equals the validated local head after a non-force push.
+  - [ ] PR #13 remains open and draft against `refactor/nexus-1.20-test17`; issue #12 remains open with current status.
+  - [ ] Exact-head Quality gate and release-policy CI pass with local/CI summary parity, or an exact blocking result is recorded.
+  - [ ] Review/thread count and mergeability are inspected without merge.
+  - [ ] Root, lag-hotfix, product, runtime, artifact, install, live, release, tag, and settings boundaries remain unchanged.
+- Demo commands:
+  - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Fast -BaseRef d0681b6a885db447c94a75f40df7e81f60b74c55`
+  - `git diff --check d0681b6a885db447c94a75f40df7e81f60b74c55...HEAD`
+  - `git push origin infra/viberun-quality-gate`
+- Evidence:
+  - Final local/remote SHA, compact local summary, PR/issue URLs, exact-head workflow run IDs/conclusions, and review/thread state.
