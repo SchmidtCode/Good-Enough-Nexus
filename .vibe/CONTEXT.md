@@ -42,9 +42,13 @@
 
 ## Stage Retrospective Notes
 
-- Stage 41 took 10 delivery loops: design plus implement/review/hygiene for three checkpoints, with no repeat review, split, skip, blocker, or decision-required issue.
 - Keep checkpoint-range and current-base Fast evidence separate; preserve a base-wide failure as the next checkpoint's red boundary when ownership is explicit.
 - Pair raw-byte path fixtures with real disposable Git index fixtures where the platform supports hostile names.
 - Centralize a shared security policy before updating callers so false positives and bypasses cannot drift.
 - Test local summary semantics and GitHub aggregate conditions in the same fail-closed checkpoint.
 - After each Vibe transition, verify the status beneath the exact checkpoint heading rather than relying only on schema validation.
+- Stage 42 took 10 loops from design through consolidation, with one implementation/review/hygiene cycle per checkpoint and no repeat review, split, skip, blocker, or decision-required issue.
+- For baseline migrations like 42.1, reconstruct the reviewed head's exact findings before editing and retain resolved entries as improvements; never bless the current output wholesale.
+- For archive bootstrap like 42.2, encode the real Windows and Linux layouts in metadata, then test both synthetic hostile archives and the pinned cross-platform assets through the same resolver.
+- Treat the first real bootstrap failure as cleanup evidence too: verify the outer temporary root disappears before repairing the parsing defect.
+- Completed PLAN markers are parser contracts: place `(DONE)` before the checkpoint ID and inspect both the dispatcher role and auxiliary ready list after transition.

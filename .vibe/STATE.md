@@ -41,7 +41,6 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 
 ## Work log
 
-- Stage 41 consolidation archived completed Stages 38–41, removed stale 41.1 `IN_REVIEW` drift, and moved the hot pointer to 42.1.
 - Stage 41 retrospective recorded five actionable lessons from its 10 delivery loops; no repeated review cycle, split, skip, blocker, or decision-required issue occurred.
 - Stage 42 design confirmed two bounded owners: 42.1 exact advisory fingerprints in `Test-SecurityPolicy.ps1`, then 42.2 archive-layout and Python-distribution integrity in `Bootstrap-SecurityTools.ps1`; no split or pointer change was needed.
 - Stage 42 maintenance refactor scan selected pure baseline comparison for 42.1 and pure archive-layout/executable resolution for 42.2; both are already scoped by PLAN, and the 42.1 product pointer remains `NOT_STARTED`.
@@ -51,6 +50,7 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 - Checkpoint 42.2 replaced recursive executable discovery with validated ZIP/tar records and exact manifest paths, added a reviewed Python wheel hash lock enforced by pip, and removed bootstrap/download/extraction output through bounded `finally` cleanup.
 - Checkpoint 42.2 formal review validated all three real pinned Linux tar layouts, added executable-link rejection, re-ran security policy, Security `12` blocking checks, and exact-base Fast `15/15`, and found no unresolved acceptance defect.
 - Checkpoint 42.2 hygiene found distinct entry-reading, layout-resolution, hash-lock, and bounded-cleanup owners with focused fixtures; no duplicate policy, unnecessary branch, or actionable debt remains, so no code changed.
+- Stage 42 retrospective recorded five actionable lessons from its 10 loops; neither checkpoint needed a repeat review, split, skip, blocker, or decision-required issue.
 
 ## Workflow state
 
@@ -58,7 +58,7 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 - [x] RUN_CONTEXT_CAPTURE
 - [ ] STAGE_DESIGNED
 - [ ] MAINTENANCE_CYCLE_DONE
-- [ ] RETROSPECTIVE_DONE
+- [x] RETROSPECTIVE_DONE
 - [x] PROCESS_IMPROVEMENTS_DONE
 
 ## Active issues
@@ -82,8 +82,8 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 
 ## Last completed loop
 
-- Stage 42 consolidation archived exact-baseline/bootstrap outcomes, pruned completed-stage noise, and moved the hot pointer to 43.1.
+- Stage 42 retrospective recorded five actionable lessons from its 10 loops; neither checkpoint needed a repeat review, split, skip, blocker, or decision-required issue.
 
 ## Recommended next action
 
-- Follow the dispatcher-selected Stage 42 retrospective/process/context sequence before Stage 43 design and formal exact-head validation.
+- Capture compact Stage 43 hot context, then follow the dispatcher-selected design and maintenance routes before formal exact-head validation.
