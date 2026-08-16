@@ -98,8 +98,11 @@ git diff --check
 ```
 
 The bootstrap requires Node.js 20 or newer with npm and runs `npm ci` against
-the exact tracked lockfile. It never uses a developer's ignored `.tools`
-directory, and `node_modules` remains ignored development state.
+the exact tracked lockfile. It then downloads the exact Gitleaks, actionlint,
+zizmor, and PSScriptAnalyzer assets in `tools/security-tools.json`, verifies
+their SHA-256 values before extraction, and installs the pinned pre-commit
+runner under ignored `.tools` state. `node_modules`, downloaded tools, and hook
+environments remain ignored development state.
 
 After bootstrap, use one quality-gate entry point:
 
@@ -116,6 +119,17 @@ manifest without retaining an archive; and `Security` owns artifact, secret,
 workflow, Lua, and PowerShell policy. Results are written under ignored
 `build/verify/`: compact `summary.json` and `summary.md` files plus detailed
 per-check logs. Successful logs are not copied into the summary.
+
+The Security profile blocks staged/local artifacts, secrets, private keys,
+workflow syntax errors, high-severity workflow security findings, PowerShell
+parse/security findings, and warnings beyond the explicit initial advisory
+baseline. LuaLS and Luacheck target Lua 5.1, while StyLua is check-only; those
+three are advisory and are reported as unavailable when not installed rather
+than being counted as passes. Pre-commit runs artifact, secret, filename,
+conflict, whitespace, and check-only line-ending checks at commit time, with
+Fast reserved for pre-push or explicit use. Three inherited mixed-ending files
+are recorded narrowly in `tests/security-advisory-baseline.json` and are not
+rewritten by this infrastructure stage.
 
 VibeRun remains the project workflow owner. Its implementation role runs
 expected-red and focused checks followed by `Fast`, then stops after one clean

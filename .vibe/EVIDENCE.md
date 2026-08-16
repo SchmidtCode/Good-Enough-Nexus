@@ -52,3 +52,13 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Bounded scope: `AGENTS.md`, `README.md`, `STATE.md`, `PLAN.md`, and `CONTEXT.md` delivered by 38.3; no repository-wide or runtime scan was performed.
 - Hot spots, quick wins, and debt items: none. The README's operator summary and AGENTS role directives serve different audiences and do not justify another abstraction.
 - Validation: stale/bootstrap/debug marker scan and `git diff --check` passed. No product, test, or tool byte changed, so Full was not repeated.
+
+## Checkpoint 38.4 - Staged artifacts, static analysis, and security
+
+- Expected red: Security reported Gitleaks, actionlint, zizmor, and PSScriptAnalyzer as four blocking unavailable checks. The first all-files pre-commit run also exposed three inherited mixed-line-ending files; none was normalized.
+- Pinned bootstrap: official Gitleaks `8.30.1`, actionlint `1.7.12`, zizmor `1.29.0`, and PSScriptAnalyzer `1.25.0` Windows/Linux assets are recorded with SHA-256 values and verified before extraction. Pre-commit `4.6.2` and immutable pre-commit-hooks commit `3e8a8703264a2f4a69428a0aa4dcb512790b2c8c` are pinned.
+- Artifact/static self-tests PASS: five forbidden paths rejected, two approved paths allowed, all 323 tracked paths clean, Lua 5.1 diagnostics configured, Project Ebonhold global use constrained to five explicit adapter/presentation exception files, and no formatting was performed.
+- Security PASS: 10 checks pass, zero fail/skip, with LuaLS, Luacheck, and StyLua explicitly advisory-unavailable. Gitleaks, actionlint, high-severity offline zizmor, release policy, artifact policy, and policy self-tests pass.
+- PSScriptAnalyzer baseline: zero blocking findings, six inherited advisory findings across four rules, and zero new advisory rules/counts. The exact baseline makes excess warnings blocking without claiming legacy style passed.
+- Pre-commit all-files PASS after adding a narrow three-file mixed-ending baseline; illegal-Windows-name hook reported no applicable files and is not claimed as a pass. No line ending was rewritten.
+- Implementation validation: Fast `12/12`, strict Vibe validation, and `git diff --check` passed.

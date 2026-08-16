@@ -27,7 +27,7 @@ depends_on: [38.2]
 
 depends_on: [38.3]
 
-- Status: `NOT_STARTED`
+- Status: `IN_REVIEW`
 - Objective:
   - Reject unsafe staged material and establish pinned, honest Lua, PowerShell, secret, and workflow analysis without rewriting source.
 - Deliverables:
@@ -35,10 +35,10 @@ depends_on: [38.3]
   - LuaLS, advisory Luacheck, check-only StyLua, and PSScriptAnalyzer policies.
   - Checksum-verified Gitleaks, actionlint, and zizmor bootstrap integrated with Security mode.
 - Acceptance:
-  - [ ] Forbidden artifacts, credentials, private paths, caches, and generated data are rejected.
-  - [ ] Lua tooling targets 5.1 with narrow globals and no repository reformat.
-  - [ ] Blocking versus advisory findings and unavailable tools are reported honestly.
-  - [ ] Security tools are exact-versioned and downloaded bytes are checksum-verified.
+  - [x] Forbidden artifacts, credentials, private paths, caches, and generated data are rejected.
+  - [x] Lua tooling targets 5.1 with narrow globals and no repository reformat.
+  - [x] Blocking versus advisory findings and unavailable tools are reported honestly.
+  - [x] Security tools are exact-versioned and downloaded bytes are checksum-verified.
 - Demo commands:
   - `pwsh -NoProfile -File tools/Test-StagedArtifacts.ps1`
   - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Security`

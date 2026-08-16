@@ -89,7 +89,8 @@ function Invoke-QualityCheck {
         [Parameter(Mandatory)][string] $Id,
         [Parameter(Mandatory)][string] $FilePath,
         [Parameter()][string[]] $Arguments = @(),
-        [Parameter()][bool] $Blocking = $true
+        [Parameter()][bool] $Blocking = $true,
+        [Parameter()][int[]] $UnavailableExitCodes = @()
     )
 
     $commandText = "$(Split-Path -Leaf $FilePath) $(Convert-ArgumentText $Arguments)".Trim()
@@ -130,8 +131,9 @@ function Invoke-QualityCheck {
     $lines = @()
     if ($stdout) { $lines += $stdout.TrimEnd() }
     if ($stderr) { $lines += $stderr.TrimEnd() }
-    $result = if ($exitCode -eq 0) { 'pass' } else { 'fail' }
-    $count = if ($exitCode -eq 0) { '1/1' } else { '0/1' }
+    $unavailable = $exitCode -in $UnavailableExitCodes -and "$stdout`n$stderr" -match '(?m)^UNAVAILABLE:'
+    $result = if ($exitCode -eq 0) { 'pass' } elseif ($unavailable) { 'unavailable' } else { 'fail' }
+    $count = if ($exitCode -eq 0) { '1/1' } elseif ($unavailable) { '0/0' } else { '0/1' }
     if ($stdout -match 'Lua suite:\s*(?<passed>\d+)/(?<total>\d+) passed') {
         $count = "$($Matches.passed)/$($Matches.total)"
     }
@@ -142,7 +144,7 @@ function Invoke-QualityCheck {
         $count = "$($Matches.passed)/$([int] $Matches.passed + [int] $Matches.failed)"
     }
     Add-CheckResult -Id $Id -Result $result -Command $commandText `
-        -Reason $(if ($exitCode -eq 0) { '' } else { "command exited $exitCode" }) `
+        -Reason $(if ($exitCode -eq 0) { '' } elseif ($unavailable) { 'required tool is unavailable' } else { "command exited $exitCode" }) `
         -Blocking $Blocking -DurationSeconds $watch.Elapsed.TotalSeconds `
         -Count $count -LogLines $lines
 }
@@ -204,10 +206,12 @@ function Add-PowerShellCheck {
     param(
         [Parameter(Mandatory)][string] $Id,
         [Parameter(Mandatory)][string[]] $Arguments,
-        [Parameter()][bool] $Blocking = $true
+        [Parameter()][bool] $Blocking = $true,
+        [Parameter()][int[]] $UnavailableExitCodes = @()
     )
 
-    Invoke-QualityCheck -Id $Id -FilePath $pwsh -Arguments (@('-NoProfile', '-File') + $Arguments) -Blocking $Blocking
+    Invoke-QualityCheck -Id $Id -FilePath $pwsh -Arguments (@('-NoProfile', '-File') + $Arguments) `
+        -Blocking $Blocking -UnavailableExitCodes $UnavailableExitCodes
 }
 
 function Add-GitDiffCheck {
@@ -291,11 +295,18 @@ try {
             Add-GitDiffCheck
         }
         elseif ($Mode -eq 'Security') {
+            Add-PowerShellCheck -Id 'staged-artifacts' -Arguments @('tools/Test-StagedArtifacts.ps1', '-Mode', 'All')
+            Add-NodeCheck -Id 'security-policy-self-tests' -Arguments @('tests/run-security-policy.js')
             Add-PowerShellCheck -Id 'release-policy' -Arguments @('tools/Test-ReleasePolicy.ps1')
-            foreach ($future in @('gitleaks', 'actionlint', 'zizmor', 'psscriptanalyzer')) {
-                Add-CheckResult -Id $future -Result unavailable -Command "$future validation" `
-                    -Reason 'security tool integration is scheduled for checkpoint 38.4' `
-                    -LogLines @("$future integration is unavailable until checkpoint 38.4.")
+            foreach ($blockingCheck in @('Gitleaks', 'Actionlint', 'Zizmor', 'PSScriptAnalyzer')) {
+                Add-PowerShellCheck -Id $blockingCheck.ToLowerInvariant() `
+                    -Arguments @('tools/Test-SecurityPolicy.ps1', '-Check', $blockingCheck) `
+                    -UnavailableExitCodes @(3)
+            }
+            foreach ($advisoryCheck in @('LuaLS', 'Luacheck', 'StyLua')) {
+                Add-PowerShellCheck -Id $advisoryCheck.ToLowerInvariant() `
+                    -Arguments @('tools/Test-SecurityPolicy.ps1', '-Check', $advisoryCheck) `
+                    -Blocking $false -UnavailableExitCodes @(3)
             }
             Add-GitDiffCheck
         }

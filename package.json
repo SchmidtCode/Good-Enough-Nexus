@@ -9,6 +9,7 @@
   "scripts": {
     "test:toolchain": "node tests/run-quality-toolchain.js",
     "test:quality-gate": "node tests/run-quality-gate-self-tests.js",
+    "test:security-policy": "node tests/run-security-policy.js",
     "quality:fast": "pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Fast",
     "quality:full": "pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Full",
     "quality:package": "pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Package",

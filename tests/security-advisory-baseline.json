@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "psscriptanalyzer": {
+    "PSReviewUnusedParameter": 2,
+    "PSUseApprovedVerbs": 2,
+    "PSUseOutputTypeCorrectly": 1,
+    "PSUseSingularNouns": 1
+  },
+  "zizmor": {
+    "reported": 0,
+    "default_suppressed": 1
+  },
+  "mixed_line_endings": [
+    ".gitignore",
+    "tools/check-lua51-upvalues.js",
+    "tools/inject-runtime-build-label.js"
+  ]
+}

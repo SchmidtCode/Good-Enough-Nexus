@@ -34,4 +34,7 @@ finally {
     Pop-Location
 }
 
+& (Join-Path $PSScriptRoot 'Bootstrap-SecurityTools.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Security tool bootstrap failed.' }
+
 Write-Output "Quality tools bootstrapped with Node $nodeVersion using package-lock.json."

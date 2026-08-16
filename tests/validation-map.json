@@ -49,14 +49,15 @@
     },
     {
       "id": "tooling",
-      "patterns": ["^tools/", "^tests/validation-map\\.json$", "^tests/run-quality-.*\\.js$", "^package(?:-lock)?\\.json$"],
+      "patterns": ["^tools/", "^tests/validation-map\\.json$", "^tests/run-(quality|security)-.*\\.js$", "^package(?:-lock)?\\.json$", "^\\.(pre-commit-config\\.yaml|luarc\\.json|luacheckrc|gitleaks\\.toml)$", "^(stylua\\.toml|PSScriptAnalyzerSettings\\.psd1)$"],
       "groups": ["tooling", "package"],
       "tests": [
         "tests/run-quality-toolchain.js",
         "tests/run-bundled-build-export.js",
         "tests/run-savedvariables-analyzer.js",
         "tests/run-package-metadata.js",
-        "tests/run-quality-gate-self-tests.js"
+        "tests/run-quality-gate-self-tests.js",
+        "tests/run-security-policy.js"
       ],
       "full_required": true
     },
