@@ -94,21 +94,22 @@ depends_on: [38.6]
 
 ### 39.1 — Merge current base and refresh exact-head review
 
-- Status: `NOT_STARTED`
+- Status: `IN_REVIEW`
 - Objective:
   - Merge the current remote PR #10 base into the infrastructure branch while preserving PR #11 exactly and retaining the 38-path infrastructure-only PR surface.
 - Deliverables:
   - Normal base-reconciliation merge with conservative conflict handling.
-  - Current-base scope and immutable-runtime proof.
-  - Exact-head clean-bootstrap and Fast/Full/Package/Security validation receipts.
+  - Leading-dot and deleted-path routing with deterministic focused regression coverage.
+  - Base-range/staged/working diff checks plus byte-exact runtime-label injection.
+  - Honest manual-smoke classification, current-base scope proof, and exact-head validation receipts.
   - Updated draft PR #13, issue #12, CI, review-thread, and parity evidence.
 - Acceptance:
   - [ ] Merge ancestry includes both `91c962e` and `d0681b6` without rebase or force-push.
-  - [ ] PR #13-owned changes remain limited to the existing infrastructure/workflow/tooling/configuration/documentation surface.
+  - [ ] Hidden/deleted paths retain correct routing and committed/staged/working whitespace defects fail truthfully.
+  - [ ] Runtime-label substitution preserves every byte except the single authorized label value.
   - [ ] PR #11 production, TOC, bundled-data, runtime-test, version, protocol, author, SavedVariables, and artifact bytes match the current base.
   - [ ] Local clean bootstrap and required quality/security/policy gates pass or report advisory tools unavailable honestly.
   - [ ] Exact-head CI matches local compact summaries; PR #13 remains draft and unmerged.
-  - [ ] Root, lag-hotfix, and product worktrees remain byte-untouched.
 - Demo commands:
   - `pwsh -NoProfile -File tools/Bootstrap-QualityTools.ps1`
   - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Full`

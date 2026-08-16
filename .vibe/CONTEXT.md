@@ -4,8 +4,8 @@
 
 - Repository: `Viscerals/Better-Nexus`.
 - Infrastructure worktree: `.infra-viberun-quality-gate-worktree` on `infra/viberun-quality-gate`.
-- Integration base: `origin/refactor/nexus-1.20-test17` at `36f187824b8a24f6fb51562e6ec1101c300308ef`.
-- Draft refactor PR #10 is open and authoritative; GitHub issue #12 owns this infrastructure stage.
+- Integration base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`, merged normally into the infrastructure branch at `5a66cde`.
+- Draft refactor PR #10 is open and authoritative; draft infrastructure PR #13 and GitHub issue #12 own the current coordination boundary.
 - The repository-root coordination worktree and `.lag-hotfix-worktree` are independently owned and read-only for this work.
 - Branch-local Vibe state is compact by design; completed product Stage 37.1 remains authoritative in the root and is not copied here.
 
