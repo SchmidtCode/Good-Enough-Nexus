@@ -7,31 +7,32 @@
 ## Current focus
 
 - Stage: 43
-- Checkpoint: 43.1
-- Status: IN_REVIEW
+- Checkpoint: 43.2
+- Status: NOT_STARTED
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: formal code/tooling candidate `4c1002e` plus receipt-only branch `HEAD`
+- Candidate head: reviewed formal code/tooling candidate `4c1002e` plus receipt-only branch `HEAD`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
 ## Objective (current checkpoint)
 
-Validate all eight repairs together on one unchanged exact-head candidate and prove fresh-checkout quality and Vibe behavior.
+Publish the reviewed repair head normally, reconcile committed terminal Vibe truth, wait for exact-head CI, and stop for independent review.
 
 ## Deliverables (current checkpoint)
 
-- Full exactly once plus Package, Security, policy, pre-commit, and scope receipts.
-- Cross-finding adversarial review and directly related repairs only.
-- Disposable clean bootstrap/Fast and Vibe status/dispatcher proof.
-- Exact current-base PR-only path and protected-runtime blob proof.
+- Truthful committed terminal STATE/PLAN/CONTEXT/EVIDENCE without ignored receipt dependency.
+- Normal non-force push and exact local/remote head equality.
+- PR #13 body and issue #12 repair/validation updates.
+- Replacement Quality Gate, Release Policy, artifact, mergeability, review, and thread inspection.
 
 ## Acceptance (current checkpoint)
 
-- [x] Full, Package, Security, release policy, applicable hooks, and all required tools pass; advisory tools remain honestly unavailable when absent.
-- [x] Fresh checkout bootstraps and passes Fast with no ignored dependency assumption.
-- [x] Fresh checkout Vibe validates the committed checkpoint/head/base without ignored LOOP_RESULT state.
-- [x] PR-only range remains infrastructure-only with zero protected runtime/TOC/runtime-test/artifact paths.
-- [x] All temporary package, archive, log, and checkout output is removed.
+- [ ] Committed STATE identifies branch `HEAD`, exact base, checkpoint DONE, completed acceptance, and next role stop.
+- [ ] Fresh checkout dispatcher preview agrees with committed terminal state.
+- [ ] PR #13 remains open/draft/unmerged and exact-head required workflows pass with local/CI parity.
+- [ ] Issue #12 remains open with the exact final repair/CI status.
+- [ ] Review/thread counts and all independently owned worktree statuses are unchanged except authorized PR/issue updates.
+- [ ] No additional Codex review request, merge, release, install, live, or settings action occurs.
 
 ## Evidence
 
@@ -43,7 +44,6 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 
 ## Work log
 
-- Checkpoint 42.1 hygiene found one pure comparison owner, explicit baseline data, focused boundary fixtures, and no remaining duplication, fragile branch, or actionable debt; no code changed.
 - Checkpoint 42.2 replaced recursive executable discovery with validated ZIP/tar records and exact manifest paths, added a reviewed Python wheel hash lock enforced by pip, and removed bootstrap/download/extraction output through bounded `finally` cleanup.
 - Checkpoint 42.2 formal review validated all three real pinned Linux tar layouts, added executable-link rejection, re-ran security policy, Security `12` blocking checks, and exact-base Fast `15/15`, and found no unresolved acceptance defect.
 - Checkpoint 42.2 hygiene found distinct entry-reading, layout-resolution, hash-lock, and bounded-cleanup owners with focused fixtures; no duplicate policy, unnecessary branch, or actionable debt remains, so no code changed.
@@ -53,6 +53,7 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 - Checkpoint 43.1 froze the formal candidate as branch `HEAD` against exact base `d0681b6`; code and tooling bytes must remain unchanged after the single local Full.
 - Checkpoint 43.1 clean bootstrap correctly rejected an incomplete PSScriptAnalyzer top-level allowlist; the exact checksum-matching package layout was reconciled and the replacement clean bootstrap passed before Full.
 - Checkpoint 43.1 formal candidate `4c1002e` passed the single local Full plus Package/Security/focused/hooks/scope gates; a detached dependency-clean checkout passed tracked bootstrap, Fast, and receipt-independent Vibe status before complete cleanup.
+- Checkpoint 43.1 formal review confirmed the post-Full delta is only three Vibe receipt files, Fast passes `15/15` at receipt head `49801d5`, exact-base scope remains 47 infrastructure paths / 0 protected paths, and Full was not repeated.
 
 ## Workflow state
 
@@ -84,8 +85,8 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 
 ## Last completed loop
 
-- Checkpoint 43.1 implementation completed its single local Full and all remaining formal/fresh-checkout proofs; formal review is next.
+- Checkpoint 43.1 formal review passed and auto-advanced the pointer to 43.2; bounded hygiene remains next.
 
 ## Recommended next action
 
-- Formally review the unchanged 43.1 code/tooling candidate and receipt-only state delta, then run bounded hygiene before terminal checkpoint 43.2.
+- Run the dispatcher-selected bounded 43.1 hygiene pass, then reconcile and commit terminal 43.2 state before publication.

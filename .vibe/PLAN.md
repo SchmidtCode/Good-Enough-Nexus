@@ -5,9 +5,9 @@
 - Goal: prove all eight repairs together, reconcile committed Vibe truth without ignored receipts, refresh PR #13, and stop for independent merge review.
 - Decision: represent the candidate as branch `HEAD` plus an exact resolved receipt to avoid an impossible self-referential commit SHA; set the terminal stop only after formal review/hygiene is complete.
 
-### 43.1 — Formal cross-finding review and fresh-checkout proof
+### (DONE) 43.1 — Formal cross-finding review and fresh-checkout proof
 
-- Status: `IN_REVIEW`
+- Status: `DONE`
 - Objective:
   - Validate the unchanged committed repair candidate end-to-end and prove fresh-checkout Vibe and quality behavior before publication.
 - Deliverables:
