@@ -44,7 +44,6 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 
 ## Work log
 
-- Stage 43 design preserved two rollback-safe checkpoints: one unchanged formal candidate with Full exactly once and fresh-checkout proof, then one terminal Vibe/publication/CI boundary with no merge.
 - Stage 43 maintenance test-gap scan selected fresh-checkout Linux bootstrap/Fast and ignored-receipt-independent Vibe terminal validation; both are already bounded by 43.1/43.2, so no new checkpoint was added.
 - Checkpoint 43.1 froze the formal candidate as branch `HEAD` against exact base `d0681b6`; code and tooling bytes must remain unchanged after the single local Full.
 - Checkpoint 43.1 clean bootstrap correctly rejected an incomplete PSScriptAnalyzer top-level allowlist; the exact checksum-matching package layout was reconciled and the replacement clean bootstrap passed before Full.
@@ -54,6 +53,7 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 - Checkpoint 43.2 normally published receipt head `8c4d977`: Quality Gate `31957168510` passed every required job with zero artifacts, while Release Policy `31957168563` exposed a LuaJIT-only nondeterministic runtime-test failure outside this infrastructure ownership.
 - Checkpoint 43.2 replacement head `bc0b61a` passed Quality Gate `31957769884` and Release Policy `31957769870` with zero artifacts; PR #13 and issue #12 now carry the exact repair, scope, validation, and disclosed flake status.
 - Checkpoint 43.2 formal review passed at receipt head `767cfd8`: exact-head Quality `31958348931` and Release `31958348943` passed, local/remote heads matched, scope remained 47/7/0/0, and plan exhaustion establishes the terminal stop route.
+- Checkpoint 43.2 hygiene found no duplicate truth owner, stale marker, unnecessary abstraction, or actionable debt in the terminal Vibe/GitHub receipt surface; final stop was restored through the actual Vibe operation.
 
 ## Workflow state
 
@@ -86,7 +86,7 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 
 ## Last completed loop
 
-- Checkpoint 43.2 formal review passed with the plan exhausted; terminal stop is next after the dispatcher-owned bounded hygiene receipt.
+- Checkpoint 43.2 bounded hygiene passed without code changes; the run is stopped at the independent-review boundary.
 
 ## Recommended next action
 
