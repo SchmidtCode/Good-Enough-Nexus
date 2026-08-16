@@ -7,7 +7,7 @@
 
 ### 43.1 — Formal cross-finding review and fresh-checkout proof
 
-- Status: `IN_PROGRESS`
+- Status: `IN_REVIEW`
 - Objective:
   - Validate the unchanged committed repair candidate end-to-end and prove fresh-checkout Vibe and quality behavior before publication.
 - Deliverables:
@@ -16,11 +16,11 @@
   - Disposable clean bootstrap/Fast and Vibe status/dispatcher proof.
   - Exact current-base PR-only path and protected-runtime blob proof.
 - Acceptance:
-  - [ ] Full, Package, Security, release policy, applicable hooks, and all required tools pass; advisory tools remain honestly unavailable when absent.
-  - [ ] Fresh checkout bootstraps and passes Fast with no ignored dependency assumption.
-  - [ ] Fresh checkout Vibe validates the committed checkpoint/head/base without ignored LOOP_RESULT state.
-  - [ ] PR-only range remains infrastructure-only with zero protected runtime/TOC/runtime-test/artifact paths.
-  - [ ] All temporary package, archive, log, and checkout output is removed.
+  - [x] Full, Package, Security, release policy, applicable hooks, and all required tools pass; advisory tools remain honestly unavailable when absent.
+  - [x] Fresh checkout bootstraps and passes Fast with no ignored dependency assumption.
+  - [x] Fresh checkout Vibe validates the committed checkpoint/head/base without ignored LOOP_RESULT state.
+  - [x] PR-only range remains infrastructure-only with zero protected runtime/TOC/runtime-test/artifact paths.
+  - [x] All temporary package, archive, log, and checkout output is removed.
 - Demo commands:
   - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Full -BaseRef d0681b6a885db447c94a75f40df7e81f60b74c55`
   - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Package -BaseRef d0681b6a885db447c94a75f40df7e81f60b74c55`

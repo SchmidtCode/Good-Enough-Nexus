@@ -8,9 +8,9 @@
 
 - Stage: 43
 - Checkpoint: 43.1
-- Status: IN_PROGRESS
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: formal Stage 43.1 candidate represented by branch `HEAD`
+- Candidate head: formal code/tooling candidate `4c1002e` plus receipt-only branch `HEAD`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
@@ -27,11 +27,11 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 
 ## Acceptance (current checkpoint)
 
-- [ ] Full, Package, Security, release policy, applicable hooks, and all required tools pass; advisory tools remain honestly unavailable when absent.
-- [ ] Fresh checkout bootstraps and passes Fast with no ignored dependency assumption.
-- [ ] Fresh checkout Vibe validates the committed checkpoint/head/base without ignored LOOP_RESULT state.
-- [ ] PR-only range remains infrastructure-only with zero protected runtime/TOC/runtime-test/artifact paths.
-- [ ] All temporary package, archive, log, and checkout output is removed.
+- [x] Full, Package, Security, release policy, applicable hooks, and all required tools pass; advisory tools remain honestly unavailable when absent.
+- [x] Fresh checkout bootstraps and passes Fast with no ignored dependency assumption.
+- [x] Fresh checkout Vibe validates the committed checkpoint/head/base without ignored LOOP_RESULT state.
+- [x] PR-only range remains infrastructure-only with zero protected runtime/TOC/runtime-test/artifact paths.
+- [x] All temporary package, archive, log, and checkout output is removed.
 
 ## Evidence
 
@@ -39,10 +39,10 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 - Stage 42.1: four exact inherited findings remain advisory; owner/message drift, duplicates, stale entries, and improvements are distinguished; focused policy and Fast `15/15` pass.
 - Stage 42.2: ZIP/tar layout validation, exact executable selection, hash-locked Python wheels, and failure-safe cleanup pass; Security `12` blocking checks and Fast `15/15` pass.
 - Stage 43 maintenance: fresh-checkout Linux bootstrap/Fast and receipt-independent Vibe terminal probes remain the highest-impact gaps and are already acceptance-owned by 43.1/43.2.
+- Stage 43.1: candidate `4c1002e` passed Full `18/18` with one explicit manual skip, Package `10/10`, Security 12 blocking passes / 3 advisory-unavailable, focused/hooks/scope checks, and fresh-checkout bootstrap/Fast/Vibe proof.
 
 ## Work log
 
-- Checkpoint 42.1 formal review preserved all six reviewed baseline entries so the two removals are visible improvements, added platform-correct outside-root and duplicate-record rejection, and passed focused tests plus exact-base Fast `15/15`.
 - Checkpoint 42.1 hygiene found one pure comparison owner, explicit baseline data, focused boundary fixtures, and no remaining duplication, fragile branch, or actionable debt; no code changed.
 - Checkpoint 42.2 replaced recursive executable discovery with validated ZIP/tar records and exact manifest paths, added a reviewed Python wheel hash lock enforced by pip, and removed bootstrap/download/extraction output through bounded `finally` cleanup.
 - Checkpoint 42.2 formal review validated all three real pinned Linux tar layouts, added executable-link rejection, re-ran security policy, Security `12` blocking checks, and exact-base Fast `15/15`, and found no unresolved acceptance defect.
@@ -52,6 +52,7 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 - Stage 43 maintenance test-gap scan selected fresh-checkout Linux bootstrap/Fast and ignored-receipt-independent Vibe terminal validation; both are already bounded by 43.1/43.2, so no new checkpoint was added.
 - Checkpoint 43.1 froze the formal candidate as branch `HEAD` against exact base `d0681b6`; code and tooling bytes must remain unchanged after the single local Full.
 - Checkpoint 43.1 clean bootstrap correctly rejected an incomplete PSScriptAnalyzer top-level allowlist; the exact checksum-matching package layout was reconciled and the replacement clean bootstrap passed before Full.
+- Checkpoint 43.1 formal candidate `4c1002e` passed the single local Full plus Package/Security/focused/hooks/scope gates; a detached dependency-clean checkout passed tracked bootstrap, Fast, and receipt-independent Vibe status before complete cleanup.
 
 ## Workflow state
 
@@ -83,8 +84,8 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 
 ## Last completed loop
 
-- Checkpoint 43.1 formal candidate is committed and ready for the single local Full followed by Package/Security/fresh-checkout proof.
+- Checkpoint 43.1 implementation completed its single local Full and all remaining formal/fresh-checkout proofs; formal review is next.
 
 ## Recommended next action
 
-- Run Full exactly once on the committed 43.1 candidate, then complete all remaining exact-head and fresh-checkout gates without changing code/tooling bytes.
+- Formally review the unchanged 43.1 code/tooling candidate and receipt-only state delta, then run bounded hygiene before terminal checkpoint 43.2.
