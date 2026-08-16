@@ -45,6 +45,7 @@ Prove the complete infrastructure branch at one exact clean head, publish a draf
 
 - Checkpoint 38.5 review passed and advanced to final exact-head scope/publication checkpoint 38.6.
 - The installed dispatcher DAG marks 38.1–38.5 done and only 38.6 remains.
+- Completed bounded 38.5 hygiene with no floating action, write permission, credential persistence, trigger shortcut, debug marker, or directly attributable debt.
 
 ## Workflow state
 
@@ -80,4 +81,4 @@ Prove the complete infrastructure branch at one exact clean head, publish a draf
 
 ## Recommended next action
 
-- Run mandatory bounded 38.5 hygiene, then execute final clean-checkout/scope validation and draft publication.
+- Execute final clean-checkout/scope validation and draft publication.

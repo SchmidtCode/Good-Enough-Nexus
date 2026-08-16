@@ -82,3 +82,9 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Implementation validation: workflow self-test, actionlint, high-severity offline zizmor, Fast `13/13`, Security 10 pass / 3 advisory-unavailable, pre-commit, and `git diff --check` passed.
 - Formal review PASS at exact `7633a4ca967ee37560fa0cda1ee9be6930bfc156`: Full passed `16/16` in 253.631 seconds; workflow policy, actionlint, high-severity offline zizmor, release-policy hash, and `git diff --check` passed.
 - Adversarial workflow review confirmed required-Full cannot accept a skipped Full job, documentation-only policy may accept the classifier-proven skip, required Fast/Security/preflight skips fail, and the final job always runs. No checkpoint-hygiene signal was identified.
+
+## Checkpoint 38.5 hygiene
+
+- Bounded scope: `quality-gate.yml` and its workflow policy self-test only.
+- Hot spots, quick wins, and debt items: none. The explicit jobs keep selected policy and failure ownership visible without a helper abstraction.
+- Validation: floating-action/write-permission/credential/trigger/debug scan and `git diff --check` passed. No product or test byte changed, so Full was not repeated.
