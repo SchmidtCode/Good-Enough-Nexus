@@ -8,9 +8,9 @@
 
 - Stage: 42
 - Checkpoint: 42.2
-- Status: IN_REVIEW
+- Status: DONE
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: Stage 42.2 implementation candidate at branch `HEAD`
+- Candidate head: reviewed Stage 42 candidate at branch `HEAD`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
@@ -58,6 +58,7 @@ Reject hostile security-tool archives and require hash-verified Python distribut
 - Checkpoint 42.1 formal review preserved all six reviewed baseline entries so the two removals are visible improvements, added platform-correct outside-root and duplicate-record rejection, and passed focused tests plus exact-base Fast `15/15`.
 - Checkpoint 42.1 hygiene found one pure comparison owner, explicit baseline data, focused boundary fixtures, and no remaining duplication, fragile branch, or actionable debt; no code changed.
 - Checkpoint 42.2 replaced recursive executable discovery with validated ZIP/tar records and exact manifest paths, added a reviewed Python wheel hash lock enforced by pip, and removed bootstrap/download/extraction output through bounded `finally` cleanup.
+- Checkpoint 42.2 formal review validated all three real pinned Linux tar layouts, added executable-link rejection, re-ran security policy, Security `12` blocking checks, and exact-base Fast `15/15`, and found no unresolved acceptance defect.
 
 ## Workflow state
 
@@ -89,8 +90,8 @@ Reject hostile security-tool archives and require hash-verified Python distribut
 
 ## Last completed loop
 
-- Stage 42.2 implementation passed hostile fixtures, real pinned bootstrap, Security, and Fast; formal review is next.
+- Stage 42.2 formal review passed; Stage 42 is plan-exhausted and ready for dispatcher-owned consolidation.
 
 ## Recommended next action
 
-- Formally review the Stage 42.2 bootstrap-integrity implementation, then run its bounded hygiene pass before Stage 42 consolidation.
+- Run the dispatcher-selected Stage 42 consolidation, then complete its retrospective/process/context flags before Stage 43 formal exact-head review.

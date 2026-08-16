@@ -27,11 +27,11 @@
 - Evidence:
   - Fingerprint fixture matrix and current exact baseline reconciliation.
 
-### 42.2 — Harden archive and Python bootstrap integrity
+### (DONE) 42.2 — Harden archive and Python bootstrap integrity
 
 depends_on: [42.1]
 
-- Status: `IN_REVIEW`
+- Status: `DONE`
 - Objective:
   - Reject unsafe archive layouts and require exact distribution hashes before installing bootstrap dependencies.
 - Deliverables:
