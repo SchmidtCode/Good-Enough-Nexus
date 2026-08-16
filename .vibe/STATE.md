@@ -8,9 +8,9 @@
 
 - Stage: 38
 - Checkpoint: 38.6
-- Status: IN_REVIEW
+- Status: DONE
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: `2b412686c62a25114bf56bec53007537105e0c47`
+- Candidate head: `34d84facb3f5d9c278510a8f39fbe160b6cd1b68`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `36f187824b8a24f6fb51562e6ec1101c300308ef`
 
@@ -28,7 +28,7 @@ Prove the complete infrastructure branch at one exact clean head, publish a draf
 
 - [x] Changed paths are limited to authorized infrastructure categories.
 - [x] Root and `.lag-hotfix-worktree` remain byte-untouched; product and infrastructure cleanliness is reconciled.
-- [x] Required implementation-head checks pass or remain honestly advisory/unavailable.
+- [x] Required reviewed-head local checks pass or remain honestly advisory/unavailable.
 - [ ] Remote branch equals the validated head and the new PR remains draft against `refactor/nexus-1.20-test17`.
 - [ ] Issue #12 is updated and exact-head CI/reviews are inspected.
 - [ ] No merge, force-push, artifact, tag, release, install, live action, publication, or settings mutation occurs.
@@ -43,9 +43,9 @@ Prove the complete infrastructure branch at one exact clean head, publish a draf
 
 ## Work log
 
-- Checkpoint 38.6 expected-red confirmed the dedicated branch and draft infrastructure PR are not yet published.
-- Base-to-head scope contains 38 authorized infrastructure paths and zero Lua, TOC, bundled-data, runtime-test, ZIP, or historical-artifact paths; Lua and TOC tree identities match the exact PR #10 base.
-- Implementation-head Fast passed `5/5`, `git diff --check` passed, and PR #10/issue #12 remain open with the reconciled base unchanged.
+- Checkpoint 38.6 formal local review passed at exact `34d84fa`: Full `16/16`, Security 10 pass / 3 advisory-unavailable, Package `8/8`, release policy, pre-commit, and base-range diff checks passed.
+- A disposable clean worktree at exact `34d84fa` completed tracked bootstrap through `npm ci`, checksum-verified security bootstrap, Lua 5.1 parse `272/272`, integration, and Fast `5/5`; the disposable worktree was removed afterward.
+- No checkpoint-hygiene signal or adversarial scope escape was identified. Publication and exact-head CI remain the explicit external boundary after Vibe hygiene.
 
 ## Workflow state
 
@@ -77,8 +77,8 @@ Prove the complete infrastructure branch at one exact clean head, publish a draf
 
 ## Last completed loop
 
-- Checkpoint 38.6 implementation scope proof is ready for independent exact-head review.
+- Checkpoint 38.6 local adversarial review passed; the Stage 38 plan is exhausted pending bounded hygiene and authorized external publication.
 
 ## Recommended next action
 
-- Review the committed candidate, then complete bounded hygiene before exact-head publication.
+- Complete bounded Stage 38.6 hygiene, then publish the exact validated branch as a draft PR and inspect exact-head CI.
