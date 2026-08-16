@@ -48,7 +48,7 @@ function Test-ArtifactPathSet([string[]] $Candidates, [switch] $ReadContent) {
                 $violations.Add("outside-repository:$path")
                 continue
             }
-            if ((Test-Path -LiteralPath $full -PathType Leaf) -and (Get-Item -LiteralPath $full).Length -le 1048576) {
+            if ((Test-Path -LiteralPath $full -PathType Leaf) -and (Get-Item -LiteralPath $full -Force).Length -le 1048576) {
                 $text = Get-Content -Raw -LiteralPath $full -ErrorAction SilentlyContinue
                 foreach ($pattern in $privateContentPatterns) {
                     if ($text -match $pattern) { $violations.Add("private-content:$path"); break }

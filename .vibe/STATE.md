@@ -8,7 +8,7 @@
 
 - Stage: 38
 - Checkpoint: 38.7
-- Status: DONE
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
 - Candidate head: `ddcc6dfa71cd594c486611fe5644614e2cb7171d`
 - Worktree: `.infra-viberun-quality-gate-worktree`
@@ -52,6 +52,7 @@ Publish the validated infrastructure branch as one draft PR targeting PR #10, li
 - Exact-head CI run `31919314063` exposed a cross-platform workflow-policy self-test defect: the release-policy file hash differed only because Git checked out LF on Ubuntu and CRLF on Windows. The focused repair normalizes line endings before hashing without changing the release workflow.
 - Formal CI-repair review passed at exact `bf359cc`: Fast `13/13`, Full `16/16`, Security 10 pass / 3 advisory-unavailable, release policy, strict Vibe validation, and diff checks passed.
 - Completed bounded CI-repair hygiene: the one-test normalization is direct, deterministic, and free of stale/debug residue; Full was not repeated because review already covered the committed repair.
+- Replacement CI run `31919930699` passed preflight/Fast but exposed an Ubuntu PowerShell dotfile-read defect in the blocking staged-artifact scan. The focused repair adds `-Force` to the existing tracked-file metadata read so hidden dotfiles remain scanned.
 
 ## Workflow state
 
@@ -83,8 +84,8 @@ Publish the validated infrastructure branch as one draft PR targeting PR #10, li
 
 ## Last completed loop
 
-- Checkpoint 38.7 CI portability repair passed independent review and is ready for bounded hygiene before the next non-force push.
+- Checkpoint 38.7 staged-artifact dotfile portability repair is ready for independent review.
 
 ## Recommended next action
 
-- Complete bounded hygiene for the one-test repair, then push normally and inspect replacement exact-head CI.
+- Review the one-token PowerShell dotfile repair, then repeat bounded hygiene and exact-head CI.
