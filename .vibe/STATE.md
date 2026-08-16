@@ -38,10 +38,10 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 - path: .vibe/EVIDENCE.md
 - Stage 42.1: four exact inherited findings remain advisory; owner/message drift, duplicates, stale entries, and improvements are distinguished; focused policy and Fast `15/15` pass.
 - Stage 42.2: ZIP/tar layout validation, exact executable selection, hash-locked Python wheels, and failure-safe cleanup pass; Security `12` blocking checks and Fast `15/15` pass.
+- Stage 43 maintenance: fresh-checkout Linux bootstrap/Fast and receipt-independent Vibe terminal probes remain the highest-impact gaps and are already acceptance-owned by 43.1/43.2.
 
 ## Work log
 
-- Stage 42 design confirmed two bounded owners: 42.1 exact advisory fingerprints in `Test-SecurityPolicy.ps1`, then 42.2 archive-layout and Python-distribution integrity in `Bootstrap-SecurityTools.ps1`; no split or pointer change was needed.
 - Stage 42 maintenance refactor scan selected pure baseline comparison for 42.1 and pure archive-layout/executable resolution for 42.2; both are already scoped by PLAN, and the 42.1 product pointer remains `NOT_STARTED`.
 - Checkpoint 42.1 replaced rule-count allowances with repository-relative owner/rule/message fingerprints, removed eight Stage 41 helper warnings rather than baselining them, and passed the synthetic matrix, current PSScriptAnalyzer reconciliation, security-policy tests, and Fast `15/15`.
 - Checkpoint 42.1 formal review preserved all six reviewed baseline entries so the two removals are visible improvements, added platform-correct outside-root and duplicate-record rejection, and passed focused tests plus exact-base Fast `15/15`.
@@ -51,13 +51,14 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 - Checkpoint 42.2 hygiene found distinct entry-reading, layout-resolution, hash-lock, and bounded-cleanup owners with focused fixtures; no duplicate policy, unnecessary branch, or actionable debt remains, so no code changed.
 - Stage 42 retrospective recorded five actionable lessons from its 10 loops; neither checkpoint needed a repeat review, split, skip, blocker, or decision-required issue.
 - Stage 43 design preserved two rollback-safe checkpoints: one unchanged formal candidate with Full exactly once and fresh-checkout proof, then one terminal Vibe/publication/CI boundary with no merge.
+- Stage 43 maintenance test-gap scan selected fresh-checkout Linux bootstrap/Fast and ignored-receipt-independent Vibe terminal validation; both are already bounded by 43.1/43.2, so no new checkpoint was added.
 
 ## Workflow state
 
 - [ ] RUN_STOPPED
 - [x] RUN_CONTEXT_CAPTURE
 - [x] STAGE_DESIGNED
-- [ ] MAINTENANCE_CYCLE_DONE
+- [x] MAINTENANCE_CYCLE_DONE
 - [x] RETROSPECTIVE_DONE
 - [x] PROCESS_IMPROVEMENTS_DONE
 
@@ -82,8 +83,8 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 
 ## Last completed loop
 
-- Stage 43 design confirmed the existing 43.1/43.2 split and exact-head/terminal-state ownership without changing the product pointer.
+- Stage 43 maintenance test-gap scan confirmed the existing fresh-checkout quality and Vibe probes; the 43.1 pointer remains `NOT_STARTED`.
 
 ## Recommended next action
 
-- Follow the dispatcher-selected Stage 43 maintenance/context routes, then freeze the 43.1 candidate and run Full exactly once.
+- Refresh compact Stage 43 context, then freeze the 43.1 candidate and run Full exactly once.

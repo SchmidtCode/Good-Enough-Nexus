@@ -227,3 +227,9 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Focused security-policy and exact-baseline suites pass. Direct Gitleaks reports no leaks, actionlint passes, and offline high-severity zizmor reports no findings with one default suppression. Exact-base Security passes 12 blocking checks with LuaLS/Luacheck/StyLua explicitly advisory-unavailable; Fast passes `15/15`.
 - Formal review PASS at exact implementation head `905cb00`: all three pinned Linux tarballs independently pass checksum, entry, root, and exact-executable validation (3/11/1 entries); cleanup removes the review downloads; executable links are rejected; security-policy self-tests, Security 12 pass / 3 advisory-unavailable, and exact-base Fast `15/15` pass. No checkpoint-hygiene signal or unresolved finding was identified.
 - Checkpoint 42.2 hygiene: bounded inspection found entry parsing, layout resolution, file/lock hash enforcement, and temporary-directory cleanup separated at useful audit boundaries, with no recursive fallback or parallel policy owner. No clear quick win, larger debt, or best-practice gap remained; no code changed and strict Vibe validation remained the hygiene gate.
+
+## Stage 43 maintenance test-gap scan
+
+- `[MAJOR]` Fresh-checkout Linux bootstrap/Fast is the remaining integration-risk probe that proves tar layout validation and hash-locked pip work without ignored dependencies; checkpoint 43.1 already owns it.
+- `[MAJOR]` Fresh-checkout Vibe status/dispatcher without `.vibe/LOOP_RESULT.json` is the remaining regression probe for finding 8; 43.1 establishes the candidate truth and 43.2 owns the terminal stop receipt.
+- Discarded candidates: duplicating the focused rename, artifact, aggregate, exact-baseline, and hostile-archive matrices would add a second inspection surface without reducing a distinct regression risk. No code or PLAN item changed, and the 43.1 pointer remains `NOT_STARTED`.
