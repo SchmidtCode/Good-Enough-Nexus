@@ -70,3 +70,13 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Bounded scope: security bootstrap, local policy wrappers, static/editor configs, pre-commit config, baselines, and their self-tests only.
 - Hot spots, quick wins, and debt items: none. Direct per-tool wrappers keep unavailable/blocking/advisory semantics inspectable and do not justify another abstraction.
 - Validation: floating-version/unsafe-command/debug marker scan and `git diff --check` passed. No product or test byte changed, so Full was not repeated.
+
+## Checkpoint 38.5 - GitHub Actions quality gate
+
+- Expected red: only `.github/workflows/release-policy.yml` existed; there was no source-quality workflow, in-CI changed-path classifier, or exact-head final quality aggregation.
+- Immutable actions: checkout `3d3c42e5aac5ba805825da76410c181273ba90b1`, setup-node `820762786026740c76f36085b0efc47a31fe5020`, and upload-artifact `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a` were resolved from official release tags and pinned as complete commits.
+- Workflow policy PASS: pull request/main push/dispatch triggers have no path filter; permissions are `contents: read`; four checkouts disable persisted credentials; concurrency cancels superseded workflow/ref runs; all five jobs and final `if: always()` aggregation are present.
+- Full selection is computed inside preflight from reviewed paths and forced for main pushes/manual full. Documentation-only Full skips remain visible to the final aggregator; required failures or unexpected skips fail the final job.
+- Detailed logs upload only on failure or explicit dispatch, retain five days, and exclude packages, SavedVariables, prompts, transcripts, and credentials by path policy.
+- Existing release-policy workflow SHA-256 remains `e625c6232917092f16b9acd421e5641bb3a9527ef5a9402be50bc90e1e203b93`.
+- Implementation validation: workflow self-test, actionlint, high-severity offline zizmor, Fast `13/13`, Security 10 pass / 3 advisory-unavailable, pre-commit, and `git diff --check` passed.

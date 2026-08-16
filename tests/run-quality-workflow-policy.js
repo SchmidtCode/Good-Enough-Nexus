@@ -1,0 +1,32 @@
+"use strict";
+
+const assert = require("assert");
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+
+const root = path.resolve(__dirname, "..");
+const workflow = fs.readFileSync(path.join(root, ".github/workflows/quality-gate.yml"), "utf8");
+const release = fs.readFileSync(path.join(root, ".github/workflows/release-policy.yml"));
+
+assert.match(workflow, /\non:\s*\n\s+pull_request:\s*\n\s+push:[\s\S]*branches:[\s\S]*- main[\s\S]*workflow_dispatch:/);
+assert(!workflow.includes("pull_request_target"));
+assert.match(workflow, /permissions:\s*\n\s+contents: read/);
+assert.match(workflow, /group: better-nexus-quality-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}/);
+assert.match(workflow, /cancel-in-progress: true/);
+for (const job of ["preflight", "fast-quality", "security-quality", "full-quality", "quality-gate"]) {
+    assert.match(workflow, new RegExp(`^  ${job}:`, "m"), `missing job: ${job}`);
+}
+const uses = [...workflow.matchAll(/^\s+uses:\s+([^\s]+)$/gm)].map((match) => match[1]);
+assert(uses.length > 0);
+for (const use of uses) assert.match(use, /^[^@]+@[0-9a-f]{40}$/, `non-immutable action: ${use}`);
+assert.strictEqual((workflow.match(/persist-credentials: false/g) || []).length, 4);
+assert.strictEqual((workflow.match(/fetch-depth: 0/g) || []).length, 2);
+assert.match(workflow, /full-quality:[\s\S]*if: needs\.preflight\.outputs\.full_required == 'true'/);
+assert.match(workflow, /quality-gate:[\s\S]*if: always\(\)/);
+assert.match(workflow, /failure\(\) \|\| \(github\.event_name == 'workflow_dispatch' && inputs\.upload_logs\)/);
+assert.strictEqual((workflow.match(/retention-days: 5/g) || []).length, 3);
+assert(!/^\s+paths(?:-ignore)?:/m.test(workflow));
+assert.strictEqual(crypto.createHash("sha256").update(release).digest("hex"), "e625c6232917092f16b9acd421e5641bb3a9527ef5a9402be50bc90e1e203b93");
+
+console.log("quality workflow policy: triggers, permissions, pins, concurrency, jobs, skips, artifacts, release ownership -- OK");

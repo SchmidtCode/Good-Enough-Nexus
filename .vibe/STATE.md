@@ -8,7 +8,7 @@
 
 - Stage: 38
 - Checkpoint: 38.5
-- Status: NOT_STARTED
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
 - Candidate head: `b792c82b75c176151ded62568f82788cb18f654f`
 - Worktree: `.infra-viberun-quality-gate-worktree`
@@ -26,12 +26,12 @@ Add an exact-head GitHub Actions quality gate using the tracked profiles, least 
 
 ## Acceptance (current checkpoint)
 
-- [ ] Pull requests, main pushes, and dispatch run without trigger path filters.
-- [ ] Permissions are `contents: read`, credentials do not persist, and every external action uses a complete SHA.
-- [ ] Full runs for relevant paths/main/manual full and documentation-only skips are visible.
-- [ ] Final `if: always()` job rejects required failures and unexpected skips.
-- [ ] Detailed logs upload only on failure or explicit dispatch with short retention.
-- [ ] Existing `release-policy.yml` remains present and byte-unchanged.
+- [x] Pull requests, main pushes, and dispatch run without trigger path filters.
+- [x] Permissions are `contents: read`, credentials do not persist, and every external action uses a complete SHA.
+- [x] Full runs for relevant paths/main/manual full and documentation-only skips are visible.
+- [x] Final `if: always()` job rejects required failures and unexpected skips.
+- [x] Detailed logs upload only on failure or explicit dispatch with short retention.
+- [x] Existing `release-policy.yml` remains present and byte-unchanged.
 
 ## Evidence
 
@@ -40,12 +40,14 @@ Add an exact-head GitHub Actions quality gate using the tracked profiles, least 
 - 38.3 role-specific validation and 23.7% hot-context reduction are reviewed.
 - 38.4 exact-head `b792c82` passed Full `16/16`, Security 10 pass / 3 advisory-unavailable, artifact/self-tests, and pre-commit.
 - Existing release-policy workflow is unchanged from selected base and its run `31857811990` passed.
+- 38.5 workflow policy, actionlint, high-severity offline zizmor, Fast `13/13`, Security 10 pass / 3 advisory-unavailable, and pre-commit pass locally.
 
 ## Work log
 
 - Checkpoint 38.4 review passed and auto-advanced to 38.5; all exact security pins, baselines, and honest advisory status are preserved.
 - The installed dispatcher DAG marks 38.1–38.4 done and 38.5 ready.
 - Completed bounded 38.4 hygiene with no floating version, unsafe download path, debug marker, redundant policy runner, or directly attributable debt.
+- Implemented immutable exact-head CI with preflight classification, Fast/Security, conditional Full, final always-run aggregation, compact step summaries, and failure/dispatch-only five-day logs.
 
 ## Workflow state
 
@@ -81,4 +83,4 @@ Add an exact-head GitHub Actions quality gate using the tracked profiles, least 
 
 ## Recommended next action
 
-- Implement the deterministic quality-gate workflow.
+- Review committed 38.5 workflow policy and run Full once before final exact-head publication work.

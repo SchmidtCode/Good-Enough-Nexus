@@ -33,7 +33,7 @@ depends_on: [38.3]
 
 depends_on: [38.4]
 
-- Status: `NOT_STARTED`
+- Status: `IN_REVIEW`
 - Objective:
   - Run the tracked profiles in GitHub Actions with least privilege, immutable dependencies, visible policy skips, and one final gate result.
 - Deliverables:
@@ -41,10 +41,10 @@ depends_on: [38.4]
   - In-workflow path classification, compact summaries, and failure-only/explicit logs with short retention.
   - Workflow self-tests for triggers, permissions, pins, concurrency, checkout credentials, conditions, and aggregation.
 - Acceptance:
-  - [ ] Pull requests, main pushes, and dispatch are covered without trigger path filtering.
-  - [ ] Permissions are read-only, credentials do not persist, and all actions use complete SHAs.
-  - [ ] Required Full runs and documentation-only skips are deterministic and visible.
-  - [ ] Existing `release-policy.yml` remains unchanged.
+  - [x] Pull requests, main pushes, and dispatch are covered without trigger path filtering.
+  - [x] Permissions are read-only, credentials do not persist, and all actions use complete SHAs.
+  - [x] Required Full runs and documentation-only skips are deterministic and visible.
+  - [x] Existing `release-policy.yml` remains unchanged.
 - Demo commands:
   - `node tests/run-quality-workflow-policy.js`
   - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Fast`
