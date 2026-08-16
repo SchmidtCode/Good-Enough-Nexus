@@ -58,6 +58,32 @@ function Assert-SecurityArchivePathToken {
     }
 }
 
+function Resolve-SecurityDownloadUri {
+    [CmdletBinding()]
+    [OutputType([uri])]
+    param(
+        [Parameter(Mandatory)][AllowNull()][AllowEmptyString()][object] $Value,
+        [Parameter(Mandatory)][string] $Label
+    )
+
+    if ($Value -isnot [string]) {
+        throw "$Label must be a string."
+    }
+    $text = [string] $Value
+    if (-not $text -or $text -cne $text.Trim() -or $text -match '[\x00-\x1f\x7f]' `
+        -or $text.Contains('\') -or $text -match '%(?![0-9A-Fa-f]{2})') {
+        throw "$Label is not a safe download URI."
+    }
+
+    $uri = $null
+    if (-not [System.Uri]::TryCreate($text, [System.UriKind]::Absolute, [ref] $uri) `
+        -or -not $uri.IsAbsoluteUri -or $uri.Scheme -cne 'https' `
+        -or [string]::IsNullOrWhiteSpace($uri.Host) -or $uri.UserInfo -or $uri.Fragment) {
+        throw "$Label must be an absolute HTTPS URI without credentials or a fragment."
+    }
+    return $uri
+}
+
 function Resolve-SecurityBootstrapManifest {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -79,8 +105,7 @@ function Resolve-SecurityBootstrapManifest {
             if (-not $asset) { throw "Security manifest is missing $name asset '$platformName'." }
             if ([string] $asset.sha256 -notmatch '^[0-9a-f]{64}$') { throw "$name $platformName has an invalid checksum." }
             if ([string] $asset.archive_type -notin @('zip', 'tar.gz')) { throw "$name $platformName has an invalid archive type." }
-            $uri = [uri] ([string] $asset.url)
-            if (-not $uri.IsAbsoluteUri -or $uri.Scheme -cne 'https') { throw "$name $platformName has an invalid URL." }
+            $uri = Resolve-SecurityDownloadUri -Value $asset.url -Label "$name $platformName URL"
             $archiveName = [System.IO.Path]::GetFileName($uri.AbsolutePath)
             Assert-SecurityArchivePathToken -Path $archiveName -Label "$name $platformName download name" -TopLevelOnly
             Resolve-SecurityContainedPath -Root (Join-Path $ToolsRoot 'manifest-downloads') `
@@ -98,6 +123,7 @@ function Resolve-SecurityBootstrapManifest {
 
     $pssa = $Manifest.psscriptanalyzer
     Assert-SecurityVersionToken -Version ([string] $pssa.version) -Label 'PSScriptAnalyzer version'
+    Resolve-SecurityDownloadUri -Value $pssa.url -Label 'PSScriptAnalyzer URL' | Out-Null
     if ([string] $pssa.sha256 -notmatch '^[0-9a-f]{64}$' -or [string] $pssa.archive_type -cne 'zip') {
         throw 'PSScriptAnalyzer metadata is invalid.'
     }

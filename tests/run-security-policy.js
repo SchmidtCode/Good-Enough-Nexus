@@ -56,7 +56,7 @@ assert.strictEqual(pssaBaseline.status, 0, `${pssaBaseline.stdout}\n${pssaBaseli
 assert.match(pssaBaseline.stdout, /owner\/message drift, case-distinct owners, duplicates, stale and malformed entries -- OK/);
 const bootstrapPolicy = run("tests/Test-SecurityBootstrapPolicy.ps1", []);
 assert.strictEqual(bootstrapPolicy.status, 0, `${bootstrapPolicy.stdout}\n${bootstrapPolicy.stderr}`);
-assert.match(bootstrapPolicy.stdout, /manifest containment, ZIP\/tar layouts, 8 hostile archives plus link rejection, checksum\/hash lock, failure cleanup -- OK/);
+assert.match(bootstrapPolicy.stdout, /shared download URIs, manifest containment, ZIP\/tar layouts, 8 hostile archives plus link rejection, checksum\/hash lock, failure cleanup -- OK/);
 
 const scratch = path.join(root, "build", "staged-artifact-hostile-tests");
 fs.rmSync(scratch, { recursive: true, force: true });
@@ -144,6 +144,7 @@ for (const tool of ["gitleaks", "actionlint", "zizmor"]) {
     }
 }
 assert.match(manifest.psscriptanalyzer.sha256, /^[0-9a-f]{64}$/);
+assert.match(manifest.psscriptanalyzer.url, /^https:\/\//);
 assert.strictEqual(manifest.psscriptanalyzer.archive_type, "zip");
 assert(manifest.psscriptanalyzer.allowed_top_level.includes("PSScriptAnalyzer.psd1"));
 assert.deepStrictEqual([...manifest.psscriptanalyzer.allowed_top_level].sort(), [
@@ -167,6 +168,10 @@ assert(requirementLines.every((line) => /^\S+==\S+(?: --hash=sha256:[0-9a-f]{64}
 assert.deepStrictEqual(requirementLines.map((line) => line.split(/\s+/)[0].toLowerCase()).sort(),
     manifest.pre_commit.packages.map((entry) => entry.toLowerCase()).sort());
 const securityBootstrap = fs.readFileSync(path.join(root, "tools", "Bootstrap-SecurityTools.ps1"), "utf8");
+const securityPolicy = fs.readFileSync(path.join(root, "tools", "SecurityBootstrapPolicy.ps1"), "utf8");
+assert.match(securityPolicy, /function Resolve-SecurityDownloadUri/);
+assert.strictEqual((securityPolicy.match(/Resolve-SecurityDownloadUri -Value/g) || []).length, 2,
+    "every current manifest download owner must use the shared URI validator");
 assert.match(securityBootstrap, /--require-hashes --only-binary=:all: --no-deps/);
 assert(securityBootstrap.indexOf("Resolve-SecurityBootstrapManifest") >= 0);
 assert(securityBootstrap.indexOf("Resolve-SecurityBootstrapManifest") < securityBootstrap.indexOf("New-Item"),

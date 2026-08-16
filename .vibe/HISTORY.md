@@ -12,6 +12,7 @@ This file is non-authoritative. Archive completed checkpoints, resolved issues, 
 
 ## Resolved issues
 
+- ISSUE-45: One shared pre-use download-URI validator now rejects unsafe tool and PSScriptAnalyzer URL metadata; expected-red, focused-green, Fast, Security, PSScriptAnalyzer, and Gitleaks evidence is recorded in checkpoint 45.1.
 - Git rename/copy discovery and workflow classification now use one NUL-safe record model and preserve both owners.
 - Policy/legal/security Markdown no longer inherits ordinary-documentation routing.
 - Staged/all-tracked artifact discovery no longer consumes Git-quoted lines and shares one fail-closed policy with Fast.

@@ -78,6 +78,19 @@ function Assert-RejectedManifestMutation {
     throw "$Label manifest metadata was accepted."
 }
 
+function Assert-AcceptedManifestMutation {
+    param([string] $Label, [object] $Manifest, [scriptblock] $Mutation)
+    $candidate = Copy-SecurityManifest -Manifest $Manifest
+    & $Mutation $candidate
+    try {
+        Resolve-SecurityBootstrapManifest -Manifest $candidate -RepositoryRoot $repositoryRoot `
+            -ToolsRoot (Join-Path $repositoryRoot '.tools/security') -Platform 'windows-x64' | Out-Null
+    }
+    catch {
+        throw "$Label manifest metadata was rejected: $($_.Exception.Message)"
+    }
+}
+
 if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 New-Item -ItemType Directory -Path $scratch -Force | Out-Null
 try {
@@ -92,6 +105,38 @@ try {
     Assert-RejectedManifestMutation 'traversal expected executable' $manifest { param($value) $value.tools.gitleaks.'windows-x64'.expected_executable_path = '../gitleaks.exe' }
     Assert-RejectedManifestMutation 'unsafe allowed root' $manifest { param($value) $value.tools.gitleaks.'windows-x64'.allowed_top_level = @('..') }
     Assert-RejectedManifestMutation 'requirements escape' $manifest { param($value) $value.pre_commit.requirements_file = '../outside.txt' }
+    Assert-AcceptedManifestMutation 'representative tool HTTPS URL' $manifest { param($value) $value.tools.gitleaks.'windows-x64'.url = 'https://example.invalid/tool.zip' }
+    Assert-AcceptedManifestMutation 'representative PSScriptAnalyzer HTTPS URL' $manifest { param($value) $value.psscriptanalyzer.url = 'https://example.invalid/analyzer.nupkg' }
+    Assert-RejectedManifestMutation 'tool file URL' $manifest { param($value) $value.tools.gitleaks.'windows-x64'.url = 'file:///C:/outside.zip' }
+    Assert-RejectedManifestMutation 'tool relative URL' $manifest { param($value) $value.tools.gitleaks.'windows-x64'.url = '../outside.zip' }
+
+    $hostilePssaUrls = @(
+        @{ Label = 'file drive URL'; Value = 'file:///C:/outside.nupkg' },
+        @{ Label = 'file Unix URL'; Value = 'file:///tmp/outside.nupkg' },
+        @{ Label = 'relative forward URL'; Value = '../outside.nupkg' },
+        @{ Label = 'relative backslash URL'; Value = '..\outside.nupkg' },
+        @{ Label = 'absolute Unix path URL'; Value = '/absolute/outside.nupkg' },
+        @{ Label = 'drive backslash URL'; Value = 'C:\outside.nupkg' },
+        @{ Label = 'drive slash URL'; Value = 'C:/outside.nupkg' },
+        @{ Label = 'UNC URL'; Value = '\\server\share\outside.nupkg' },
+        @{ Label = 'plain HTTP URL'; Value = 'http://example.invalid/analyzer.nupkg' },
+        @{ Label = 'malformed URI'; Value = 'https://[example.invalid/analyzer.nupkg' },
+        @{ Label = 'empty URI'; Value = '' },
+        @{ Label = 'control URI'; Value = "https://example.invalid/analyzer`n.nupkg" },
+        @{ Label = 'userinfo URI'; Value = 'https://user:pass@example.invalid/analyzer.nupkg' },
+        @{ Label = 'fragment URI'; Value = 'https://example.invalid/analyzer.nupkg#fragment' },
+        @{ Label = 'backslash URI'; Value = 'https://example.invalid\analyzer.nupkg' },
+        @{ Label = 'malformed percent URI'; Value = 'https://example.invalid/%zz.nupkg' },
+        @{ Label = 'leading whitespace URI'; Value = ' https://example.invalid/analyzer.nupkg' },
+        @{ Label = 'trailing whitespace URI'; Value = 'https://example.invalid/analyzer.nupkg ' },
+        @{ Label = 'non-string URI'; Value = 42 }
+    )
+    foreach ($fixture in $hostilePssaUrls) {
+        $fixtureValue = $fixture.Value
+        Assert-RejectedManifestMutation "PSScriptAnalyzer $($fixture.Label)" $manifest {
+            param($value) $value.psscriptanalyzer.url = $fixtureValue
+        }
+    }
 
     $validArchive = Join-Path $scratch 'valid.zip'
     New-SecurityFixtureArchive -Path $validArchive -EntryPath @('LICENSE', 'tool.exe')
@@ -164,4 +209,4 @@ finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 }
 
-Write-Output 'security bootstrap fixtures: manifest containment, ZIP/tar layouts, 8 hostile archives plus link rejection, checksum/hash lock, failure cleanup -- OK'
+Write-Output 'security bootstrap fixtures: shared download URIs, manifest containment, ZIP/tar layouts, 8 hostile archives plus link rejection, checksum/hash lock, failure cleanup -- OK'

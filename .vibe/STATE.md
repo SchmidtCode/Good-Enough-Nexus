@@ -6,33 +6,33 @@
 
 ## Current focus
 
-- Stage: 44
-- Checkpoint: 44.1
-- Status: DONE
+- Stage: 45
+- Checkpoint: 45.1
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: branch `HEAD` after the checkpoint implementation commit; repair started from `87204ab3eda4a950a4d556ad1958334fadaa06a6`
+- Candidate head: branch `HEAD` after checkpoint implementation; repair starts from `4197ed95bc27a2ce64d85eb30a05feb8385c4339`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
 ## Objective (current checkpoint)
 
-Repair the four independent-review findings, replace synthetic-merge validation with auditable exact-head CI, and stop at one truthful final PR head.
+Close the remaining PSScriptAnalyzer download-URI validation gap through the shared pre-use manifest policy and re-establish truthful exact-head CI.
 
 ## Deliverables (current checkpoint)
 
-- Exact immutable candidate checkout/assertion for all Quality and Release source jobs.
-- Fail-closed artifact, analyzer-baseline, and security-manifest policies with adversarial fixtures.
-- One frozen formal local candidate plus dependency-clean checkout and exact-base scope proof.
-- Normal publication, per-job exact-head CI audit, corrected PR/issue/evidence truth, and terminal stop.
+- One shared strict download-URI validator used by all manifest-controlled security downloads.
+- Expected-red and focused-green PSScriptAnalyzer/tool-asset URI fixtures without network access.
+- Focused local security/Fast/static validation and exact-base infrastructure-only scope proof.
+- Normal publication, replacement per-job exact-head CI audit, reconciled PR/issue evidence, and terminal stop.
 
 ## Acceptance (current checkpoint)
 
-- [x] Four expected-red regressions are repaired and focused/Fast validation passes.
-- [x] Formal Full, Package, and Security pass on one unchanged committed candidate.
-- [x] Exact-base scope remains infrastructure-only and a dependency-clean checkout passes.
-- [x] Every replacement Quality/Release source job proves `HEAD` equals the exact final PR head, with zero successful artifacts.
-- [x] PR #13, issue #12, and append-only Vibe evidence explicitly correct the superseded synthetic-merge claims.
-- [x] Fresh checkout reports checkpoint DONE, acceptance complete, `RUN_STOPPED=true`, dispatcher `stop`, and no LOOP_RESULT dependency.
+- [x] Expected-red proves the exact missing PSScriptAnalyzer URI-validation contract.
+- [x] One shared validator rejects unsafe URI/path/control-character variants and preserves valid HTTPS metadata.
+- [x] Focused security regressions, Fast, Security, PSScriptAnalyzer, Gitleaks, diff, and scope checks pass.
+- [ ] Every replacement Quality/Release source job proves `HEAD` equals the exact final PR head, with zero successful artifacts.
+- [ ] PR #13, issue #12, and append-only Vibe evidence describe the final URI repair and current exact-head runs.
+- [ ] Final status is `DONE`, `RUN_STOPPED=true`, dispatcher `stop`, with a clean infrastructure worktree and no post-CI commit.
 
 ## Evidence
 
@@ -46,9 +46,14 @@ Repair the four independent-review findings, replace synthetic-merge validation 
 - Stage 44.1 Fast: exact base `d0681b6`, `15/15` blocking checks passed in 37.924 seconds with zero failed/skipped/unavailable checks.
 - Stage 44.1 formal: candidate `cc3c995` passed the single local Full `18/18` plus one manual skip, Package `10/10`, Security 12 blocking / 3 advisory-unavailable, and dependency-clean bootstrap/Fast/Vibe proof.
 - Stage 44.1 exact-head candidate: `d3973ff` passed Quality `31975606558` and Release `31975606507`; all seven source jobs selected/asserted that SHA and both artifact inventories are empty.
+- Stage 45.1 starting review: exact head `4197ed9` is green but the resolver accepts `file:`, relative, and plain-HTTP `psscriptanalyzer.url` metadata before bootstrap use.
+- Stage 45.1 expected-red/green: three unsafe PSScriptAnalyzer URLs were accepted before repair; one shared owner now rejects 19 hostile variants for both download paths while current/safe HTTPS manifests pass.
+- Stage 45.1 local gates: focused security/bootstrap regressions pass; Fast `15/15`; Security 12 blocking pass / 3 advisory-unavailable; PSScriptAnalyzer 0 blocking / 4 inherited / 0 new / 2 improvements; Gitleaks no leaks.
 
 ## Work log
 
+- Checkpoint 45.1 implementation replaced the inline tool-asset URI check with one strict shared resolver used by both tool assets and PSScriptAnalyzer, added network-free hostile/safe fixtures, and passed focused/Fast/Security/static validation without workflow or protected-runtime changes.
+- Independent final review at starting head `4197ed9` found one remaining merge-blocking gap: ordinary tool asset URLs are validated, but `psscriptanalyzer.url` reaches `Invoke-WebRequest` without the shared fail-closed URI contract. Supported VibeRun resume selected Stage 45 design for one bounded repair checkpoint.
 - Independent review falsified the Stage 43 terminal acceptance premise: Quality `31959113599` and Release `31959113603` checked out synthetic merge `bab79a6`, not reviewed head `87204ab`, and exposed four merge-blocking infrastructure findings.
 - The supported VibeRun resume operation cleared `RUN_STOPPED`; the dispatcher selected stage design, which bounded all four repairs and final exact-head reconciliation into checkpoint 44.1.
 - Checkpoint 44.1 implemented explicit immutable candidate/base ownership and checkout assertions, path-before-fixture artifact enforcement, ordinal analyzer maps, and pre-use manifest containment; focused and Fast gates pass and the checkpoint is ready for formal review.
@@ -70,7 +75,7 @@ Repair the four independent-review findings, replace synthetic-merge validation 
 
 ## Workflow state
 
-- [x] RUN_STOPPED
+- [ ] RUN_STOPPED
 - [ ] RUN_CONTEXT_CAPTURE
 - [x] STAGE_DESIGNED
 - [x] MAINTENANCE_CYCLE_DONE
@@ -93,6 +98,8 @@ Repair the four independent-review findings, replace synthetic-merge validation 
 
 ## Decisions
 
+- Reuse one shared strict download-URI validator for ordinary tool assets and PSScriptAnalyzer; do not add a second validation path.
+- Keep Stage 45 to checkpoint 45.1 and finish on a single final terminal candidate whose exact SHA receives replacement Quality and Release CI.
 - Treat runs `31959113599` and `31959113603` as green synthetic-merge runs, not exact-head evidence; preserve them only as corrected historical receipts.
 - Use exactly one Stage 44 repair checkpoint and one frozen candidate so terminal Vibe truth can receive CI at the same final head.
 - Keep existing PR #13 draft against the current PR #10 branch and refresh it only after exact-head validation.
@@ -101,8 +108,8 @@ Repair the four independent-review findings, replace synthetic-merge validation 
 
 ## Last completed loop
 
-- Stage 44.1 formal review passed, plan is exhausted, and only dispatcher-owned terminal stop/final exact-head receipt publication remains.
+- Stage 45.1 implementation completed the shared URI repair and local gates, then moved the checkpoint to `IN_REVIEW`.
 
 ## Recommended next action
 
-- Publish this terminal receipt head, audit exact-head Quality/Release, refresh PR #13 and issue #12, then hand off without merge.
+- Independently review the seven-file checkpoint delta, then complete hygiene and terminal publication without changing implementation bytes.

@@ -85,3 +85,32 @@ depends_on: [43.1]
   - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Security -BaseRef d0681b6a885db447c94a75f40df7e81f60b74c55`
 - Evidence:
   - Four expected-red/green receipts, one formal local candidate summary, and exact-head GitHub job/terminal Vibe receipts.
+
+## Stage 45 — Close the remaining manifest download-URI gap
+
+- Goal: make every manifest-controlled security download URI pass one shared fail-closed policy before use, then re-establish exact-head PR evidence.
+- Decision: use one checkpoint because the defect, fixtures, local security gates, publication, and terminal CI reconciliation form one bounded repair.
+
+### 45.1 — Validate every security-manifest download URI before use
+
+- Status: `IN_REVIEW`
+- Objective:
+  - Reject unsafe `psscriptanalyzer.url` metadata through the same URI-validation owner used by ordinary tool assets, without changing product/runtime behavior.
+- Deliverables:
+  - One shared strict download-URI validator used by all current security-manifest download fields.
+  - Expected-red and focused-green PSScriptAnalyzer/tool-asset URI fixtures with no network access.
+  - Append-only finding, validation, publication, exact-head CI, and terminal Vibe receipts.
+- Acceptance:
+  - [x] The pre-repair resolver accepts `file:`, relative, and plain-HTTP PSScriptAnalyzer URLs for the intended expected-red reason.
+  - [x] The shared validator accepts current/safe absolute HTTPS URLs and rejects unsafe URI/path/control-character variants for both download owners.
+  - [x] Manifest validation completes before any manifest-controlled download or filesystem mutation, while archive/hash/path/cleanup regressions remain green.
+  - [x] Focused security tests, Fast, Security, PSScriptAnalyzer, Gitleaks, and diff/scope checks pass without workflow or protected-runtime changes.
+  - [ ] The final PR head passes replacement Quality and Release workflows; all seven source jobs assert that SHA and both artifact inventories are empty.
+  - [ ] PR #13 and issue #12 are reconciled, the worktree is clean, and Vibe returns `DONE` / `RUN_STOPPED=true` / dispatcher `stop` without a post-CI commit.
+- Demo commands:
+  - `pwsh -NoProfile -File tests/Test-SecurityBootstrapPolicy.ps1`
+  - `node tests/run-security-policy.js`
+  - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Fast -BaseRef d0681b6a885db447c94a75f40df7e81f60b74c55`
+  - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Security -BaseRef d0681b6a885db447c94a75f40df7e81f60b74c55`
+- Evidence:
+  - Expected-red/green URI matrix, compact local gate summaries, and exact-head GitHub/Vibe receipts.
