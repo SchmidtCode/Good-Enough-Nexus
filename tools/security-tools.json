@@ -65,7 +65,7 @@
     "sha256": "14e634c828eb98efb9f40b2918ba90f139ed5eccdf663a2a747736d996995d60",
     "archive_type": "zip",
     "expected_executable_path": "PSScriptAnalyzer.psd1",
-    "allowed_top_level": ["_rels", "PSScriptAnalyzer.nuspec", "Settings", "LICENSE", "Newtonsoft.Json.dll", "PSScriptAnalyzer.psm1", "ScriptAnalyzer.types.ps1xml", "compatibility_profiles", "PSv7", "Microsoft.PowerShell.CrossCompatibility.dll", "README.md", "SECURITY.md", "en-US", "Microsoft.PowerShell.ScriptAnalyzer.BuiltinRules.dll", "PSScriptAnalyzer.psd1", "ScriptAnalyzer.format.ps1xml", "ThirdPartyNotices.txt", "Microsoft.PowerShell.ScriptAnalyzer.dll", "[Content_Types].xml", "package", ".signature.p7s"]
+    "allowed_top_level": ["_rels", "PSScriptAnalyzer.nuspec", "Settings", "LICENSE", "Newtonsoft.Json.dll", "PSScriptAnalyzer.psm1", "ScriptAnalyzer.types.ps1xml", "compatibility_profiles", "PSv7", "Microsoft.PowerShell.CrossCompatibility.dll", "README.md", "SECURITY.md", "en-US", "Microsoft.Windows.PowerShell.ScriptAnalyzer.BuiltinRules.dll", "PSScriptAnalyzer.psd1", "ScriptAnalyzer.format.ps1xml", "ThirdPartyNotices.txt", "Microsoft.Windows.PowerShell.ScriptAnalyzer.dll", "[Content_Types].xml", "package", ".signature.p7s"]
   },
   "pre_commit": {
     "version": "4.6.2",

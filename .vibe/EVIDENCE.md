@@ -233,3 +233,9 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - `[MAJOR]` Fresh-checkout Linux bootstrap/Fast is the remaining integration-risk probe that proves tar layout validation and hash-locked pip work without ignored dependencies; checkpoint 43.1 already owns it.
 - `[MAJOR]` Fresh-checkout Vibe status/dispatcher without `.vibe/LOOP_RESULT.json` is the remaining regression probe for finding 8; 43.1 establishes the candidate truth and 43.2 owns the terminal stop receipt.
 - Discarded candidates: duplicating the focused rename, artifact, aggregate, exact-baseline, and hostile-archive matrices would add a second inspection surface without reducing a distinct regression risk. No code or PLAN item changed, and the 43.1 pointer remains `NOT_STARTED`.
+
+## Checkpoint 43.1 - formal candidate preflight
+
+- Clean-bootstrap expected red: after removing ignored `node_modules` and `.tools`, tracked `npm ci` passed but bootstrap rejected the pinned PSScriptAnalyzer archive because its exact `Microsoft.Windows.PowerShell.ScriptAnalyzer.*` roots were absent from the manifest allowlist. The outer temporary bootstrap root was removed, and Full did not run.
+- Direct reconciliation downloaded the same checksum-pinned nupkg (`14e634c...`) into a bounded review root, enumerated all 21 unique top-level entries, corrected only the two assembly names, added an exact allowlist fixture, and removed the review root.
+- Replacement clean tracked bootstrap PASS: npm added 5 packages; Windows ZIP layouts, the PSScriptAnalyzer nupkg, and all ten hash-locked Python distributions verified; Node `v24.19.0` and pre-commit `4.6.2` installed with no retained bootstrap/download/extraction roots. This replacement head supersedes the first frozen candidate before the single local Full.

@@ -134,6 +134,16 @@ for (const tool of ["gitleaks", "actionlint", "zizmor"]) {
 assert.match(manifest.psscriptanalyzer.sha256, /^[0-9a-f]{64}$/);
 assert.strictEqual(manifest.psscriptanalyzer.archive_type, "zip");
 assert(manifest.psscriptanalyzer.allowed_top_level.includes("PSScriptAnalyzer.psd1"));
+assert.deepStrictEqual([...manifest.psscriptanalyzer.allowed_top_level].sort(), [
+    ".signature.p7s", "LICENSE", "Microsoft.PowerShell.CrossCompatibility.dll",
+    "Microsoft.Windows.PowerShell.ScriptAnalyzer.BuiltinRules.dll",
+    "Microsoft.Windows.PowerShell.ScriptAnalyzer.dll", "Newtonsoft.Json.dll",
+    "PSScriptAnalyzer.nuspec", "PSScriptAnalyzer.psd1", "PSScriptAnalyzer.psm1",
+    "PSv7", "README.md", "ScriptAnalyzer.format.ps1xml",
+    "ScriptAnalyzer.types.ps1xml", "SECURITY.md", "Settings",
+    "ThirdPartyNotices.txt", "[Content_Types].xml", "_rels",
+    "compatibility_profiles", "en-US", "package",
+].sort());
 assert.strictEqual(manifest.pre_commit.packages[0], `pre-commit==${manifest.pre_commit.version}`);
 assert(manifest.pre_commit.packages.every((entry) => /^[A-Za-z0-9_-]+==[^=]+$/.test(entry)), "pre-commit dependency is not exact");
 const requirementLines = fs.readFileSync(path.join(root, "tools", manifest.pre_commit.requirements_file), "utf8")

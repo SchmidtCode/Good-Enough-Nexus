@@ -42,7 +42,6 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 
 ## Work log
 
-- Checkpoint 42.1 replaced rule-count allowances with repository-relative owner/rule/message fingerprints, removed eight Stage 41 helper warnings rather than baselining them, and passed the synthetic matrix, current PSScriptAnalyzer reconciliation, security-policy tests, and Fast `15/15`.
 - Checkpoint 42.1 formal review preserved all six reviewed baseline entries so the two removals are visible improvements, added platform-correct outside-root and duplicate-record rejection, and passed focused tests plus exact-base Fast `15/15`.
 - Checkpoint 42.1 hygiene found one pure comparison owner, explicit baseline data, focused boundary fixtures, and no remaining duplication, fragile branch, or actionable debt; no code changed.
 - Checkpoint 42.2 replaced recursive executable discovery with validated ZIP/tar records and exact manifest paths, added a reviewed Python wheel hash lock enforced by pip, and removed bootstrap/download/extraction output through bounded `finally` cleanup.
@@ -52,6 +51,7 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 - Stage 43 design preserved two rollback-safe checkpoints: one unchanged formal candidate with Full exactly once and fresh-checkout proof, then one terminal Vibe/publication/CI boundary with no merge.
 - Stage 43 maintenance test-gap scan selected fresh-checkout Linux bootstrap/Fast and ignored-receipt-independent Vibe terminal validation; both are already bounded by 43.1/43.2, so no new checkpoint was added.
 - Checkpoint 43.1 froze the formal candidate as branch `HEAD` against exact base `d0681b6`; code and tooling bytes must remain unchanged after the single local Full.
+- Checkpoint 43.1 clean bootstrap correctly rejected an incomplete PSScriptAnalyzer top-level allowlist; the exact checksum-matching package layout was reconciled and the replacement clean bootstrap passed before Full.
 
 ## Workflow state
 
