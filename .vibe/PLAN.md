@@ -29,11 +29,11 @@
 - Evidence:
   - Compact exact-head summaries, fresh-checkout receipts, and protected-scope proof.
 
-### 43.2 — Refresh PR #13 and stop at independent review
+### (DONE) 43.2 — Refresh PR #13 and stop at independent review
 
 depends_on: [43.1]
 
-- Status: `IN_REVIEW`
+- Status: `DONE`
 - Objective:
   - Publish the reviewed repair head normally, record exact CI/review truth, and leave Vibe at a clean terminal external-review boundary.
 - Deliverables:
@@ -42,12 +42,12 @@ depends_on: [43.1]
   - PR #13 body and issue #12 repair/validation updates.
   - Replacement Quality Gate, Release Policy, artifact, mergeability, review, and thread inspection.
 - Acceptance:
-  - [ ] Committed STATE identifies branch `HEAD`, exact base, checkpoint DONE, completed acceptance, and next role stop.
-  - [ ] Fresh checkout dispatcher preview agrees with committed terminal state.
-  - [ ] PR #13 remains open/draft/unmerged and exact-head required workflows pass with local/CI parity.
-  - [ ] Issue #12 remains open with the exact final repair/CI status.
-  - [ ] Review/thread counts and all independently owned worktree statuses are unchanged except authorized PR/issue updates.
-  - [ ] No additional Codex review request, merge, release, install, live, or settings action occurs.
+- [x] Committed STATE identifies branch `HEAD`, exact base, checkpoint DONE, completed acceptance, and next role stop.
+- [x] Fresh checkout dispatcher preview agrees with committed terminal state.
+- [x] PR #13 remains open/draft/unmerged and exact-head required workflows pass with local/CI parity.
+- [x] Issue #12 remains open with the exact final repair/CI status.
+- [x] Review/thread counts and all independently owned worktree statuses are unchanged except authorized PR/issue updates.
+- [x] No additional Codex review request, merge, release, install, live, or settings action occurs.
 - Demo commands:
   - `git push origin infra/viberun-quality-gate`
   - `python <installed-vibe>/scripts/vibe.py --repo-root . status`

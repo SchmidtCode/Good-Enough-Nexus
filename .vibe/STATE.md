@@ -8,7 +8,7 @@
 
 - Stage: 43
 - Checkpoint: 43.2
-- Status: IN_REVIEW
+- Status: DONE
 - Branch: `infra/viberun-quality-gate`
 - Candidate head: reviewed formal code/tooling candidate `4c1002e` plus receipt-only branch `HEAD`
 - Worktree: `.infra-viberun-quality-gate-worktree`
@@ -27,12 +27,12 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 
 ## Acceptance (current checkpoint)
 
-- [ ] Committed STATE identifies branch `HEAD`, exact base, checkpoint DONE, completed acceptance, and next role stop.
-- [ ] Fresh checkout dispatcher preview agrees with committed terminal state.
-- [ ] PR #13 remains open/draft/unmerged and exact-head required workflows pass with local/CI parity.
-- [ ] Issue #12 remains open with the exact final repair/CI status.
-- [ ] Review/thread counts and all independently owned worktree statuses are unchanged except authorized PR/issue updates.
-- [ ] No additional Codex review request, merge, release, install, live, or settings action occurs.
+- [x] Committed STATE identifies branch `HEAD`, exact base, checkpoint DONE, completed acceptance, and next role stop.
+- [x] Fresh checkout dispatcher preview agrees with committed terminal state.
+- [x] PR #13 remains open/draft/unmerged and exact-head required workflows pass with local/CI parity.
+- [x] Issue #12 remains open with the exact final repair/CI status.
+- [x] Review/thread counts and all independently owned worktree statuses are unchanged except authorized PR/issue updates.
+- [x] No additional Codex review request, merge, release, install, live, or settings action occurs.
 
 ## Evidence
 
@@ -44,7 +44,6 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 
 ## Work log
 
-- Stage 42 retrospective recorded five actionable lessons from its 10 loops; neither checkpoint needed a repeat review, split, skip, blocker, or decision-required issue.
 - Stage 43 design preserved two rollback-safe checkpoints: one unchanged formal candidate with Full exactly once and fresh-checkout proof, then one terminal Vibe/publication/CI boundary with no merge.
 - Stage 43 maintenance test-gap scan selected fresh-checkout Linux bootstrap/Fast and ignored-receipt-independent Vibe terminal validation; both are already bounded by 43.1/43.2, so no new checkpoint was added.
 - Checkpoint 43.1 froze the formal candidate as branch `HEAD` against exact base `d0681b6`; code and tooling bytes must remain unchanged after the single local Full.
@@ -54,6 +53,7 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 - Checkpoint 43.1 hygiene found no duplicate proof owner, stale marker, unnecessary abstraction, or actionable debt in the receipt-only delta; code, tooling, workflow, and test bytes remain unchanged.
 - Checkpoint 43.2 normally published receipt head `8c4d977`: Quality Gate `31957168510` passed every required job with zero artifacts, while Release Policy `31957168563` exposed a LuaJIT-only nondeterministic runtime-test failure outside this infrastructure ownership.
 - Checkpoint 43.2 replacement head `bc0b61a` passed Quality Gate `31957769884` and Release Policy `31957769870` with zero artifacts; PR #13 and issue #12 now carry the exact repair, scope, validation, and disclosed flake status.
+- Checkpoint 43.2 formal review passed at receipt head `767cfd8`: exact-head Quality `31958348931` and Release `31958348943` passed, local/remote heads matched, scope remained 47/7/0/0, and plan exhaustion establishes the terminal stop route.
 
 ## Workflow state
 
@@ -86,8 +86,8 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 
 ## Last completed loop
 
-- Checkpoint 43.2 implementation published and documented the reviewed repair, resolved its exact-head CI boundary on replacement runs, and is ready for formal review.
+- Checkpoint 43.2 formal review passed with the plan exhausted; terminal stop is next after the dispatcher-owned bounded hygiene receipt.
 
 ## Recommended next action
 
-- Formally review checkpoint 43.2 publication, scope, GitHub truth, and terminal-state handoff; do not repeat local Full.
+- Stop at the independent-review boundary; do not design another stage or reopen infrastructure implementation.

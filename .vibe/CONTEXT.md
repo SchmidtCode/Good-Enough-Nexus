@@ -29,8 +29,8 @@
 
 ## Hot Files
 
-- Current checkpoint 43.1: `tools/Invoke-QualityGate.ps1`, `tools/Bootstrap-QualityTools.ps1`, validation/security/package tests, `.pre-commit-config.yaml`, and exact-base Git scope commands.
-- Terminal checkpoint 43.2: `.vibe/STATE.md`, `.vibe/PLAN.md`, `.vibe/CONTEXT.md`, `.vibe/EVIDENCE.md`, PR #13, issue #12, and replacement workflow/review state.
+- Completed formal candidate: `tools/Invoke-QualityGate.ps1`, `tools/Bootstrap-QualityTools.ps1`, validation/security/package tests, `.pre-commit-config.yaml`, and exact-base Git scope commands.
+- Terminal review boundary: `.vibe/STATE.md`, `.vibe/PLAN.md`, `.vibe/CONTEXT.md`, `.vibe/EVIDENCE.md`, PR #13, issue #12, and exact-head workflow/review state.
 - Workflow/gate: `.github/workflows/quality-gate.yml`, `tools/Invoke-QualityGate.ps1`, `tools/Write-ValidationSummary.js`.
 - Path policy: `tools/GitPathRecords.ps1`, `tools/ArtifactPathPolicy.ps1`, `tools/Get-ChangedTestPlan.ps1`, `tools/Test-StagedArtifacts.ps1`.
 - Vibe authority: `AGENTS.md`, `.vibe/STATE.md`, active `.vibe/PLAN.md`, this file, and append-only `.vibe/EVIDENCE.md`.
@@ -42,7 +42,7 @@
 - Expected red must demonstrate the actual missing capability; use disposable repositories/archives and never place hostile fixtures in the real worktree.
 - No addon install, WoW launch, live SavedVariables access, package retention/upload, rebase, force-push, merge, tag, release, publication, deployment, or settings change is authorized.
 - Final offline/CI evidence does not prove native WoW behavior; stop at the refreshed independent-review boundary.
-- Full has not yet run for the Stage 43 candidate. Commit all pre-Full state first, then run it exactly once and preserve the result even if a later gate fails.
+- Formal candidate `4c1002e` passed the single local Full; later receipt-only heads received exact-head CI. Do not repeat local Full or mutate candidate code/tooling bytes.
 
 ## Stage Retrospective Notes
 
