@@ -7,31 +7,29 @@
 ## Current focus
 
 - Stage: 38
-- Checkpoint: 38.6
-- Status: DONE
+- Checkpoint: 38.7
+- Status: NOT_STARTED
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: `34d84facb3f5d9c278510a8f39fbe160b6cd1b68`
+- Candidate head: `1ab10b525b0990b1b0024b786b1a7e68ed87d717`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `36f187824b8a24f6fb51562e6ec1101c300308ef`
 
 ## Objective (current checkpoint)
 
-Prove the complete infrastructure branch at one exact clean head, publish a draft PR targeting PR #10, link issue #12, and inspect exact-head CI without merging.
+Publish the validated infrastructure branch as one draft PR targeting PR #10, link issue #12, and inspect exact-head CI without merging.
 
 ## Deliverables (current checkpoint)
 
-- Base-to-head source-scope and immutable runtime/metadata/storage/artifact proof.
-- Clean-checkout bootstrap plus exact-head Fast, Full, Package, Security, release-policy, pre-commit, and diff receipts.
-- Draft PR, issue #12 coordination comment, and exact-head CI/review/mergeability/local-parity inspection.
+- Final exact-head local validation and non-force remote branch publication.
+- Draft PR plus issue #12 coordination comment with factual validation and limitations.
+- Exact-head CI, review-thread, mergeability, and local/CI parity inspection.
 
 ## Acceptance (current checkpoint)
 
-- [x] Changed paths are limited to authorized infrastructure categories.
-- [x] Root and `.lag-hotfix-worktree` remain byte-untouched; product and infrastructure cleanliness is reconciled.
-- [x] Required reviewed-head local checks pass or remain honestly advisory/unavailable.
-- [ ] Remote branch equals the validated head and the new PR remains draft against `refactor/nexus-1.20-test17`.
-- [ ] Issue #12 is updated and exact-head CI/reviews are inspected.
-- [ ] No merge, force-push, artifact, tag, release, install, live action, publication, or settings mutation occurs.
+- [ ] Final local and remote branch heads equal the validated commit.
+- [ ] The new PR remains draft against `refactor/nexus-1.20-test17` and issue #12 remains open with a linking comment.
+- [ ] Exact-head required CI and reviews are inspected with local/CI parity reported honestly.
+- [ ] No merge, force-push, addon artifact, tag, release, install, live action, deployment, or settings mutation occurs.
 
 ## Evidence
 
@@ -47,6 +45,7 @@ Prove the complete infrastructure branch at one exact clean head, publish a draf
 - A disposable clean worktree at exact `34d84fa` completed tracked bootstrap through `npm ci`, checksum-verified security bootstrap, Lua 5.1 parse `272/272`, integration, and Fast `5/5`; the disposable worktree was removed afterward.
 - No checkpoint-hygiene signal or adversarial scope escape was identified. Publication and exact-head CI remain the explicit external boundary after Vibe hygiene.
 - Completed bounded 38.6 hygiene: the scope/review receipts contain no stale marker, temporary path, duplicate workflow state, or directly attributable debt; Full was not repeated because no product or test byte changed.
+- Dispatcher-selected design split the remaining external publication boundary into checkpoint 38.7 so the exhausted plan does not hide unfinished GitHub coordination.
 
 ## Workflow state
 
@@ -78,8 +77,8 @@ Prove the complete infrastructure branch at one exact clean head, publish a draf
 
 ## Last completed loop
 
-- Checkpoint 38.6 local adversarial review passed; the Stage 38 plan is exhausted pending bounded hygiene and authorized external publication.
+- Checkpoint 38.6 local adversarial review and hygiene passed; 38.7 is the sole remaining external publication boundary.
 
 ## Recommended next action
 
-- Complete bounded Stage 38.6 hygiene, then publish the exact validated branch as a draft PR and inspect exact-head CI.
+- Execute final exact-head validation, publish the dedicated branch and draft PR without force, update issue #12, and inspect exact-head CI.
