@@ -155,7 +155,8 @@ function summaryWithResult(result, blocking = true, includeResult = true) {
 }
 
 assert.strictEqual(summaryWithResult("pass").result, "pass");
-for (const result of ["skipped", "unavailable", "fail", "error", "unknown"]) {
+assert.strictEqual(summaryWithResult(" PASS ").result, "pass");
+for (const result of ["skipped", "unavailable", "fail", "error", "unknown", null]) {
     assert.strictEqual(summaryWithResult(result).result, "fail",
         `blocking ${result} produced aggregate success`);
 }
