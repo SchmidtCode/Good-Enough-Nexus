@@ -5,9 +5,9 @@
 - Goal: make advisory baselines owner-exact and make every downloaded security dependency and extracted executable deterministic.
 - Decision: fingerprint reviewed findings by owner/rule/message and validate archive layout before extraction; no count-only or recursive-first-match fallback remains.
 
-### 42.1 — Replace count-only static-analysis baseline
+### 42.1 — Replace count-only static-analysis baseline (DONE)
 
-- Status: `IN_REVIEW`
+- Status: `DONE`
 - Objective:
   - Preserve only exact inherited PSScriptAnalyzer findings while detecting ownership drift and same-rule replacements.
 - Deliverables:

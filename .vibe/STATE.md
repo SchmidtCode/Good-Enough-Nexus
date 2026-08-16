@@ -7,30 +7,31 @@
 ## Current focus
 
 - Stage: 42
-- Checkpoint: 42.1
-- Status: IN_REVIEW
+- Checkpoint: 42.2
+- Status: NOT_STARTED
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: Stage 42.1 implementation candidate at branch `HEAD`
+- Candidate head: reviewed Stage 42.1 candidate at branch `HEAD`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
 ## Objective (current checkpoint)
 
-Preserve only exact inherited PSScriptAnalyzer findings while detecting ownership drift and same-rule replacements.
+Reject hostile security-tool archives and require hash-verified Python distributions with failure-safe cleanup.
 
 ## Deliverables (current checkpoint)
 
-- Stable repository-relative path/rule/message fingerprints.
-- Explicit reviewed baseline entries and improvement reporting.
-- Synthetic inheritance, disappearance, move, duplicate, and stale-entry fixtures.
+- Archive entry/root/traversal/case-conflict validation before extraction.
+- Exact executable paths from verified metadata with failure-safe cleanup.
+- Hash-pinned Python distribution lock and enforced hash installation.
+- Non-executing hostile archive/hash fixture suite.
 
 ## Acceptance (current checkpoint)
 
-- [x] Exact inherited findings remain advisory and removed findings report improvement.
-- [x] Same-rule findings in a new file or owner fail as new.
-- [x] Duplicate same-rule findings remain distinct.
-- [x] Stale baseline entries cannot hide real findings.
-- [x] Focused security policy, PSScriptAnalyzer, and Fast pass.
+- [ ] Traversal, absolute, drive-qualified, alternate-separator, wrong-root, duplicate, decoy, and missing-executable archives fail closed.
+- [ ] Bad archive checksum and missing/incorrect Python hashes fail closed.
+- [ ] Valid archives resolve only the declared executable path.
+- [ ] Success and failure remove temporary extraction/probe output.
+- [ ] Bootstrap, security-policy, Security, and Fast pass with required tools available.
 
 ## Evidence
 
@@ -53,6 +54,7 @@ Preserve only exact inherited PSScriptAnalyzer findings while detecting ownershi
 - Stage 42 design confirmed two bounded owners: 42.1 exact advisory fingerprints in `Test-SecurityPolicy.ps1`, then 42.2 archive-layout and Python-distribution integrity in `Bootstrap-SecurityTools.ps1`; no split or pointer change was needed.
 - Stage 42 maintenance refactor scan selected pure baseline comparison for 42.1 and pure archive-layout/executable resolution for 42.2; both are already scoped by PLAN, and the 42.1 product pointer remains `NOT_STARTED`.
 - Checkpoint 42.1 replaced rule-count allowances with repository-relative owner/rule/message fingerprints, removed eight Stage 41 helper warnings rather than baselining them, and passed the synthetic matrix, current PSScriptAnalyzer reconciliation, security-policy tests, and Fast `15/15`.
+- Checkpoint 42.1 formal review preserved all six reviewed baseline entries so the two removals are visible improvements, added platform-correct outside-root and duplicate-record rejection, and passed focused tests plus exact-base Fast `15/15`.
 
 ## Workflow state
 
@@ -85,8 +87,8 @@ Preserve only exact inherited PSScriptAnalyzer findings while detecting ownershi
 
 ## Last completed loop
 
-- Stage 42.1 implementation passed focused exact-baseline reconciliation and Fast; formal review is next.
+- Stage 42.1 formal review passed and auto-advanced the product pointer to 42.2; checkpoint hygiene remains the next dispatcher-owned loop.
 
 ## Recommended next action
 
-- Formally review the Stage 42.1 exact-baseline implementation, then run its bounded hygiene pass before advancing to 42.2.
+- Run the dispatcher-selected bounded Stage 42.1 checkpoint hygiene pass, then implement 42.2 hostile bootstrap fixtures and the smallest integrity repair.
