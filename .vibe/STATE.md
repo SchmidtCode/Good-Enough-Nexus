@@ -6,50 +6,41 @@
 
 ## Current focus
 
-- Stage: 42
-- Checkpoint: 42.2
-- Status: DONE
+- Stage: 43
+- Checkpoint: 43.1
+- Status: NOT_STARTED
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: reviewed Stage 42 candidate at branch `HEAD`
+- Candidate head: reviewed Stage 42 branch `HEAD` pending the unchanged formal candidate commit
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
 ## Objective (current checkpoint)
 
-Reject hostile security-tool archives and require hash-verified Python distributions with failure-safe cleanup.
+Validate all eight repairs together on one unchanged exact-head candidate and prove fresh-checkout quality and Vibe behavior.
 
 ## Deliverables (current checkpoint)
 
-- Archive entry/root/traversal/case-conflict validation before extraction.
-- Exact executable paths from verified metadata with failure-safe cleanup.
-- Hash-pinned Python distribution lock and enforced hash installation.
-- Non-executing hostile archive/hash fixture suite.
+- Full exactly once plus Package, Security, policy, pre-commit, and scope receipts.
+- Cross-finding adversarial review and directly related repairs only.
+- Disposable clean bootstrap/Fast and Vibe status/dispatcher proof.
+- Exact current-base PR-only path and protected-runtime blob proof.
 
 ## Acceptance (current checkpoint)
 
-- [x] Traversal, absolute, drive-qualified, alternate-separator, wrong-root, duplicate, decoy, and missing-executable archives fail closed.
-- [x] Bad archive checksum and missing/incorrect Python hashes fail closed.
-- [x] Valid archives resolve only the declared executable path.
-- [x] Success and failure remove temporary extraction/probe output.
-- [x] Bootstrap, security-policy, Security, and Fast pass with required tools available.
+- [ ] Full, Package, Security, release policy, applicable hooks, and all required tools pass; advisory tools remain honestly unavailable when absent.
+- [ ] Fresh checkout bootstraps and passes Fast with no ignored dependency assumption.
+- [ ] Fresh checkout Vibe validates the committed checkpoint/head/base without ignored LOOP_RESULT state.
+- [ ] PR-only range remains infrastructure-only with zero protected runtime/TOC/runtime-test/artifact paths.
+- [ ] All temporary package, archive, log, and checkout output is removed.
 
 ## Evidence
 
 - path: .vibe/EVIDENCE.md
-- Stage 41.1: shared NUL-delimited Git records preserve rename/copy source and destination ownership; policy documents have explicit Full/security owners.
-- Stage 41.2: staged/all-tracked artifact scans consume raw Git paths and share one fail-closed policy; hostile and force-added fixtures pass.
-- Stage 41.3: every blocking non-pass fails, Package is a required exact-base CI job, and Package `10/10` plus Fast `15/15` passed without retained output.
 - Stage 42.1: four exact inherited findings remain advisory; owner/message drift, duplicates, stale entries, and improvements are distinguished; focused policy and Fast `15/15` pass.
 - Stage 42.2: ZIP/tar layout validation, exact executable selection, hash-locked Python wheels, and failure-safe cleanup pass; Security `12` blocking checks and Fast `15/15` pass.
 
 ## Work log
 
-- Checkpoint 41.1 reproduced policy misrouting, added one shared NUL-safe rename/copy record model, and passed exact-range Fast `14/14` at `4129105`.
-- Checkpoint 41.1 formal review and bounded hygiene passed with zero product/runtime-test path changes.
-- Checkpoint 41.2 reproduced Git-quoted hostile-path acceptance, centralized exact artifact policy, and passed hostile/security tests plus current-base Fast `15/15` at `f769d52`.
-- Checkpoint 41.2 formal review added fail-closed content reads; outside-root, cleanup, and bounded hygiene checks passed.
-- Checkpoint 41.3 reproduced blocking skipped-as-success, made all blocking non-pass results fail, and added required exact-base Package CI at `4364db4`.
-- Checkpoint 41.3 formal review passed Package `10/10`, Fast `15/15`, actionlint, cleanup, aggregate, and bounded hygiene checks.
 - Stage 41 consolidation archived completed Stages 38–41, removed stale 41.1 `IN_REVIEW` drift, and moved the hot pointer to 42.1.
 - Stage 41 retrospective recorded five actionable lessons from its 10 delivery loops; no repeated review cycle, split, skip, blocker, or decision-required issue occurred.
 - Stage 42 design confirmed two bounded owners: 42.1 exact advisory fingerprints in `Test-SecurityPolicy.ps1`, then 42.2 archive-layout and Python-distribution integrity in `Bootstrap-SecurityTools.ps1`; no split or pointer change was needed.
@@ -64,10 +55,10 @@ Reject hostile security-tool archives and require hash-verified Python distribut
 ## Workflow state
 
 - [ ] RUN_STOPPED
-- [ ] RUN_CONTEXT_CAPTURE
-- [x] STAGE_DESIGNED
-- [x] MAINTENANCE_CYCLE_DONE
-- [x] RETROSPECTIVE_DONE
+- [x] RUN_CONTEXT_CAPTURE
+- [ ] STAGE_DESIGNED
+- [ ] MAINTENANCE_CYCLE_DONE
+- [ ] RETROSPECTIVE_DONE
 - [x] PROCESS_IMPROVEMENTS_DONE
 
 ## Active issues
@@ -91,8 +82,8 @@ Reject hostile security-tool archives and require hash-verified Python distribut
 
 ## Last completed loop
 
-- Stage 42.2 formal review and bounded hygiene passed; Stage 42 is plan-exhausted and ready for dispatcher-owned consolidation.
+- Stage 42 consolidation archived exact-baseline/bootstrap outcomes, pruned completed-stage noise, and moved the hot pointer to 43.1.
 
 ## Recommended next action
 
-- Run the dispatcher-selected Stage 42 consolidation, then complete its retrospective/process/context flags before Stage 43 formal exact-head review.
+- Follow the dispatcher-selected Stage 42 retrospective/process/context sequence before Stage 43 design and formal exact-head validation.
