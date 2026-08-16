@@ -8,9 +8,9 @@
 
 - Stage: 38
 - Checkpoint: 38.6
-- Status: NOT_STARTED
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: `7633a4ca967ee37560fa0cda1ee9be6930bfc156`
+- Candidate head: `2b412686c62a25114bf56bec53007537105e0c47`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `36f187824b8a24f6fb51562e6ec1101c300308ef`
 
@@ -26,9 +26,9 @@ Prove the complete infrastructure branch at one exact clean head, publish a draf
 
 ## Acceptance (current checkpoint)
 
-- [ ] Changed paths are limited to authorized infrastructure categories.
-- [ ] Root and `.lag-hotfix-worktree` remain byte-untouched; product and infrastructure cleanliness is reconciled.
-- [ ] Required exact-head local checks pass or remain honestly advisory/unavailable.
+- [x] Changed paths are limited to authorized infrastructure categories.
+- [x] Root and `.lag-hotfix-worktree` remain byte-untouched; product and infrastructure cleanliness is reconciled.
+- [x] Required implementation-head checks pass or remain honestly advisory/unavailable.
 - [ ] Remote branch equals the validated head and the new PR remains draft against `refactor/nexus-1.20-test17`.
 - [ ] Issue #12 is updated and exact-head CI/reviews are inspected.
 - [ ] No merge, force-push, artifact, tag, release, install, live action, publication, or settings mutation occurs.
@@ -43,9 +43,9 @@ Prove the complete infrastructure branch at one exact clean head, publish a draf
 
 ## Work log
 
-- Checkpoint 38.5 review passed and advanced to final exact-head scope/publication checkpoint 38.6.
-- The installed dispatcher DAG marks 38.1–38.5 done and only 38.6 remains.
-- Completed bounded 38.5 hygiene with no floating action, write permission, credential persistence, trigger shortcut, debug marker, or directly attributable debt.
+- Checkpoint 38.6 expected-red confirmed the dedicated branch and draft infrastructure PR are not yet published.
+- Base-to-head scope contains 38 authorized infrastructure paths and zero Lua, TOC, bundled-data, runtime-test, ZIP, or historical-artifact paths; Lua and TOC tree identities match the exact PR #10 base.
+- Implementation-head Fast passed `5/5`, `git diff --check` passed, and PR #10/issue #12 remain open with the reconciled base unchanged.
 
 ## Workflow state
 
@@ -77,8 +77,8 @@ Prove the complete infrastructure branch at one exact clean head, publish a draf
 
 ## Last completed loop
 
-- Checkpoint 38.5 adversarial review passed at exact `7633a4c` and advanced to 38.6.
+- Checkpoint 38.6 implementation scope proof is ready for independent exact-head review.
 
 ## Recommended next action
 
-- Execute final clean-checkout/scope validation and draft publication.
+- Review the committed candidate, then complete bounded hygiene before exact-head publication.

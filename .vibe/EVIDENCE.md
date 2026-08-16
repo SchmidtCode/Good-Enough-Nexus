@@ -88,3 +88,12 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Bounded scope: `quality-gate.yml` and its workflow policy self-test only.
 - Hot spots, quick wins, and debt items: none. The explicit jobs keep selected policy and failure ownership visible without a helper abstraction.
 - Validation: floating-action/write-permission/credential/trigger/debug scan and `git diff --check` passed. No product or test byte changed, so Full was not repeated.
+
+## Checkpoint 38.6 - exact-head scope and publication boundary
+
+- Expected red: GitHub branch search found no `infra/viberun-quality-gate` branch, so no draft infrastructure PR or exact-head CI exists before publication.
+- Live reconciliation: draft PR #10 remains open and mergeable at exact head `36f187824b8a24f6fb51562e6ec1101c300308ef`; issue #12 remains open with zero comments.
+- Base-to-head scope at implementation head `2b412686c62a25114bf56bec53007537105e0c47`: 38 changed paths, all in authorized infrastructure/workflow/tooling/configuration/documentation categories, and zero production Lua, `Nexus.toc`, bundled data, runtime-test Lua, ZIP, or historical artifact paths.
+- Immutable identity proof: base and head have identical `Nexus.toc` blob identity and identical tracked Lua tree listings. Public version `1.20.0-beta.1`, protocol 7, `Author: Valentine`, and SavedVariables declarations therefore remain byte-unchanged.
+- Ownership reconciliation: repository root remains at `2ec508f00377532bcf2b260eef1e228dff62c467` with its pre-existing workflow changes; `.lag-hotfix-worktree` remains at `97cc6afa5ecc032619623e04ffb5b1662ad556d9` with its pre-existing independently owned changes; product worktree remains clean at `7aee1d9f389954dd31abae94b7eaa9cf216bffc3`.
+- Implementation validation: Fast passed `5/5` after exposing the bundled Node runtime; the initial unavailable-Node result was retained as an environment red and was not claimed as pass. `git diff --check` passed.
