@@ -55,6 +55,7 @@ Reject hostile security-tool archives and require hash-verified Python distribut
 - Stage 42 maintenance refactor scan selected pure baseline comparison for 42.1 and pure archive-layout/executable resolution for 42.2; both are already scoped by PLAN, and the 42.1 product pointer remains `NOT_STARTED`.
 - Checkpoint 42.1 replaced rule-count allowances with repository-relative owner/rule/message fingerprints, removed eight Stage 41 helper warnings rather than baselining them, and passed the synthetic matrix, current PSScriptAnalyzer reconciliation, security-policy tests, and Fast `15/15`.
 - Checkpoint 42.1 formal review preserved all six reviewed baseline entries so the two removals are visible improvements, added platform-correct outside-root and duplicate-record rejection, and passed focused tests plus exact-base Fast `15/15`.
+- Checkpoint 42.1 hygiene found one pure comparison owner, explicit baseline data, focused boundary fixtures, and no remaining duplication, fragile branch, or actionable debt; no code changed.
 
 ## Workflow state
 
@@ -87,8 +88,8 @@ Reject hostile security-tool archives and require hash-verified Python distribut
 
 ## Last completed loop
 
-- Stage 42.1 formal review passed and auto-advanced the product pointer to 42.2; checkpoint hygiene remains the next dispatcher-owned loop.
+- Stage 42.1 formal review and bounded hygiene passed; the pointer remains at 42.2 `NOT_STARTED`.
 
 ## Recommended next action
 
-- Run the dispatcher-selected bounded Stage 42.1 checkpoint hygiene pass, then implement 42.2 hostile bootstrap fixtures and the smallest integrity repair.
+- Implement 42.2 hostile bootstrap fixtures and the smallest archive-layout, exact-executable, cleanup, and Python-hash integrity repair.
