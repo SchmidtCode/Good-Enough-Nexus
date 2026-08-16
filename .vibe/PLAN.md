@@ -60,9 +60,9 @@ depends_on: [43.1]
 - Goal: repair the four independent-review findings, replace the false synthetic-merge CI premise with auditable exact-head validation, and stop at one truthful final PR head.
 - Decision: use one bounded checkpoint because the four changes share the same infrastructure candidate, formal gate, publication, and terminal exact-head acceptance boundary.
 
-### 44.1 — Repair the independent-review findings and re-establish terminal truth
+### (DONE) 44.1 — Repair the independent-review findings and re-establish terminal truth
 
-- Status: `IN_REVIEW`
+- Status: `DONE`
 - Objective:
   - Make PR #13's workflow, artifact, analyzer-baseline, and security-bootstrap policies fail closed, then prove every required GitHub job validated the exact final PR head.
 - Deliverables:
@@ -72,12 +72,12 @@ depends_on: [43.1]
   - One pre-use security-manifest metadata validator covering executable, version, requirements, archive, and install path fields with hostile fixtures.
   - Append-only correction/formal evidence, normal publication, exact-head per-job CI receipts, and final dispatcher-owned stop state.
 - Acceptance:
-  - [ ] All four pre-repair expected-red probes fail for the intended reason and their focused regression suites pass after repair.
-  - [ ] Every Quality and Release source checkout selects and asserts the immutable candidate SHA while range gates retain the immutable PR base SHA.
-  - [ ] Fast, Full, Package, and Security pass on one frozen local candidate; advisory-unavailable and manual SavedVariables limits remain explicit.
-  - [ ] Exact-base scope remains infrastructure-only, all diff/artifact checks pass, and a dependency-clean disposable checkout passes bootstrap/Fast/Vibe validation.
-  - [ ] Replacement Quality and Release jobs are green at the exact final PR head with audited job IDs/checkout SHAs and zero successful artifacts.
-  - [ ] PR #13, issue #12, and committed Vibe truth correct the superseded synthetic-merge claims and end at `DONE` / `RUN_STOPPED=true` / dispatcher `stop`.
+  - [x] All four pre-repair expected-red probes fail for the intended reason and their focused regression suites pass after repair.
+  - [x] Every Quality and Release source checkout selects and asserts the immutable candidate SHA while range gates retain the immutable PR base SHA.
+  - [x] Fast, Full, Package, and Security pass on one frozen local candidate; advisory-unavailable and manual SavedVariables limits remain explicit.
+  - [x] Exact-base scope remains infrastructure-only, all diff/artifact checks pass, and a dependency-clean disposable checkout passes bootstrap/Fast/Vibe validation.
+  - [x] Replacement Quality and Release jobs are green at the exact final PR head with audited job IDs/checkout SHAs and zero successful artifacts.
+  - [x] PR #13, issue #12, and committed Vibe truth correct the superseded synthetic-merge claims and end at `DONE` / `RUN_STOPPED=true` / dispatcher `stop`.
 - Demo commands:
   - `node tests/run-quality-workflow-policy.js && node tests/run-quality-gate-self-tests.js && node tests/run-security-policy.js`
   - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Full -BaseRef d0681b6a885db447c94a75f40df7e81f60b74c55`

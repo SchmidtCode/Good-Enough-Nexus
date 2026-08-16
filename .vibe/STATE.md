@@ -8,7 +8,7 @@
 
 - Stage: 44
 - Checkpoint: 44.1
-- Status: IN_REVIEW
+- Status: DONE
 - Branch: `infra/viberun-quality-gate`
 - Candidate head: branch `HEAD` after the checkpoint implementation commit; repair started from `87204ab3eda4a950a4d556ad1958334fadaa06a6`
 - Worktree: `.infra-viberun-quality-gate-worktree`
@@ -28,11 +28,11 @@ Repair the four independent-review findings, replace synthetic-merge validation 
 ## Acceptance (current checkpoint)
 
 - [x] Four expected-red regressions are repaired and focused/Fast validation passes.
-- [ ] Formal Full, Package, and Security pass on one unchanged committed candidate.
-- [ ] Exact-base scope remains infrastructure-only and a dependency-clean checkout passes.
-- [ ] Every replacement Quality/Release source job proves `HEAD` equals the exact final PR head, with zero successful artifacts.
-- [ ] PR #13, issue #12, and append-only Vibe evidence explicitly correct the superseded synthetic-merge claims.
-- [ ] Fresh checkout reports checkpoint DONE, acceptance complete, `RUN_STOPPED=true`, dispatcher `stop`, and no LOOP_RESULT dependency.
+- [x] Formal Full, Package, and Security pass on one unchanged committed candidate.
+- [x] Exact-base scope remains infrastructure-only and a dependency-clean checkout passes.
+- [x] Every replacement Quality/Release source job proves `HEAD` equals the exact final PR head, with zero successful artifacts.
+- [x] PR #13, issue #12, and append-only Vibe evidence explicitly correct the superseded synthetic-merge claims.
+- [x] Fresh checkout reports checkpoint DONE, acceptance complete, `RUN_STOPPED=true`, dispatcher `stop`, and no LOOP_RESULT dependency.
 
 ## Evidence
 
@@ -44,6 +44,8 @@ Repair the four independent-review findings, replace synthetic-merge validation 
 - Stage 44.1 expected-red: workflow lacked candidate owner, sanitized hostile paths returned 5/7 violations, case-distinct owners shared occurrence state, and manifest resolver was absent; all four failed for the intended reason.
 - Stage 44.1 focused green: workflow, artifact 7/4, case-distinct analyzer, manifest containment, combined security policy, and quality self-tests pass.
 - Stage 44.1 Fast: exact base `d0681b6`, `15/15` blocking checks passed in 37.924 seconds with zero failed/skipped/unavailable checks.
+- Stage 44.1 formal: candidate `cc3c995` passed the single local Full `18/18` plus one manual skip, Package `10/10`, Security 12 blocking / 3 advisory-unavailable, and dependency-clean bootstrap/Fast/Vibe proof.
+- Stage 44.1 exact-head candidate: `d3973ff` passed Quality `31975606558` and Release `31975606507`; all seven source jobs selected/asserted that SHA and both artifact inventories are empty.
 
 ## Work log
 
@@ -52,6 +54,9 @@ Repair the four independent-review findings, replace synthetic-merge validation 
 - Checkpoint 44.1 implemented explicit immutable candidate/base ownership and checkout assertions, path-before-fixture artifact enforcement, ordinal analyzer maps, and pre-use manifest containment; focused and Fast gates pass and the checkpoint is ready for formal review.
 - Stage 44.1 review found one directly related fallback regression: `Classify reviewed paths` still reads `EVENT_NAME`, but its workflow env binding was removed, so push/manual full-forcing is not auditable. The checkpoint returned to implementation before terminal signoff.
 - Stage 44.1 repair pass restored the immutable event-name binding and added a policy fixture that failed red before the fix; workflow policy, actionlint, and exact-base Fast `15/15` pass.
+- Stage 44.1 replacement review passed at `d3973ff`: exact-head Quality/Release are green with per-job checkout/assertion audit, PR #13 and issue #12 carry the synthetic-merge correction, scope is 48 infrastructure paths / 0 protected paths, and no checkpoint-hygiene signal remains.
+- Stage 44.1 checkpoint hygiene found one owner per candidate/base, artifact exception, ordinal map, and manifest validator; no stale branch, duplicate proof surface, safe quick win, or actionable debt remained, so implementation bytes were unchanged.
+- After hygiene, plan exhaustion returned stage design rather than stop; the explicit user terminal condition was honored through the supported `vibe stop` operation, which set `RUN_STOPPED` and made dispatcher preview return `stop` with no prompt.
 - Stage 43 maintenance test-gap scan selected fresh-checkout Linux bootstrap/Fast and ignored-receipt-independent Vibe terminal validation; both are already bounded by 43.1/43.2, so no new checkpoint was added.
 - Checkpoint 43.1 froze the formal candidate as branch `HEAD` against exact base `d0681b6`; code and tooling bytes must remain unchanged after the single local Full.
 - Checkpoint 43.1 clean bootstrap correctly rejected an incomplete PSScriptAnalyzer top-level allowlist; the exact checksum-matching package layout was reconciled and the replacement clean bootstrap passed before Full.
@@ -65,7 +70,7 @@ Repair the four independent-review findings, replace synthetic-merge validation 
 
 ## Workflow state
 
-- [ ] RUN_STOPPED
+- [x] RUN_STOPPED
 - [ ] RUN_CONTEXT_CAPTURE
 - [x] STAGE_DESIGNED
 - [x] MAINTENANCE_CYCLE_DONE
@@ -96,8 +101,8 @@ Repair the four independent-review findings, replace synthetic-merge validation 
 
 ## Last completed loop
 
-- Stage 44.1 repair implementation resolved the missing preflight `EVENT_NAME` binding and returned the checkpoint to review.
+- Stage 44.1 formal review passed, plan is exhausted, and only dispatcher-owned terminal stop/final exact-head receipt publication remains.
 
 ## Recommended next action
 
-- Review the one-line fallback repair and publish the replacement candidate for exact-head Quality/Release proof without repeating local Full.
+- Publish this terminal receipt head, audit exact-head Quality/Release, refresh PR #13 and issue #12, then hand off without merge.
