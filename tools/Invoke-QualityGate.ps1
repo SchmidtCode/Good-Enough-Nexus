@@ -214,17 +214,24 @@ function Add-PowerShellCheck {
         -Blocking $Blocking -UnavailableExitCodes $UnavailableExitCodes
 }
 
-function Add-GitDiffCheck {
+function Add-GitDiffCheckSet {
     [CmdletBinding()]
     param()
 
-    if (-not $git) {
-        Add-CheckResult -Id 'git-diff-check' -Result unavailable -Command 'git diff --check' `
-            -Reason 'git is unavailable' -LogLines @('git is unavailable.')
-        return
+    if ($BaseRef) {
+        Add-PowerShellCheck -Id 'git-diff-check-range' `
+            -Arguments @('tools/Test-GitDiffCheck.ps1', '-Mode', 'Range', '-BaseRef', $BaseRef)
     }
-    Invoke-QualityCheck -Id 'git-diff-check' -FilePath $git.Source `
-        -Arguments @('-c', "safe.directory=$safeRepositoryRoot", 'diff', '--check')
+    else {
+        Add-CheckResult -Id 'git-diff-check-range' -Result skipped `
+            -Command 'git diff --check <BaseRef>...HEAD' `
+            -Reason 'BaseRef was not supplied; committed range was not evaluated' `
+            -Blocking $false -LogLines @('Committed-range whitespace validation requires BaseRef.')
+    }
+    Add-PowerShellCheck -Id 'git-diff-check-staged' `
+        -Arguments @('tools/Test-GitDiffCheck.ps1', '-Mode', 'Staged')
+    Add-PowerShellCheck -Id 'git-diff-check-working' `
+        -Arguments @('tools/Test-GitDiffCheck.ps1', '-Mode', 'Working')
 }
 
 Push-Location $repositoryRoot
@@ -246,7 +253,9 @@ try {
         Add-ArtifactPathCheck -Paths @($plan.paths)
 
         if ($Mode -eq 'Fast') {
-            foreach ($luaPath in @($plan.paths | Where-Object { $_ -match '\.lua$' })) {
+            foreach ($luaPath in @($plan.paths | Where-Object {
+                $_ -match '\.lua$' -and @($plan.deleted_paths) -notcontains $_
+            })) {
                 Add-NodeCheck -Id "lua-parse-$([System.IO.Path]::GetFileNameWithoutExtension($luaPath))" `
                     -Arguments @('tools/parse-lua51.js', $luaPath)
             }
@@ -268,10 +277,14 @@ try {
             }
             Add-NodeCheck -Id 'package-metadata' -Arguments @('tests/run-package-metadata.js')
             Add-PowerShellCheck -Id 'release-policy' -Arguments @('tools/Test-ReleasePolicy.ps1')
-            Add-GitDiffCheck
+            Add-GitDiffCheckSet
         }
         elseif ($Mode -eq 'Full') {
             Add-NodeCheck -Id 'lua-suite' -Arguments @('tools/Run-LuaSuite.js')
+            Add-CheckResult -Id 'lua-suite-manual-legacy-backup' -Result skipped `
+                -Command 'manual: tests/run_legacy_backup_smoke.lua <authorized-backup>' `
+                -Reason 'requires an explicitly authorized SavedVariables backup path' `
+                -Blocking $false -LogLines @('Manual SavedVariables smoke test was not run.')
             Add-NodeCheck -Id 'lua51-parse' -Arguments @('tools/parse-lua51.js', '.', '--tests')
             Add-NodeCheck -Id 'upvalue-boundary' -Arguments @('tests/run-upvalue-compatibility.js')
             Add-NodeCheck -Id 'integration' -Arguments @('tools/run-lua.js', 'tests/run_integration.lua')
@@ -284,7 +297,7 @@ try {
             Add-NodeCheck -Id 'privacy' -Arguments @('tools/run-lua.js', 'tests/run_security_hardening.lua')
             Add-NodeCheck -Id 'stutteralert' -Arguments @('tools/run-lua.js', 'tests/run_stutteralert_integration.lua')
             Add-PowerShellCheck -Id 'release-policy' -Arguments @('tools/Test-ReleasePolicy.ps1')
-            Add-GitDiffCheck
+            Add-GitDiffCheckSet
         }
         elseif ($Mode -eq 'Package') {
             Add-NodeCheck -Id 'package-source' -Arguments @('tools/Test-PackageSource.js', '.')
@@ -292,7 +305,7 @@ try {
             Add-NodeCheck -Id 'package-lua51' -Arguments @('tools/parse-lua51.js', '.')
             Add-NodeCheck -Id 'package-privacy' -Arguments @('tools/run-lua.js', 'tests/run_security_hardening.lua')
             Add-PowerShellCheck -Id 'release-policy' -Arguments @('tools/Test-ReleasePolicy.ps1')
-            Add-GitDiffCheck
+            Add-GitDiffCheckSet
         }
         elseif ($Mode -eq 'Security') {
             Add-PowerShellCheck -Id 'staged-artifacts' -Arguments @('tools/Test-StagedArtifacts.ps1', '-Mode', 'All')
@@ -308,7 +321,7 @@ try {
                     -Arguments @('tools/Test-SecurityPolicy.ps1', '-Check', $advisoryCheck) `
                     -Blocking $false -UnavailableExitCodes @(3)
             }
-            Add-GitDiffCheck
+            Add-GitDiffCheckSet
         }
     }
 }

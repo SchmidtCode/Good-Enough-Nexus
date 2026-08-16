@@ -50,7 +50,7 @@
     {
       "id": "tooling",
       "patterns": ["^tools/", "^tests/validation-map\\.json$", "^tests/run-(quality|security)-.*\\.js$", "^package(?:-lock)?\\.json$", "^\\.(pre-commit-config\\.yaml|luarc\\.json|luacheckrc|gitleaks\\.toml)$", "^(stylua\\.toml|PSScriptAnalyzerSettings\\.psd1)$"],
-      "groups": ["tooling", "package"],
+      "groups": ["tooling", "package", "security"],
       "tests": [
         "tests/run-quality-toolchain.js",
         "tests/run-bundled-build-export.js",

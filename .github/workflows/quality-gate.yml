@@ -67,7 +67,7 @@ jobs:
           } else {
             'HEAD^'
           }
-          $paths = @(git diff --name-only $base HEAD)
+          $paths = @(git diff --name-only $base...HEAD)
           if ($LASTEXITCODE -ne 0) { throw "Unable to classify changes from $base." }
           $plan = if ($paths.Count -gt 0) {
             ./tools/Get-ChangedTestPlan.ps1 -Paths $paths | ConvertFrom-Json
@@ -128,6 +128,7 @@ jobs:
       - name: Check out the exact reviewed tree
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Select Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -139,7 +140,9 @@ jobs:
         run: ./tools/Bootstrap-QualityTools.ps1
       - name: Run Security quality profile
         shell: pwsh
-        run: ./tools/Invoke-QualityGate.ps1 -Mode Security
+        env:
+          BASE_REF: ${{ needs.preflight.outputs.base_ref }}
+        run: ./tools/Invoke-QualityGate.ps1 -Mode Security -BaseRef $env:BASE_REF
       - name: Write compact Security summary
         if: always()
         shell: pwsh
@@ -163,6 +166,7 @@ jobs:
       - name: Check out the exact reviewed tree
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Select Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -174,7 +178,9 @@ jobs:
         run: ./tools/Bootstrap-QualityTools.ps1
       - name: Run Full quality profile once
         shell: pwsh
-        run: ./tools/Invoke-QualityGate.ps1 -Mode Full
+        env:
+          BASE_REF: ${{ needs.preflight.outputs.base_ref }}
+        run: ./tools/Invoke-QualityGate.ps1 -Mode Full -BaseRef $env:BASE_REF
       - name: Write compact Full summary
         if: always()
         shell: pwsh

@@ -22,12 +22,17 @@ const uses = [...workflow.matchAll(/^\s+uses:\s+([^\s]+)$/gm)].map((match) => ma
 assert(uses.length > 0);
 for (const use of uses) assert.match(use, /^[^@]+@[0-9a-f]{40}$/, `non-immutable action: ${use}`);
 assert.strictEqual((workflow.match(/persist-credentials: false/g) || []).length, 4);
-assert.strictEqual((workflow.match(/fetch-depth: 0/g) || []).length, 2);
+assert.strictEqual((workflow.match(/fetch-depth: 0/g) || []).length, 4);
+for (const mode of ["Fast", "Full", "Security"]) {
+    assert.match(workflow, new RegExp(`Invoke-QualityGate\\.ps1 -Mode ${mode} -BaseRef \\$env:BASE_REF`),
+        `${mode} does not inspect the committed base range`);
+}
+assert.match(workflow, /git diff --name-only \$base\.\.\.HEAD/);
 assert.match(workflow, /full-quality:[\s\S]*if: needs\.preflight\.outputs\.full_required == 'true'/);
 assert.match(workflow, /quality-gate:[\s\S]*if: always\(\)/);
 assert.match(workflow, /failure\(\) \|\| \(github\.event_name == 'workflow_dispatch' && inputs\.upload_logs\)/);
 assert.strictEqual((workflow.match(/retention-days: 5/g) || []).length, 3);
 assert(!/^\s+paths(?:-ignore)?:/m.test(workflow));
-assert.strictEqual(crypto.createHash("sha256").update(release, "utf8").digest("hex"), "13648de3a462392e3d400d912fe775840269f4a4469838bc23a252789f01e3d1");
+assert.strictEqual(crypto.createHash("sha256").update(release, "utf8").digest("hex"), "83f44f2d8835bce08fd89f4ab4b04bb93bd4323a8523388cce71713c4e2a42a8");
 
 console.log("quality workflow policy: triggers, permissions, pins, concurrency, jobs, skips, artifacts, release ownership -- OK");

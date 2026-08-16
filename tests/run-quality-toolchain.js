@@ -32,4 +32,13 @@ assert.match(parseOutput, /^Lua 5\.1 parse: \d+ passed, 0 failed$/);
 const integrationOutput = run("tools/run-lua.js", ["tests/run_integration.lua"]);
 assert.match(integrationOutput, /checks=70 failures=0/);
 
+const suitePlan = JSON.parse(run("tools/Run-LuaSuite.js", ["--list"]));
+assert(suitePlan.runnable.includes("tests/run_integration.lua"));
+assert.deepStrictEqual(suitePlan.manual, [{
+    path: "tests/run_legacy_backup_smoke.lua",
+    reason: "requires an explicitly authorized SavedVariables backup path",
+}]);
+assert.strictEqual(suitePlan.discovered,
+    suitePlan.runnable.length + suitePlan.manual.length);
+
 console.log(`quality toolchain: exact dependencies; ${parseOutput}; integration runner -- OK`);
