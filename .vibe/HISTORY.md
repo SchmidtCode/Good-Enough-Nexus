@@ -18,6 +18,7 @@ This file is non-authoritative. Archive completed checkpoints, resolved issues, 
 - Blocking skipped/malformed results fail aggregate validation, and Package is a required exact-base non-publishing CI job.
 - Static-analysis owner replacement no longer hides behind rule counts; exact duplicates and removed findings remain distinguishable.
 - Security bootstrap rejects hostile roots, traversal, case conflicts, links, and recursive decoys; pip accepts only the reviewed hash-locked distribution set.
+- ISSUE-44-1-A: Quality preflight path classification again receives immutable `github.event_name`; the focused assertion, actionlint, and exact-base Fast gate pass.
 
 ## Process notes
 

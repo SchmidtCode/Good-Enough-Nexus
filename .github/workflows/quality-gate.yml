@@ -99,6 +99,7 @@ jobs:
         id: plan
         shell: pwsh
         env:
+          EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ needs.candidate.outputs.base_ref }}
           DISPATCH_FULL: ${{ inputs.full }}
         run: |

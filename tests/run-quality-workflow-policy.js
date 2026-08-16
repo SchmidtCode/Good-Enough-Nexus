@@ -34,6 +34,9 @@ for (const mode of ["Fast", "Full", "Security", "Package"]) {
 }
 assert.match(workflow, /Get-ChangedTestPlan\.ps1 -BaseRef \$base/,
     "workflow must delegate base-range parsing to the shared path classifier");
+const classifyStep = workflow.match(/- name: Classify reviewed paths[\s\S]*?(?=^  fast-quality:)/m)?.[0] || "";
+assert.match(classifyStep, /EVENT_NAME: \$\{\{ github\.event_name \}\}/,
+    "path classification cannot distinguish push and manual full-forcing events");
 assert(!workflow.includes("git diff --name-only"),
     "workflow bypasses the shared binary-safe path classifier");
 assert.match(workflow, /full-quality:[\s\S]*if: needs\.preflight\.outputs\.full_required == 'true'/);

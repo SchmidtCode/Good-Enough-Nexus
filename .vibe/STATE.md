@@ -50,6 +50,8 @@ Repair the four independent-review findings, replace synthetic-merge validation 
 - Independent review falsified the Stage 43 terminal acceptance premise: Quality `31959113599` and Release `31959113603` checked out synthetic merge `bab79a6`, not reviewed head `87204ab`, and exposed four merge-blocking infrastructure findings.
 - The supported VibeRun resume operation cleared `RUN_STOPPED`; the dispatcher selected stage design, which bounded all four repairs and final exact-head reconciliation into checkpoint 44.1.
 - Checkpoint 44.1 implemented explicit immutable candidate/base ownership and checkout assertions, path-before-fixture artifact enforcement, ordinal analyzer maps, and pre-use manifest containment; focused and Fast gates pass and the checkpoint is ready for formal review.
+- Stage 44.1 review found one directly related fallback regression: `Classify reviewed paths` still reads `EVENT_NAME`, but its workflow env binding was removed, so push/manual full-forcing is not auditable. The checkpoint returned to implementation before terminal signoff.
+- Stage 44.1 repair pass restored the immutable event-name binding and added a policy fixture that failed red before the fix; workflow policy, actionlint, and exact-base Fast `15/15` pass.
 - Stage 43 maintenance test-gap scan selected fresh-checkout Linux bootstrap/Fast and ignored-receipt-independent Vibe terminal validation; both are already bounded by 43.1/43.2, so no new checkpoint was added.
 - Checkpoint 43.1 froze the formal candidate as branch `HEAD` against exact base `d0681b6`; code and tooling bytes must remain unchanged after the single local Full.
 - Checkpoint 43.1 clean bootstrap correctly rejected an incomplete PSScriptAnalyzer top-level allowlist; the exact checksum-matching package layout was reconciled and the replacement clean bootstrap passed before Full.
@@ -72,7 +74,7 @@ Repair the four independent-review findings, replace synthetic-merge validation 
 
 ## Active issues
 
-- None; the four findings are locally repaired and await formal review plus exact-head GitHub evidence.
+- None.
 
 ## Blockers
 
@@ -94,8 +96,8 @@ Repair the four independent-review findings, replace synthetic-merge validation 
 
 ## Last completed loop
 
-- Stage 44.1 implementation repaired the four independent-review findings and passed focused plus Fast validation.
+- Stage 44.1 repair implementation resolved the missing preflight `EVENT_NAME` binding and returned the checkpoint to review.
 
 ## Recommended next action
 
-- Formally review the committed Stage 44.1 candidate, run the frozen Full/Package/Security gates, then publish for exact-head CI.
+- Review the one-line fallback repair and publish the replacement candidate for exact-head Quality/Release proof without repeating local Full.
