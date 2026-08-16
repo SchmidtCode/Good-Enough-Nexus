@@ -44,7 +44,6 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 
 ## Work log
 
-- Checkpoint 42.2 replaced recursive executable discovery with validated ZIP/tar records and exact manifest paths, added a reviewed Python wheel hash lock enforced by pip, and removed bootstrap/download/extraction output through bounded `finally` cleanup.
 - Checkpoint 42.2 formal review validated all three real pinned Linux tar layouts, added executable-link rejection, re-ran security policy, Security `12` blocking checks, and exact-base Fast `15/15`, and found no unresolved acceptance defect.
 - Checkpoint 42.2 hygiene found distinct entry-reading, layout-resolution, hash-lock, and bounded-cleanup owners with focused fixtures; no duplicate policy, unnecessary branch, or actionable debt remains, so no code changed.
 - Stage 42 retrospective recorded five actionable lessons from its 10 loops; neither checkpoint needed a repeat review, split, skip, blocker, or decision-required issue.
@@ -54,6 +53,7 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 - Checkpoint 43.1 clean bootstrap correctly rejected an incomplete PSScriptAnalyzer top-level allowlist; the exact checksum-matching package layout was reconciled and the replacement clean bootstrap passed before Full.
 - Checkpoint 43.1 formal candidate `4c1002e` passed the single local Full plus Package/Security/focused/hooks/scope gates; a detached dependency-clean checkout passed tracked bootstrap, Fast, and receipt-independent Vibe status before complete cleanup.
 - Checkpoint 43.1 formal review confirmed the post-Full delta is only three Vibe receipt files, Fast passes `15/15` at receipt head `49801d5`, exact-base scope remains 47 infrastructure paths / 0 protected paths, and Full was not repeated.
+- Checkpoint 43.1 hygiene found no duplicate proof owner, stale marker, unnecessary abstraction, or actionable debt in the receipt-only delta; code, tooling, workflow, and test bytes remain unchanged.
 
 ## Workflow state
 
@@ -85,8 +85,8 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 
 ## Last completed loop
 
-- Checkpoint 43.1 formal review passed and auto-advanced the pointer to 43.2; bounded hygiene remains next.
+- Checkpoint 43.1 bounded hygiene passed without code changes; checkpoint 43.2 implementation is next.
 
 ## Recommended next action
 
-- Run the dispatcher-selected bounded 43.1 hygiene pass, then reconcile and commit terminal 43.2 state before publication.
+- Implement checkpoint 43.2 publication, exact-head CI reconciliation, and terminal stop without crossing the independent-review boundary.
