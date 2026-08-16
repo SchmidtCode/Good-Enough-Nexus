@@ -8,9 +8,9 @@
 
 - Stage: 38
 - Checkpoint: 38.7
-- Status: IN_REVIEW
+- Status: DONE
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: `98add8cbfd5ccc31fd3df7a486a3802822c6fd5b`
+- Candidate head: `ddcc6dfa71cd594c486611fe5644614e2cb7171d`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `36f187824b8a24f6fb51562e6ec1101c300308ef`
 
@@ -47,6 +47,7 @@ Publish the validated infrastructure branch as one draft PR targeting PR #10, li
 - Completed bounded 38.6 hygiene: the scope/review receipts contain no stale marker, temporary path, duplicate workflow state, or directly attributable debt; Full was not repeated because no product or test byte changed.
 - Dispatcher-selected design split the remaining external publication boundary into checkpoint 38.7 so the exhausted plan does not hide unfinished GitHub coordination.
 - Checkpoint 38.7 expected-red reconfirmed no remote infrastructure branch or draft PR exists; PR #10 remains open/draft/mergeable at the selected base and Fast passed `5/5` at `98add8c`.
+- Checkpoint 38.7 formal pre-publication review passed at exact `ddcc6df`: Full `16/16`, Security 10 pass / 3 advisory-unavailable, release policy, forbidden-scope, and diff checks passed.
 
 ## Workflow state
 
@@ -78,8 +79,8 @@ Publish the validated infrastructure branch as one draft PR targeting PR #10, li
 
 ## Last completed loop
 
-- Checkpoint 38.7 publication handoff is ready for independent review before any remote mutation.
+- Checkpoint 38.7 pre-publication review passed; the plan is exhausted pending bounded hygiene and the authorized external push/PR/CI boundary.
 
 ## Recommended next action
 
-- Review the committed publication handoff, then complete hygiene before the non-force push and draft PR.
+- Complete bounded publication-handoff hygiene, then perform final exact-head validation and the authorized non-force draft publication.
