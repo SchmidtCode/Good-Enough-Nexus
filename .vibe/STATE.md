@@ -8,9 +8,9 @@
 
 - Stage: 42
 - Checkpoint: 42.2
-- Status: NOT_STARTED
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: reviewed Stage 42.1 candidate at branch `HEAD`
+- Candidate head: Stage 42.2 implementation candidate at branch `HEAD`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
@@ -27,11 +27,11 @@ Reject hostile security-tool archives and require hash-verified Python distribut
 
 ## Acceptance (current checkpoint)
 
-- [ ] Traversal, absolute, drive-qualified, alternate-separator, wrong-root, duplicate, decoy, and missing-executable archives fail closed.
-- [ ] Bad archive checksum and missing/incorrect Python hashes fail closed.
-- [ ] Valid archives resolve only the declared executable path.
-- [ ] Success and failure remove temporary extraction/probe output.
-- [ ] Bootstrap, security-policy, Security, and Fast pass with required tools available.
+- [x] Traversal, absolute, drive-qualified, alternate-separator, wrong-root, duplicate, decoy, and missing-executable archives fail closed.
+- [x] Bad archive checksum and missing/incorrect Python hashes fail closed.
+- [x] Valid archives resolve only the declared executable path.
+- [x] Success and failure remove temporary extraction/probe output.
+- [x] Bootstrap, security-policy, Security, and Fast pass with required tools available.
 
 ## Evidence
 
@@ -40,6 +40,7 @@ Reject hostile security-tool archives and require hash-verified Python distribut
 - Stage 41.2: staged/all-tracked artifact scans consume raw Git paths and share one fail-closed policy; hostile and force-added fixtures pass.
 - Stage 41.3: every blocking non-pass fails, Package is a required exact-base CI job, and Package `10/10` plus Fast `15/15` passed without retained output.
 - Stage 42.1: four exact inherited findings remain advisory; owner/message drift, duplicates, stale entries, and improvements are distinguished; focused policy and Fast `15/15` pass.
+- Stage 42.2: ZIP/tar layout validation, exact executable selection, hash-locked Python wheels, and failure-safe cleanup pass; Security `12` blocking checks and Fast `15/15` pass.
 
 ## Work log
 
@@ -56,6 +57,7 @@ Reject hostile security-tool archives and require hash-verified Python distribut
 - Checkpoint 42.1 replaced rule-count allowances with repository-relative owner/rule/message fingerprints, removed eight Stage 41 helper warnings rather than baselining them, and passed the synthetic matrix, current PSScriptAnalyzer reconciliation, security-policy tests, and Fast `15/15`.
 - Checkpoint 42.1 formal review preserved all six reviewed baseline entries so the two removals are visible improvements, added platform-correct outside-root and duplicate-record rejection, and passed focused tests plus exact-base Fast `15/15`.
 - Checkpoint 42.1 hygiene found one pure comparison owner, explicit baseline data, focused boundary fixtures, and no remaining duplication, fragile branch, or actionable debt; no code changed.
+- Checkpoint 42.2 replaced recursive executable discovery with validated ZIP/tar records and exact manifest paths, added a reviewed Python wheel hash lock enforced by pip, and removed bootstrap/download/extraction output through bounded `finally` cleanup.
 
 ## Workflow state
 
@@ -68,7 +70,6 @@ Reject hostile security-tool archives and require hash-verified Python distribut
 
 ## Active issues
 
-- Security bootstrap lacks archive-layout validation and Python distribution hashes.
 - Committed terminal Vibe state conflicts with fresh-checkout dispatcher truth.
 
 ## Blockers
@@ -88,8 +89,8 @@ Reject hostile security-tool archives and require hash-verified Python distribut
 
 ## Last completed loop
 
-- Stage 42.1 formal review and bounded hygiene passed; the pointer remains at 42.2 `NOT_STARTED`.
+- Stage 42.2 implementation passed hostile fixtures, real pinned bootstrap, Security, and Fast; formal review is next.
 
 ## Recommended next action
 
-- Implement 42.2 hostile bootstrap fixtures and the smallest archive-layout, exact-executable, cleanup, and Python-hash integrity repair.
+- Formally review the Stage 42.2 bootstrap-integrity implementation, then run its bounded hygiene pass before Stage 42 consolidation.

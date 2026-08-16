@@ -5,7 +5,7 @@
 - Goal: make advisory baselines owner-exact and make every downloaded security dependency and extracted executable deterministic.
 - Decision: fingerprint reviewed findings by owner/rule/message and validate archive layout before extraction; no count-only or recursive-first-match fallback remains.
 
-### 42.1 — Replace count-only static-analysis baseline (DONE)
+### (DONE) 42.1 — Replace count-only static-analysis baseline
 
 - Status: `DONE`
 - Objective:
@@ -31,7 +31,7 @@
 
 depends_on: [42.1]
 
-- Status: `NOT_STARTED`
+- Status: `IN_REVIEW`
 - Objective:
   - Reject unsafe archive layouts and require exact distribution hashes before installing bootstrap dependencies.
 - Deliverables:
@@ -40,11 +40,11 @@ depends_on: [42.1]
   - Hash-pinned Python distribution lock and enforced hash installation.
   - Non-executing hostile archive/hash fixture suite.
 - Acceptance:
-  - [ ] Traversal, absolute, drive-qualified, alternate-separator, wrong-root, duplicate, decoy, and missing-executable archives fail closed.
-  - [ ] Bad archive checksum and missing/incorrect Python hashes fail closed.
-  - [ ] Valid archives resolve only the declared executable path.
-  - [ ] Success and failure remove temporary extraction/probe output.
-  - [ ] Bootstrap, security-policy, Security, and Fast pass with required tools available.
+  - [x] Traversal, absolute, drive-qualified, alternate-separator, wrong-root, duplicate, decoy, and missing-executable archives fail closed.
+  - [x] Bad archive checksum and missing/incorrect Python hashes fail closed.
+  - [x] Valid archives resolve only the declared executable path.
+  - [x] Success and failure remove temporary extraction/probe output.
+  - [x] Bootstrap, security-policy, Security, and Fast pass with required tools available.
 - Demo commands:
   - `node tests/run-security-policy.js`
   - `pwsh -NoProfile -File tools/Bootstrap-QualityTools.ps1`

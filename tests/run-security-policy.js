@@ -54,6 +54,9 @@ assert.match(artifact.stdout, /5 rejected \/ 4 allowed/);
 const pssaBaseline = run("tests/Test-PSScriptAnalyzerBaseline.ps1", []);
 assert.strictEqual(pssaBaseline.status, 0, `${pssaBaseline.stdout}\n${pssaBaseline.stderr}`);
 assert.match(pssaBaseline.stdout, /owner\/message drift, duplicates, stale and malformed entries -- OK/);
+const bootstrapPolicy = run("tests/Test-SecurityBootstrapPolicy.ps1", []);
+assert.strictEqual(bootstrapPolicy.status, 0, `${bootstrapPolicy.stdout}\n${bootstrapPolicy.stderr}`);
+assert.match(bootstrapPolicy.stdout, /ZIP\/tar layouts, 8 hostile archives, checksum\/hash lock, failure cleanup -- OK/);
 
 const scratch = path.join(root, "build", "staged-artifact-hostile-tests");
 fs.rmSync(scratch, { recursive: true, force: true });
@@ -116,18 +119,33 @@ finally {
 }
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "tools/security-tools.json"), "utf8"));
-assert.strictEqual(manifest.schema, 1);
+assert.strictEqual(manifest.schema, 2);
 for (const tool of ["gitleaks", "actionlint", "zizmor"]) {
     for (const platform of ["windows-x64", "linux-x64"]) {
         const asset = manifest.tools[tool][platform];
         assert.match(asset.url, /^https:\/\/github\.com\//);
         assert.match(asset.sha256, /^[0-9a-f]{64}$/);
         assert(!asset.url.includes("/latest/"));
+        assert(["zip", "tar.gz"].includes(asset.archive_type));
+        assert.strictEqual(typeof asset.expected_executable_path, "string");
+        assert(asset.allowed_top_level.includes(asset.expected_executable_path.split("/")[0]));
     }
 }
 assert.match(manifest.psscriptanalyzer.sha256, /^[0-9a-f]{64}$/);
+assert.strictEqual(manifest.psscriptanalyzer.archive_type, "zip");
+assert(manifest.psscriptanalyzer.allowed_top_level.includes("PSScriptAnalyzer.psd1"));
 assert.strictEqual(manifest.pre_commit.packages[0], `pre-commit==${manifest.pre_commit.version}`);
 assert(manifest.pre_commit.packages.every((entry) => /^[A-Za-z0-9_-]+==[^=]+$/.test(entry)), "pre-commit dependency is not exact");
+const requirementLines = fs.readFileSync(path.join(root, "tools", manifest.pre_commit.requirements_file), "utf8")
+    .split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
+assert.strictEqual(requirementLines.length, manifest.pre_commit.packages.length);
+assert(requirementLines.every((line) => /^\S+==\S+(?: --hash=sha256:[0-9a-f]{64})+$/.test(line)),
+    "Python distribution lock contains an unhashed requirement");
+assert.deepStrictEqual(requirementLines.map((line) => line.split(/\s+/)[0].toLowerCase()).sort(),
+    manifest.pre_commit.packages.map((entry) => entry.toLowerCase()).sort());
+const securityBootstrap = fs.readFileSync(path.join(root, "tools", "Bootstrap-SecurityTools.ps1"), "utf8");
+assert.match(securityBootstrap, /--require-hashes --only-binary=:all: --no-deps/);
+assert(!/Get-ChildItem[^\r\n]+-Recurse[^\r\n]+-Filter[^\r\n]+Select-Object -First 1/.test(securityBootstrap));
 const advisory = JSON.parse(fs.readFileSync(path.join(root, "tests/security-advisory-baseline.json"), "utf8"));
 assert.strictEqual(advisory.schema, 2);
 assert.strictEqual(advisory.psscriptanalyzer.length, 6);
