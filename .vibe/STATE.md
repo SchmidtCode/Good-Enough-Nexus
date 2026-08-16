@@ -46,6 +46,7 @@ Add staged-artifact protection and exact, honest Lua, PowerShell, secret, and Gi
 
 - Checkpoint 38.3 review passed and auto-advanced to 38.4; its required schema-heading repair and final Full receipt are preserved in evidence.
 - The installed dispatcher dependency DAG now marks 38.1–38.3 done and 38.4 ready.
+- Completed bounded 38.3 hygiene with no stale bootstrap placeholder, duplicate dispatcher, temporary marker, product/test change, or directly attributable debt.
 
 ## Workflow state
 
@@ -81,4 +82,4 @@ Add staged-artifact protection and exact, honest Lua, PowerShell, secret, and Gi
 
 ## Recommended next action
 
-- Run mandatory bounded 38.3 hygiene, then implement 38.4 from the expected-red unavailable Security profile.
+- Implement 38.4 from the expected-red unavailable Security profile.

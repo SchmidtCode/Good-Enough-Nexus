@@ -46,3 +46,9 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Formal review PASS at exact `8bab598eb3296b8655bfb897393598d3c8ccf1b5`: Full passed `16/16` in 250.397 seconds with zero failures, skips, or unavailable checks; only the compact summary was inspected because no check was failing or suspicious.
 - Adversarial scope review: `0bbd6d4..8bab598` changes only `AGENTS.md`, `README.md`, and four `.vibe` hot/state files; strict Vibe validation and range `git diff --check` passed. No checkpoint-hygiene signal was identified beyond retaining exact required schema headings.
 - Final post-advance hot context is 255 lines / 14,231 bytes, down from 334 lines / 18,653 bytes (23.7% fewer lines and bytes). This final supported-schema measurement supersedes the interim implementation count.
+
+## Checkpoint 38.3 hygiene
+
+- Bounded scope: `AGENTS.md`, `README.md`, `STATE.md`, `PLAN.md`, and `CONTEXT.md` delivered by 38.3; no repository-wide or runtime scan was performed.
+- Hot spots, quick wins, and debt items: none. The README's operator summary and AGENTS role directives serve different audiences and do not justify another abstraction.
+- Validation: stale/bootstrap/debug marker scan and `git diff --check` passed. No product, test, or tool byte changed, so Full was not repeated.
