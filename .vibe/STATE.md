@@ -64,6 +64,7 @@ Reconcile the published infrastructure branch with PR #10's advanced base using 
 - Focused review repairs at `1bb764a` and `4c3bcd8` passed routing/deletion/diff-range/byte-parity/workflow/security/toolchain self-tests, Lua 5.1 parse `278/278`, integration, PSScriptAnalyzer 0 blocking / 6 inherited advisory / 0 new, and Fast `15/15` against current base `d0681b6`.
 - Current-base scope is 40 authorized paths versus the prior 38: only `tests/run-package-metadata.js` and `tools/Test-GitDiffCheck.ps1` were added; no path was removed and the runtime/TOC/runtime-test diff remains empty.
 - Formal replacement review at exact `9708c58` passed Full `18/18` with `205/205` automatic Lua programs and the authorization-dependent legacy-backup smoke test explicitly skipped, Package `10/10`, Security `12/12` with three advisory analyzers unavailable, Fast `15/15`, release policy, pre-commit, and clean bootstrap.
+- Completed bounded 39.1 hygiene: the reconciliation-only routing, diff, workflow, label, and manual-smoke changes contain no redundant branch, stale/debug residue, or directly attributable debt; Full was not repeated after its exact committed review.
 
 ## Workflow state
 
@@ -95,8 +96,8 @@ Reconcile the published infrastructure branch with PR #10's advanced base using 
 
 ## Last completed loop
 
-- Checkpoint 39.1 replacement formal review passed at exact `9708c58`; the candidate is ready for one bounded hygiene loop before the authorized non-force publication refresh.
+- Checkpoint 39.1 replacement formal review and bounded hygiene passed; the clean branch is ready for the authorized non-force publication refresh.
 
 ## Recommended next action
 
-- Run one bounded checkpoint-hygiene loop without repeating Full, then non-force push and refresh draft PR #13, issue #12, and exact-head CI evidence.
+- Non-force push the dedicated branch, then refresh draft PR #13, issue #12, and exact-head CI/review evidence without merging.
