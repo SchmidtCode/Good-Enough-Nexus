@@ -7,7 +7,7 @@
 
 ### 43.1 — Formal cross-finding review and fresh-checkout proof
 
-- Status: `NOT_STARTED`
+- Status: `IN_PROGRESS`
 - Objective:
   - Validate the unchanged committed repair candidate end-to-end and prove fresh-checkout Vibe and quality behavior before publication.
 - Deliverables:

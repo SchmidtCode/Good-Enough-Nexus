@@ -8,9 +8,9 @@
 
 - Stage: 43
 - Checkpoint: 43.1
-- Status: NOT_STARTED
+- Status: IN_PROGRESS
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: reviewed Stage 42 branch `HEAD` pending the unchanged formal candidate commit
+- Candidate head: formal Stage 43.1 candidate represented by branch `HEAD`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
@@ -42,7 +42,6 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 
 ## Work log
 
-- Stage 42 maintenance refactor scan selected pure baseline comparison for 42.1 and pure archive-layout/executable resolution for 42.2; both are already scoped by PLAN, and the 42.1 product pointer remains `NOT_STARTED`.
 - Checkpoint 42.1 replaced rule-count allowances with repository-relative owner/rule/message fingerprints, removed eight Stage 41 helper warnings rather than baselining them, and passed the synthetic matrix, current PSScriptAnalyzer reconciliation, security-policy tests, and Fast `15/15`.
 - Checkpoint 42.1 formal review preserved all six reviewed baseline entries so the two removals are visible improvements, added platform-correct outside-root and duplicate-record rejection, and passed focused tests plus exact-base Fast `15/15`.
 - Checkpoint 42.1 hygiene found one pure comparison owner, explicit baseline data, focused boundary fixtures, and no remaining duplication, fragile branch, or actionable debt; no code changed.
@@ -52,6 +51,7 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 - Stage 42 retrospective recorded five actionable lessons from its 10 loops; neither checkpoint needed a repeat review, split, skip, blocker, or decision-required issue.
 - Stage 43 design preserved two rollback-safe checkpoints: one unchanged formal candidate with Full exactly once and fresh-checkout proof, then one terminal Vibe/publication/CI boundary with no merge.
 - Stage 43 maintenance test-gap scan selected fresh-checkout Linux bootstrap/Fast and ignored-receipt-independent Vibe terminal validation; both are already bounded by 43.1/43.2, so no new checkpoint was added.
+- Checkpoint 43.1 froze the formal candidate as branch `HEAD` against exact base `d0681b6`; code and tooling bytes must remain unchanged after the single local Full.
 
 ## Workflow state
 
@@ -83,8 +83,8 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 
 ## Last completed loop
 
-- Stage 43 maintenance test-gap scan confirmed the existing fresh-checkout quality and Vibe probes; the 43.1 pointer remains `NOT_STARTED`.
+- Checkpoint 43.1 formal candidate is committed and ready for the single local Full followed by Package/Security/fresh-checkout proof.
 
 ## Recommended next action
 
-- Refresh compact Stage 43 context, then freeze the 43.1 candidate and run Full exactly once.
+- Run Full exactly once on the committed 43.1 candidate, then complete all remaining exact-head and fresh-checkout gates without changing code/tooling bytes.
