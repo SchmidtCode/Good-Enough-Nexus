@@ -59,6 +59,7 @@ Reject hostile security-tool archives and require hash-verified Python distribut
 - Checkpoint 42.1 hygiene found one pure comparison owner, explicit baseline data, focused boundary fixtures, and no remaining duplication, fragile branch, or actionable debt; no code changed.
 - Checkpoint 42.2 replaced recursive executable discovery with validated ZIP/tar records and exact manifest paths, added a reviewed Python wheel hash lock enforced by pip, and removed bootstrap/download/extraction output through bounded `finally` cleanup.
 - Checkpoint 42.2 formal review validated all three real pinned Linux tar layouts, added executable-link rejection, re-ran security policy, Security `12` blocking checks, and exact-base Fast `15/15`, and found no unresolved acceptance defect.
+- Checkpoint 42.2 hygiene found distinct entry-reading, layout-resolution, hash-lock, and bounded-cleanup owners with focused fixtures; no duplicate policy, unnecessary branch, or actionable debt remains, so no code changed.
 
 ## Workflow state
 
@@ -90,7 +91,7 @@ Reject hostile security-tool archives and require hash-verified Python distribut
 
 ## Last completed loop
 
-- Stage 42.2 formal review passed; Stage 42 is plan-exhausted and ready for dispatcher-owned consolidation.
+- Stage 42.2 formal review and bounded hygiene passed; Stage 42 is plan-exhausted and ready for dispatcher-owned consolidation.
 
 ## Recommended next action
 
