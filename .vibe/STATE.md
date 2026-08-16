@@ -8,9 +8,9 @@
 
 - Stage: 39
 - Checkpoint: 39.1
-- Status: NOT_STARTED
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: `91c962e99e75df430b6eded256f27e5657a74a80`
+- Candidate head: `5a66cded072f2afff8b1853e7a4c461694d5f3bc`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
@@ -26,8 +26,8 @@ Reconcile the published infrastructure branch with PR #10's advanced base using 
 
 ## Acceptance (current checkpoint)
 
-- [ ] The exact current PR #10 base is merged normally without rebase or force-push, preserving all PR #11 bytes.
-- [ ] The current-base-to-head diff remains infrastructure-only and every reconciliation-only difference is reported.
+- [x] The exact current PR #10 base is merged normally without rebase or force-push, preserving all PR #11 bytes.
+- [x] The current-base-to-head diff remains infrastructure-only and every reconciliation-only difference is reported.
 - [ ] Clean bootstrap plus Fast, Full, Package, Security, release-policy, pre-commit, and diff validation are factual at one exact head.
 - [ ] Local and remote heads match; PR #13 stays draft; issue #12 receives the exact reconciliation status.
 - [ ] Exact-head CI and review/thread state are inspected with compact local/CI parity.
@@ -58,6 +58,7 @@ Reconcile the published infrastructure branch with PR #10's advanced base using 
 - Formal dotfile-repair review passed at exact `a3a574a`: Full `16/16`, Security 10 pass / 3 advisory-unavailable, all-files artifact policy, strict Vibe validation, and diff checks passed.
 - Completed bounded dotfile-repair hygiene: `-Force` is the standard direct PowerShell mechanism for hidden tracked files and adds no suppression, duplication, or debt; Full was not repeated.
 - Dispatcher-selected Stage 39 design records the material post-publication base drift: PR #10 advanced nine commits from `36f1878` to `d0681b6`, while the clean infrastructure branch remains at validated head `91c962e`.
+- Checkpoint 39.1 merged exact base `d0681b6` normally at `5a66cde`; both parents are ancestors, the current-base diff remains the same 38 infrastructure paths with zero forbidden runtime/artifact paths, tracked bootstrap passed with Node `24.13.1`, and Fast passed `5/5`.
 
 ## Workflow state
 
@@ -89,8 +90,8 @@ Reconcile the published infrastructure branch with PR #10's advanced base using 
 
 ## Last completed loop
 
-- Stage 38 publication and exact-head CI completed; post-publication base drift now requires one bounded reconciliation checkpoint.
+- Checkpoint 39.1 implementation merged the current base and passed focused scope/bootstrap/Fast validation; the committed candidate is ready for independent review.
 
 ## Recommended next action
 
-- Merge current `origin/refactor/nexus-1.20-test17` normally into the infrastructure branch, then prove scope and run focused validation before review.
+- Review committed candidate `5a66cde` with one Full gate, Package, Security, release policy, pre-commit, immutable-runtime proof, and clean-checkout bootstrap.

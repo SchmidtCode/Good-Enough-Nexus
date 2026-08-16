@@ -79,6 +79,15 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Full selection is computed inside preflight from reviewed paths and forced for main pushes/manual full. Documentation-only Full skips remain visible to the final aggregator; required failures or unexpected skips fail the final job.
 - Detailed logs upload only on failure or explicit dispatch, retain five days, and exclude packages, SavedVariables, prompts, transcripts, and credentials by path policy.
 - Existing release-policy workflow SHA-256 remains `e625c6232917092f16b9acd421e5641bb3a9527ef5a9402be50bc90e1e203b93`.
+
+## Checkpoint 39.1 - post-publication base reconciliation
+
+- Expected red: `git merge-base --is-ancestor origin/refactor/nexus-1.20-test17 HEAD` exited `1`; the published infrastructure head `91c962e` was behind the current PR #10 head `d0681b6` by nine commits, with merge base `36f1878`.
+- Live ownership: PR #10 remained open/draft/mergeable at `d0681b6`; merged PR #11 supplied the nine base commits; PR #13 remained open/draft/mergeable at `91c962e` with zero reviews or threads; issue #12 remained open.
+- Normal merge: `5a66cded072f2afff8b1853e7a4c461694d5f3bc` has parents `4f6abfc0fed2b530a354eed1223dc39649efae77` and `d0681b6a885db447c94a75f40df7e81f60b74c55`; no rebase, force-push, or textual conflict occurred.
+- Scope proof: the exact current-base-to-merge diff remains the same 38 Stage 38 infrastructure/workflow/tooling/configuration/documentation paths and contains zero production Lua, `Nexus.toc`, bundled data, runtime-test Lua, ZIP, test.17, or other addon-artifact paths.
+- Focused validation: the repository-pinned Node `24.13.1` portable runtime was checksum-verified outside the repository; tracked `npm ci` and checksum-verified security bootstrap passed; Fast passed `5/5`. The initial missing-Node result remained a failure and was not represented as a pass.
+- Ownership proof: root remains at `2ec508f`, lag-hotfix remains at `97cc6af` with its existing independent status, and the product worktree remains clean at `7aee1d9`; none was modified.
 - Implementation validation: workflow self-test, actionlint, high-severity offline zizmor, Fast `13/13`, Security 10 pass / 3 advisory-unavailable, pre-commit, and `git diff --check` passed.
 - Formal review PASS at exact `7633a4ca967ee37560fa0cda1ee9be6930bfc156`: Full passed `16/16` in 253.631 seconds; workflow policy, actionlint, high-severity offline zizmor, release-policy hash, and `git diff --check` passed.
 - Adversarial workflow review confirmed required-Full cannot accept a skipped Full job, documentation-only policy may accept the classifier-proven skip, required Fast/Security/preflight skips fail, and the final job always runs. No checkpoint-hygiene signal was identified.
