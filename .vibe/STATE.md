@@ -9,13 +9,22 @@
 - Stage: 38
 - Checkpoint: 38.3
 - Status: IN_REVIEW
-- Objective: Bind installed VibeRun roles to deterministic validation profiles while reducing hot-context reads.
 - Branch: `infra/viberun-quality-gate`
 - Candidate parent: `0bbd6d4d15c63eab715f0ae9fa2edb937271ce39`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `36f187824b8a24f6fb51562e6ec1101c300308ef`
 
-## Active acceptance
+## Objective (current checkpoint)
+
+Bind installed VibeRun roles to deterministic validation profiles while reducing hot-context reads.
+
+## Deliverables (current checkpoint)
+
+- Supported implementation, review, hygiene, and consolidation profile policy.
+- Compact current state, plan, and context with bounded evidence/history reads.
+- Operator documentation without another dispatcher, prompt catalog, or state namespace.
+
+## Acceptance (current checkpoint)
 
 - [x] VibeRun remains the only dispatcher, state owner, and roadmap owner.
 - [x] Implementation uses expected red, focused mapping, Fast, one clean commit, and review handoff.
@@ -24,7 +33,7 @@
 - [x] Evidence/history reads are bounded and no Stage 35–37 bulk is copied.
 - [x] No `.ai/**`, local prompt catalog, second plugin, or unsupported role field exists.
 
-## Current evidence
+## Evidence
 
 - path: .vibe/EVIDENCE.md
 - Issue #12 is open and owns this infrastructure-only stage.
@@ -42,6 +51,7 @@
 - Implemented 38.3 supported role-to-profile policy in `AGENTS.md`, compact current invariants in `CONTEXT.md`, and bounded current execution state here and in `PLAN.md`.
 - Corrected completed checkpoint headings to the installed dispatcher's supported `(DONE) <id>` form; the prior auxiliary ready-list discrepancy is preserved in evidence.
 - Documented operator usage without adding local prompts, role metadata, a second dispatcher, or another state namespace.
+- Repaired the compact state headings after the VibeRun front end correctly rejected names accepted by the lower-level validator; exact supported schema headings are retained.
 
 ## Workflow state
 
