@@ -35,7 +35,7 @@ depends_on: [38.4]
 
 - Receipt: immutable least-privilege jobs, internal path classification, conditional Full, final aggregation, compact/failure-only logs, actionlint/zizmor, and exact-head Full `16/16` passed while release-policy bytes remained unchanged. See `.vibe/EVIDENCE.md` and `7633a4c`.
 
-### 38.6 (DONE) — Adversarial local exact-head review
+### (DONE) 38.6 — Adversarial local exact-head review
 
 depends_on: [38.5]
 
