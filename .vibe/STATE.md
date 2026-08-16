@@ -51,6 +51,7 @@ Publish the validated infrastructure branch as one draft PR targeting PR #10, li
 - Completed bounded 38.7 hygiene: branch/base/URL/state markers are consistent, no temporary or debug residue was introduced, and Full was not repeated because no product or test byte changed.
 - Exact-head CI run `31919314063` exposed a cross-platform workflow-policy self-test defect: the release-policy file hash differed only because Git checked out LF on Ubuntu and CRLF on Windows. The focused repair normalizes line endings before hashing without changing the release workflow.
 - Formal CI-repair review passed at exact `bf359cc`: Fast `13/13`, Full `16/16`, Security 10 pass / 3 advisory-unavailable, release policy, strict Vibe validation, and diff checks passed.
+- Completed bounded CI-repair hygiene: the one-test normalization is direct, deterministic, and free of stale/debug residue; Full was not repeated because review already covered the committed repair.
 
 ## Workflow state
 

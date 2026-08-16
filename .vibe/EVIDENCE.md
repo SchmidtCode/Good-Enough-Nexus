@@ -129,3 +129,4 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Smallest coherent repair: normalize CRLF/CR to LF in the workflow-policy self-test before hashing and assert the stable normalized digest. No workflow, release-policy, product, package, or runtime file changed.
 - Focused validation PASS: workflow policy self-test and Fast passed `13/13`, including the mapped workflow/security/tooling tests.
 - Formal repair review PASS at exact `bf359cc8c917d0f783dd119d5169f4cf3b4ad9e2`: Full passed `16/16` in 263.399 seconds; Security passed 10 blocking checks with three advisory-unavailable checks; release policy, strict Vibe validation, and `git diff --check` passed.
+- Repair hygiene: bounded scan of the one self-test found no duplication, stale/debug marker, abstraction debt, or behavior change. The direct CRLF/CR-to-LF normalization and stable digest remain the smallest portable ownership check; Full was not repeated.
