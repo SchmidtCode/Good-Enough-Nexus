@@ -55,7 +55,7 @@ function Test-ArtifactPathSet {
         }
         if ((Test-Path -LiteralPath $full -PathType Leaf) `
             -and (Get-Item -LiteralPath $full -Force).Length -le 1048576) {
-            $text = Get-Content -Raw -LiteralPath $full -ErrorAction SilentlyContinue
+            $text = Get-Content -Raw -LiteralPath $full -ErrorAction Stop
             foreach ($pattern in $privateContentPatterns) {
                 if ($text -match $pattern) { $violations.Add("private-content:$path"); break }
             }

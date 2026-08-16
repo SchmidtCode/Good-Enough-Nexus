@@ -183,7 +183,7 @@ depends_on: [38.6]
 
 depends_on: [41.1]
 
-- Status: `IN_REVIEW`
+- Status: `DONE`
 - Objective:
   - Reject forbidden staged paths from exact NUL-delimited Git records, including force-added and quoted hostile names.
 - Deliverables:

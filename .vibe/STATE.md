@@ -7,29 +7,31 @@
 ## Current focus
 
 - Stage: 41
-- Checkpoint: 41.2
-- Status: IN_REVIEW
+- Checkpoint: 41.3
+- Status: NOT_STARTED
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: checkpoint 41.2 implementation commit (resolve with `git rev-parse HEAD` after commit)
+- Candidate head: reviewed checkpoint 41.2 head `f769d52` plus the current Vibe receipt commit
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
 ## Objective (current checkpoint)
 
-Reject forbidden staged paths from exact NUL-delimited Git records, including force-added and quoted hostile names.
+Make every blocking non-pass fail and make Package a required exact-base CI job.
 
 ## Deliverables (current checkpoint)
 
-- NUL-safe staged and all-tracked path enumeration through the shared Git byte reader.
-- Exact repository-relative normalization only after record extraction.
-- Disposable hostile filename fixtures, including a force-added ignored artifact.
+- Fail-closed summary normalization for missing, malformed, unknown, skipped, unavailable, and failed blocking results.
+- Exact-base Package workflow job with compact summary and failure-only logs.
+- Aggregate dependency and condition coverage for required Package.
+- Package cleanup and no-publication regression coverage.
 
 ## Acceptance (current checkpoint)
 
-- [x] `.codex` newline, `.ai` tab, `.chatgpt` space, build ZIP, case variant, and separator-hostile paths fail.
-- [x] Force-added ignored artifacts fail while an ordinary safe source passes.
-- [x] No hostile filename is created in the real worktree.
-- [x] Security-policy focused tests and Fast pass.
+- [ ] Only blocking `pass` can produce blocking success; advisory unavailable remains advisory.
+- [ ] Multiple failures remain visible in deterministic compact output.
+- [ ] Package receives BaseRef, full history, and the real Package profile.
+- [ ] Failed or skipped Package fails aggregate; successful Package uploads and retains no package.
+- [ ] Summary, workflow-policy, Package, and Fast checks pass.
 
 ## Evidence
 
@@ -74,6 +76,7 @@ Reject forbidden staged paths from exact NUL-delimited Git records, including fo
 - Formal 41.1 review passed at exact `4129105`: focused routing/workflow tests passed; exact checkpoint-range Fast passed `14/14`; missing final NUL and unknown status probes failed closed; committed diff checks passed; and zero product/runtime-test paths changed. No checkpoint-hygiene signal was identified.
 - Completed bounded 41.1 hygiene: the shared byte reader, record expansion, planner integration, route map, workflow delegation, and fixtures contain no redundant parser, unnecessary branch, speculative abstraction, or attributable debt; no code byte changed and review validation was not repeated.
 - Checkpoint 41.2 expected red reproduced acceptance of Git-quoted `.codex/context\n.txt`. Staged/all-tracked enumeration now uses raw NUL records, Fast and the scanner share one exact path/content policy, disposable hostile fixtures clean in `finally`, and current-base Fast passes `15/15`.
+- Formal 41.2 review passed at exact `f769d52` after changing the centralized content read from silent failure to fail closed. Hostile/security/scanner tests and current-base Fast `15/15` passed; an outside-root adversarial probe failed as required; fixture cleanup and scope were clean. No checkpoint-hygiene signal was identified.
 
 ## Workflow state
 
@@ -113,4 +116,4 @@ Reject forbidden staged paths from exact NUL-delimited Git records, including fo
 
 ## Recommended next action
 
-- Formally review checkpoint 41.2 at its exact commit, including NUL enumeration, hostile/force-added fixtures, shared policy behavior, cleanup, all-tracked scan, and current-base Fast.
+- Implement checkpoint 41.3 expected-red blocking-status and Package-CI fixtures, apply the smallest fail-closed/aggregate repair, run Package and Fast, commit, and stop for review.
