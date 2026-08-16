@@ -107,3 +107,9 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Bounded scope: the exact-head scope and formal review receipts in `.vibe/STATE.md` and append-only `.vibe/EVIDENCE.md` only.
 - Hot spots, quick wins, and debt items: none. The receipts are compact, preserve the external publication boundary, and do not duplicate historical Stage 35-37 detail.
 - Validation: stale-marker/temporary-path/debug scan, strict Vibe validation, and base-range `git diff --check` passed. No product or test byte changed, so Full was not repeated.
+
+## Checkpoint 38.7 - draft publication and exact-head CI boundary
+
+- Expected red: live GitHub branch search still finds no `infra/viberun-quality-gate` branch, so the draft PR and exact-head CI are correctly absent before the authorized publication step.
+- Live base reconciliation: PR #10 remains open, draft, and mergeable at `36f187824b8a24f6fb51562e6ec1101c300308ef`; no base movement or ownership conflict was detected.
+- Implementation validation at `98add8cbfd5ccc31fd3df7a486a3802822c6fd5b`: Fast passed `5/5` and base-range `git diff --check` passed. No remote or product mutation occurred.

@@ -8,9 +8,9 @@
 
 - Stage: 38
 - Checkpoint: 38.7
-- Status: NOT_STARTED
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: `1ab10b525b0990b1b0024b786b1a7e68ed87d717`
+- Candidate head: `98add8cbfd5ccc31fd3df7a486a3802822c6fd5b`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `36f187824b8a24f6fb51562e6ec1101c300308ef`
 
@@ -46,6 +46,7 @@ Publish the validated infrastructure branch as one draft PR targeting PR #10, li
 - No checkpoint-hygiene signal or adversarial scope escape was identified. Publication and exact-head CI remain the explicit external boundary after Vibe hygiene.
 - Completed bounded 38.6 hygiene: the scope/review receipts contain no stale marker, temporary path, duplicate workflow state, or directly attributable debt; Full was not repeated because no product or test byte changed.
 - Dispatcher-selected design split the remaining external publication boundary into checkpoint 38.7 so the exhausted plan does not hide unfinished GitHub coordination.
+- Checkpoint 38.7 expected-red reconfirmed no remote infrastructure branch or draft PR exists; PR #10 remains open/draft/mergeable at the selected base and Fast passed `5/5` at `98add8c`.
 
 ## Workflow state
 
@@ -77,8 +78,8 @@ Publish the validated infrastructure branch as one draft PR targeting PR #10, li
 
 ## Last completed loop
 
-- Checkpoint 38.6 local adversarial review and hygiene passed; 38.7 is the sole remaining external publication boundary.
+- Checkpoint 38.7 publication handoff is ready for independent review before any remote mutation.
 
 ## Recommended next action
 
-- Execute final exact-head validation, publish the dedicated branch and draft PR without force, update issue #12, and inspect exact-head CI.
+- Review the committed publication handoff, then complete hygiene before the non-force push and draft PR.
