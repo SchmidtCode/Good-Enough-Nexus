@@ -72,6 +72,7 @@ Reject forbidden staged paths from exact NUL-delimited Git records, including fo
 - Checkpoint 41.1 expected red reproduced broad-policy misrouting (`AGENTS.md` was documentation-only). The shared NUL-delimited Git record parser now unions rename/copy source and destination ownership across working, staged, untracked, and BaseRef discovery; focused routing/workflow tests and checkpoint-scoped Fast passed with zero product/runtime-test changes.
 - Current-base Fast passed 279 checks and failed only the existing artifact-path policy on the legitimate analyzer names `tests/run-savedvariables-analyzer.js` and `tools/analyze-savedvariables.js`; this is retained as honest evidence for checkpoint 41.2, not relabeled as a 41.1 pass.
 - Formal 41.1 review passed at exact `4129105`: focused routing/workflow tests passed; exact checkpoint-range Fast passed `14/14`; missing final NUL and unknown status probes failed closed; committed diff checks passed; and zero product/runtime-test paths changed. No checkpoint-hygiene signal was identified.
+- Completed bounded 41.1 hygiene: the shared byte reader, record expansion, planner integration, route map, workflow delegation, and fixtures contain no redundant parser, unnecessary branch, speculative abstraction, or attributable debt; no code byte changed and review validation was not repeated.
 
 ## Workflow state
 
