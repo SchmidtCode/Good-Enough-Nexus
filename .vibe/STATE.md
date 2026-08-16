@@ -10,7 +10,7 @@
 - Checkpoint: 40.1
 - Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: `63a8c9954be4345f245e81cd3b5e676c58c52b99`
+- Candidate head: `21db9ae313c9d708fd541ea5eee4a8b1060ae957`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
@@ -26,10 +26,10 @@ Publish the reviewed PR #10 base reconciliation to the existing draft infrastruc
 
 ## Acceptance (current checkpoint)
 
-- [ ] Final local head contains only reviewed infrastructure plus compact Vibe receipts and passes Fast/diff validation.
-- [ ] Local and remote heads match; PR #13 stays draft; issue #12 receives the exact reconciliation status.
-- [ ] Exact-head CI and review/thread state are inspected with compact local/CI parity.
-- [ ] Root, lag-hotfix, product, runtime, artifact, install, live, release, merge, and settings boundaries remain unchanged.
+- [x] Final local head contains only reviewed infrastructure plus compact Vibe receipts and passes Fast/diff validation.
+- [x] Local and remote heads match; PR #13 stays draft; issue #12 receives the exact reconciliation status.
+- [x] Exact-head CI and review/thread state are inspected with compact local/CI parity.
+- [x] Root, lag-hotfix, product, runtime, artifact, install, live, release, merge, and settings boundaries remain unchanged.
 
 ## Evidence
 
@@ -65,6 +65,7 @@ Publish the reviewed PR #10 base reconciliation to the existing draft infrastruc
 - Dispatcher-selected Stage 40 keeps the exhausted-plan follow-up to one external publication checkpoint; live PR #13 and issue #12 remain open, and no implementation work is reopened.
 - Stage 40 expected red confirmed remote `infra/viberun-quality-gate` remains at `91c962e` while local reviewed/design head is `b48b506`; exact-head Fast passed `15/15`, current-base changed-path count is 40, and forbidden runtime/artifact count is zero.
 - Published head `1c6e3c9` matched remote and release-policy run `31924278239` passed, but Quality gate run `31924278205` failed preflight because Ubuntu PowerShell parsed `$base...HEAD` ambiguously. Braced range expansion plus a regression assertion now pass the focused 40-path expression, Security 12 pass / 3 advisory-unavailable, and Fast `15/15`.
+- Replacement exact-head Quality gate run `31924436571` and Release policy run `31924436622` passed at `21db9ae`; CI/local parity is Fast `15/15`, Full 18 pass / 1 explicit manual skip, and Security 12 pass / 3 advisory-unavailable. PR #13 remains open/draft/mergeable with zero reviews or threads, and issue #12 remains open.
 
 ## Workflow state
 
@@ -96,8 +97,8 @@ Publish the reviewed PR #10 base reconciliation to the existing draft infrastruc
 
 ## Last completed loop
 
-- Stage 40 direct CI repair is validated locally and ready for one focused commit, normal push, and replacement exact-head CI inspection.
+- Stage 40 publication implementation and direct CI repair pass locally and remotely at `21db9ae`; the compact receipt is ready for exact-head handoff review.
 
 ## Recommended next action
 
-- Commit and non-force push the direct preflight range repair, then inspect replacement exact-head Quality gate and release-policy runs.
+- Review the committed publication receipt, branch/base/head equality, exact-head CI parity, PR/issue state, and protected boundaries without repeating Full locally.
