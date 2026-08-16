@@ -56,7 +56,7 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 ## Workflow state
 
 - [ ] RUN_STOPPED
-- [x] RUN_CONTEXT_CAPTURE
+- [ ] RUN_CONTEXT_CAPTURE
 - [x] STAGE_DESIGNED
 - [x] MAINTENANCE_CYCLE_DONE
 - [x] RETROSPECTIVE_DONE

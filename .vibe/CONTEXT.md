@@ -13,8 +13,9 @@
 - Git change discovery uses one raw NUL-delimited record model; rename/copy source and destination ownership are unioned.
 - Fast and staged/all-tracked scans share one fail-closed artifact path/content policy.
 - Only blocking `pass` succeeds; Package is a required exact-base, non-publishing CI job with failure-log-only evidence.
-- Stage 42 repairs the exact PSScriptAnalyzer baseline before editing bootstrap code, then validates archive layout/executable identity and Python distribution hashes together.
-- Stage 43 runs Full once on the unchanged formal candidate, proves a fresh checkout, then refreshes PR #13/issue #12 and stops without merge.
+- PSScriptAnalyzer inherits only six reviewed owner/rule/message records; the current four findings are inherited and two removals report as improvements.
+- Security bootstrap validates ZIP/tar entries and exact executable paths before extraction, accepts only hash-locked wheels, and removes bootstrap/download/extraction roots on success or failure.
+- Stage 43 commits the formal candidate before Full, runs Full locally exactly once, proves a disposable fresh checkout, then refreshes PR #13/issue #12 and stops without merge.
 
 ## Gotchas
 
@@ -23,11 +24,13 @@
 - Use the exact PR #10 BaseRef for full-branch gates and the checkpoint parent for bounded checkpoint review.
 - Vibe flags and routing are dispatcher-owned; maintenance scans must not move the product checkpoint pointer.
 - Schema-valid state can still be semantically stale; verify status beneath the exact checkpoint heading and confirm fresh-checkout dispatcher truth at Stage 43.
+- A commit cannot contain its own SHA; terminal Vibe truth names branch `HEAD` plus the exact base, then a fresh checkout verifies the resolved SHA and stop route without an ignored receipt.
+- Do not mutate the formal candidate's code/tooling bytes after its single local Full; later Vibe/GitHub receipts must remain documentation/state-only and receive their own exact-head CI.
 
 ## Hot Files
 
-- Current checkpoint 42.1: `tools/Test-SecurityPolicy.ps1`, `tests/security-advisory-baseline.json`, `tests/run-security-policy.js`.
-- Next checkpoint 42.2: `tools/Bootstrap-SecurityTools.ps1`, `tools/security-tools.json`, and the focused non-executing hostile fixtures.
+- Current checkpoint 43.1: `tools/Invoke-QualityGate.ps1`, `tools/Bootstrap-QualityTools.ps1`, validation/security/package tests, `.pre-commit-config.yaml`, and exact-base Git scope commands.
+- Terminal checkpoint 43.2: `.vibe/STATE.md`, `.vibe/PLAN.md`, `.vibe/CONTEXT.md`, `.vibe/EVIDENCE.md`, PR #13, issue #12, and replacement workflow/review state.
 - Workflow/gate: `.github/workflows/quality-gate.yml`, `tools/Invoke-QualityGate.ps1`, `tools/Write-ValidationSummary.js`.
 - Path policy: `tools/GitPathRecords.ps1`, `tools/ArtifactPathPolicy.ps1`, `tools/Get-ChangedTestPlan.ps1`, `tools/Test-StagedArtifacts.ps1`.
 - Vibe authority: `AGENTS.md`, `.vibe/STATE.md`, active `.vibe/PLAN.md`, this file, and append-only `.vibe/EVIDENCE.md`.
@@ -39,6 +42,7 @@
 - Expected red must demonstrate the actual missing capability; use disposable repositories/archives and never place hostile fixtures in the real worktree.
 - No addon install, WoW launch, live SavedVariables access, package retention/upload, rebase, force-push, merge, tag, release, publication, deployment, or settings change is authorized.
 - Final offline/CI evidence does not prove native WoW behavior; stop at the refreshed independent-review boundary.
+- Full has not yet run for the Stage 43 candidate. Commit all pre-Full state first, then run it exactly once and preserve the result even if a later gate fails.
 
 ## Stage Retrospective Notes
 
