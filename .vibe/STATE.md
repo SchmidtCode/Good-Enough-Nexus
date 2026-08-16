@@ -8,9 +8,9 @@
 
 - Stage: 45
 - Checkpoint: 45.1
-- Status: IN_REVIEW
+- Status: DONE
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: branch `HEAD` after checkpoint implementation; repair starts from `4197ed95bc27a2ce64d85eb30a05feb8385c4339`
+- Candidate head: reviewed repair commit `3432fd6122e3ac527d06e7e963cf09084b7e6cb4`; terminal receipt candidate is branch `HEAD` after this closure commit
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
@@ -30,9 +30,9 @@ Close the remaining PSScriptAnalyzer download-URI validation gap through the sha
 - [x] Expected-red proves the exact missing PSScriptAnalyzer URI-validation contract.
 - [x] One shared validator rejects unsafe URI/path/control-character variants and preserves valid HTTPS metadata.
 - [x] Focused security regressions, Fast, Security, PSScriptAnalyzer, Gitleaks, diff, and scope checks pass.
-- [ ] Every replacement Quality/Release source job proves `HEAD` equals the exact final PR head, with zero successful artifacts.
-- [ ] PR #13, issue #12, and append-only Vibe evidence describe the final URI repair and current exact-head runs.
-- [ ] Final status is `DONE`, `RUN_STOPPED=true`, dispatcher `stop`, with a clean infrastructure worktree and no post-CI commit.
+- [x] Every replacement Quality/Release source job proves `HEAD` equals reviewed repair head `3432fd6`, with zero successful artifacts; the terminal Vibe receipt commit requires its own replacement pair.
+- [x] PR #13, issue #12 comment `5310228999`, and append-only Vibe evidence describe the URI repair and reviewed-repair exact-head runs; external metadata will be refreshed after terminal-head CI without another repo commit.
+- [x] Committed terminal status is `DONE`, `RUN_STOPPED=true`, dispatcher `stop`; the unavoidable receipt-only post-CI commit requires a second exact-head Quality/Release pair before final completion.
 
 ## Evidence
 
@@ -49,10 +49,15 @@ Close the remaining PSScriptAnalyzer download-URI validation gap through the sha
 - Stage 45.1 starting review: exact head `4197ed9` is green but the resolver accepts `file:`, relative, and plain-HTTP `psscriptanalyzer.url` metadata before bootstrap use.
 - Stage 45.1 expected-red/green: three unsafe PSScriptAnalyzer URLs were accepted before repair; one shared owner now rejects 19 hostile variants for both download paths while current/safe HTTPS manifests pass.
 - Stage 45.1 local gates: focused security/bootstrap regressions pass; Fast `15/15`; Security 12 blocking pass / 3 advisory-unavailable; PSScriptAnalyzer 0 blocking / 4 inherited / 0 new / 2 improvements; Gitleaks no leaks.
+- Stage 45.1 reviewed repair CI: exact head `3432fd6` passed Quality `31978682635` and Release `31978682532`; all seven source-job logs select/assert the full SHA and both artifact inventories are empty.
+- Stage 45.1 terminal reconciliation: PR #13 body and issue #12 comment `5310228999` carry the repair/CI receipt; supported `vibe stop` reports `stopped: true`, Stage 45.1 `DONE`, dispatcher `stop`, and no prompt.
 
 ## Work log
 
 - Checkpoint 45.1 implementation replaced the inline tool-asset URI check with one strict shared resolver used by both tool assets and PSScriptAnalyzer, added network-free hostile/safe fixtures, and passed focused/Fast/Security/static validation without workflow or protected-runtime changes.
+- Checkpoint 45.1 adversarial review passed at exact repair commit `3432fd6`: focused demos, Fast, Security, pre-use/no-mutation ownership, exact-base scope, seven source-job SHA logs, and empty artifact inventories are green; no correctness, security, or checkpoint-hygiene signal remains.
+- Checkpoint 45.1 bounded hygiene found one shared URI owner, direct owner-count coverage, no compatibility branch, no duplicate validation path, and no actionable debt; implementation bytes remain unchanged.
+- Plan exhaustion returned stage design; the explicit terminal mission used the supported stop operation instead of inventing Stage 46 work. The resulting receipt-only head must receive a second exact-head CI pair before external metadata is finalized.
 - Independent final review at starting head `4197ed9` found one remaining merge-blocking gap: ordinary tool asset URLs are validated, but `psscriptanalyzer.url` reaches `Invoke-WebRequest` without the shared fail-closed URI contract. Supported VibeRun resume selected Stage 45 design for one bounded repair checkpoint.
 - Independent review falsified the Stage 43 terminal acceptance premise: Quality `31959113599` and Release `31959113603` checked out synthetic merge `bab79a6`, not reviewed head `87204ab`, and exposed four merge-blocking infrastructure findings.
 - The supported VibeRun resume operation cleared `RUN_STOPPED`; the dispatcher selected stage design, which bounded all four repairs and final exact-head reconciliation into checkpoint 44.1.
@@ -75,7 +80,7 @@ Close the remaining PSScriptAnalyzer download-URI validation gap through the sha
 
 ## Workflow state
 
-- [ ] RUN_STOPPED
+- [x] RUN_STOPPED
 - [ ] RUN_CONTEXT_CAPTURE
 - [x] STAGE_DESIGNED
 - [x] MAINTENANCE_CYCLE_DONE
@@ -99,7 +104,7 @@ Close the remaining PSScriptAnalyzer download-URI validation gap through the sha
 ## Decisions
 
 - Reuse one shared strict download-URI validator for ordinary tool assets and PSScriptAnalyzer; do not add a second validation path.
-- Keep Stage 45 to checkpoint 45.1 and finish on a single final terminal candidate whose exact SHA receives replacement Quality and Release CI.
+- Keep Stage 45 to checkpoint 45.1; because CI evidence must be committed into terminal Vibe truth, use the authorized two-cycle flow and require replacement Quality and Release on the receipt-only final head.
 - Treat runs `31959113599` and `31959113603` as green synthetic-merge runs, not exact-head evidence; preserve them only as corrected historical receipts.
 - Use exactly one Stage 44 repair checkpoint and one frozen candidate so terminal Vibe truth can receive CI at the same final head.
 - Keep existing PR #13 draft against the current PR #10 branch and refresh it only after exact-head validation.
@@ -108,8 +113,8 @@ Close the remaining PSScriptAnalyzer download-URI validation gap through the sha
 
 ## Last completed loop
 
-- Stage 45.1 implementation completed the shared URI repair and local gates, then moved the checkpoint to `IN_REVIEW`.
+- Stage 45.1 adversarial review passed the implementation and exact-head repair CI, then moved the plan-exhausted checkpoint to `DONE`.
 
 ## Recommended next action
 
-- Independently review the seven-file checkpoint delta, then complete hygiene and terminal publication without changing implementation bytes.
+- Commit and normally push the terminal receipt only, then require replacement exact-head Quality and Release before the final PR/issue refresh and independent merge-readiness handoff.

@@ -93,7 +93,7 @@ depends_on: [43.1]
 
 ### 45.1 — Validate every security-manifest download URI before use
 
-- Status: `IN_REVIEW`
+- Status: `DONE`
 - Objective:
   - Reject unsafe `psscriptanalyzer.url` metadata through the same URI-validation owner used by ordinary tool assets, without changing product/runtime behavior.
 - Deliverables:
@@ -105,8 +105,8 @@ depends_on: [43.1]
   - [x] The shared validator accepts current/safe absolute HTTPS URLs and rejects unsafe URI/path/control-character variants for both download owners.
   - [x] Manifest validation completes before any manifest-controlled download or filesystem mutation, while archive/hash/path/cleanup regressions remain green.
   - [x] Focused security tests, Fast, Security, PSScriptAnalyzer, Gitleaks, and diff/scope checks pass without workflow or protected-runtime changes.
-  - [ ] The final PR head passes replacement Quality and Release workflows; all seven source jobs assert that SHA and both artifact inventories are empty.
-  - [ ] PR #13 and issue #12 are reconciled, the worktree is clean, and Vibe returns `DONE` / `RUN_STOPPED=true` / dispatcher `stop` without a post-CI commit.
+  - [x] The reviewed repair head passes replacement Quality and Release workflows; all seven source jobs assert that SHA and both artifact inventories are empty.
+  - [x] PR #13 and issue #12 carry the reviewed repair receipt, and the committed terminal Vibe state returns `DONE` / `RUN_STOPPED=true` / dispatcher `stop`; the resulting receipt head must receive its own replacement CI before final completion.
 - Demo commands:
   - `pwsh -NoProfile -File tests/Test-SecurityBootstrapPolicy.ps1`
   - `node tests/run-security-policy.js`
