@@ -62,7 +62,7 @@ depends_on: [38.5]
 
 depends_on: [38.6]
 
-- Status: `IN_REVIEW`
+- Status: `DONE`
 - Objective:
   - Publish only the validated infrastructure branch as a draft PR against PR #10, link issue #12, and stop after exact-head CI/review inspection.
 - Deliverables:

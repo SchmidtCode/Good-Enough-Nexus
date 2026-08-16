@@ -7,31 +7,29 @@
 ## Current focus
 
 - Stage: 41
-- Checkpoint: 41.1
-- Status: IN_REVIEW
+- Checkpoint: 41.2
+- Status: NOT_STARTED
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: checkpoint 41.1 implementation commit (resolve with `git rev-parse HEAD` after commit)
+- Candidate head: reviewed checkpoint 41.1 head `4129105` plus the current Vibe receipt commit
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
 ## Objective (current checkpoint)
 
-Preserve both sides of Git renames/copies and route policy documents through their actual validation owners.
+Reject forbidden staged paths from exact NUL-delimited Git records, including force-added and quoted hostile names.
 
 ## Deliverables (current checkpoint)
 
-- Shared NUL-delimited Git record parsing for local, staged, and committed discovery.
-- Rename/copy source and destination ownership union.
-- Narrow ordinary-documentation allowlist with policy/legal/security routes.
-- Hostile path and policy-routing regression fixtures.
+- NUL-safe staged and all-tracked path enumeration through the shared Git byte reader.
+- Exact repository-relative normalization only after record extraction.
+- Disposable hostile filename fixtures, including a force-added ignored artifact.
 
 ## Acceptance (current checkpoint)
 
-- [x] Runtime, workflow, and policy sources renamed into docs retain their original required validation.
-- [x] Ordinary documentation renames remain documentation-only.
-- [x] Added, modified, deleted, renamed, copied, case-only, space, tab, and newline paths are parsed without line splitting.
-- [x] Policy/legal/security documents route through their actual owners.
-- [x] Focused routing tests and checkpoint-scoped Fast pass without product/runtime-test changes; current-base Fast fails only at the separately planned 41.2 artifact-policy defect.
+- [ ] `.codex` newline, `.ai` tab, `.chatgpt` space, build ZIP, case variant, and separator-hostile paths fail.
+- [ ] Force-added ignored artifacts fail while an ordinary safe source passes.
+- [ ] No hostile filename is created in the real worktree.
+- [ ] Security-policy focused tests and Fast pass.
 
 ## Evidence
 
@@ -73,6 +71,7 @@ Preserve both sides of Git renames/copies and route policy documents through the
 - Independent PR #13 review at exact `0793f26` found eight merge-blocking infrastructure defects; dispatcher-owned Stage 41 begins with Git record and policy routing because those owners feed the later artifact and CI repairs.
 - Checkpoint 41.1 expected red reproduced broad-policy misrouting (`AGENTS.md` was documentation-only). The shared NUL-delimited Git record parser now unions rename/copy source and destination ownership across working, staged, untracked, and BaseRef discovery; focused routing/workflow tests and checkpoint-scoped Fast passed with zero product/runtime-test changes.
 - Current-base Fast passed 279 checks and failed only the existing artifact-path policy on the legitimate analyzer names `tests/run-savedvariables-analyzer.js` and `tools/analyze-savedvariables.js`; this is retained as honest evidence for checkpoint 41.2, not relabeled as a 41.1 pass.
+- Formal 41.1 review passed at exact `4129105`: focused routing/workflow tests passed; exact checkpoint-range Fast passed `14/14`; missing final NUL and unknown status probes failed closed; committed diff checks passed; and zero product/runtime-test paths changed. No checkpoint-hygiene signal was identified.
 
 ## Workflow state
 
@@ -85,8 +84,6 @@ Preserve both sides of Git renames/copies and route policy documents through the
 
 ## Active issues
 
-- Git rename/copy discovery loses source ownership and is not NUL-safe.
-- Broad Markdown routing can treat workflow/legal/security policy as harmless docs.
 - Staged-artifact discovery can accept Git-quoted hostile paths.
 - Blocking skipped or malformed summary results can pass.
 - Package is absent from required exact-head CI aggregation.
@@ -115,4 +112,4 @@ Preserve both sides of Git renames/copies and route policy documents through the
 
 ## Recommended next action
 
-- Formally review checkpoint 41.1 at its exact commit, including hostile path parsing, policy ownership, workflow delegation, checkpoint-scoped Fast, and the preserved 41.2 failure boundary.
+- Implement checkpoint 41.2 expected-red hostile staged-path fixtures, route enumeration through the shared NUL-safe reader, run focused checks and Fast, commit, and stop for review.
