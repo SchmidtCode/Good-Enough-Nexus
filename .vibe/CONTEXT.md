@@ -39,3 +39,12 @@
 - Offline Lua parsing, Fengari tests, packaging parity, static analysis, and GitHub Actions do not prove native WoW behavior.
 - Native test.17 evidence remains owned by the completed product checkpoint. Stage 38 neither creates test.18 nor resolves native follow-up questions.
 - Addon installation, WoW launch, live SavedVariables access, artifact publication, merging, tagging, and release are outside authorization.
+
+## Stage Retrospective Notes
+
+- Stage 41 used 10 delivery loops (design plus implement/review/hygiene for 41.1–41.3), with no repeated review cycle, split, skip, BLOCKER, or DECISION_REQUIRED issue; keep this three-checkpoint dependency shape when one parser/policy foundation feeds later gates.
+- In 41.1, checkpoint-range Fast passed while current-base Fast exposed the separate 41.2 artifact defect; validate bounded work against its checkpoint parent and preserve base-wide failures as explicit next-checkpoint red evidence instead of weakening either boundary.
+- In 41.2, Windows Git could not represent tab/newline index names; pair raw-byte parser fixtures with real disposable index fixtures on platforms that support them and use exact explicit-path fallback locally, never create hostile names in the authoritative worktree.
+- In 41.2, Fast and the staged scanner initially had drifting artifact patterns; when two gates enforce the same security rule, create one policy owner before changing callers so false positives and bypasses are repaired together.
+- In 41.3, fail-closed behavior spanned both local summary normalization and GitHub job aggregation; future gate changes should add a local status matrix and a workflow dependency/condition assertion in the same checkpoint.
+- Stage 41 consolidation found 41.1 still labeled `IN_REVIEW` in PLAN despite passed receipts; after each transition, verify the status beneath the exact checkpoint heading rather than relying only on schema validation or a broad text replacement.

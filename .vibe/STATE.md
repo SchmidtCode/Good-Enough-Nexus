@@ -49,6 +49,7 @@ Preserve only exact inherited PSScriptAnalyzer findings while detecting ownershi
 - Checkpoint 41.3 reproduced blocking skipped-as-success, made all blocking non-pass results fail, and added required exact-base Package CI at `4364db4`.
 - Checkpoint 41.3 formal review passed Package `10/10`, Fast `15/15`, actionlint, cleanup, aggregate, and bounded hygiene checks.
 - Stage 41 consolidation archived completed Stages 38–41, removed stale 41.1 `IN_REVIEW` drift, and moved the hot pointer to 42.1.
+- Stage 41 retrospective recorded five actionable lessons from its 10 delivery loops; no repeated review cycle, split, skip, blocker, or decision-required issue occurred.
 
 ## Workflow state
 
@@ -56,7 +57,7 @@ Preserve only exact inherited PSScriptAnalyzer findings while detecting ownershi
 - [x] RUN_CONTEXT_CAPTURE
 - [ ] STAGE_DESIGNED
 - [ ] MAINTENANCE_CYCLE_DONE
-- [ ] RETROSPECTIVE_DONE
+- [x] RETROSPECTIVE_DONE
 - [x] PROCESS_IMPROVEMENTS_DONE
 
 ## Active issues
