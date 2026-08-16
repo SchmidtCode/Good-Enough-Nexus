@@ -8,9 +8,9 @@
 
 - Stage: 39
 - Checkpoint: 39.1
-- Status: IN_REVIEW
+- Status: IN_PROGRESS
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: `5a66cded072f2afff8b1853e7a4c461694d5f3bc`
+- Candidate head: `791a635dc73a50267dbf8a6acc64add3328039f6`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
@@ -59,6 +59,7 @@ Reconcile the published infrastructure branch with PR #10's advanced base using 
 - Completed bounded dotfile-repair hygiene: `-Force` is the standard direct PowerShell mechanism for hidden tracked files and adds no suppression, duplication, or debt; Full was not repeated.
 - Dispatcher-selected Stage 39 design records the material post-publication base drift: PR #10 advanced nine commits from `36f1878` to `d0681b6`, while the clean infrastructure branch remains at validated head `91c962e`.
 - Checkpoint 39.1 merged exact base `d0681b6` normally at `5a66cde`; both parents are ancestors, the current-base diff remains the same 38 infrastructure paths with zero forbidden runtime/artifact paths, tracked bootstrap passed with Node `24.13.1`, and Fast passed `5/5`.
+- Review expected red at `791a635`: Full failed `205/206` because the Stage 38 Node suite ran PR #11's explicitly manual `run_legacy_backup_smoke.lua` without its required, separately authorized SavedVariables path; the PR #11 release workflow correctly excludes that test from normal regression.
 
 ## Workflow state
 
@@ -71,7 +72,13 @@ Reconcile the published infrastructure branch with PR #10's advanced base using 
 
 ## Active issues
 
-- None.
+- [ ] ISSUE-39.1-1: Classify the manual legacy-backup smoke test in the Full gate
+  - Impact: MAJOR
+  - Status: IN_PROGRESS
+  - Owner: agent
+  - Unblock Condition: Normal Lua regression excludes only the explicit manual smoke test, and Full reports it as skipped with a reason rather than passed or failed.
+  - Evidence Needed: Focused classifier self-test plus a replacement review-role Full summary with zero blocking failures and one explicit manual skip.
+  - Notes: Do not use, inspect, synthesize, or request live SavedVariables; preserve the PR #11 Lua test byte unchanged.
 
 ## Blockers
 
@@ -90,8 +97,8 @@ Reconcile the published infrastructure branch with PR #10's advanced base using 
 
 ## Last completed loop
 
-- Checkpoint 39.1 implementation merged the current base and passed focused scope/bootstrap/Fast validation; the committed candidate is ready for independent review.
+- Checkpoint 39.1 review failed on the manual legacy-backup smoke classification; the merge and infrastructure-only scope proofs remain valid.
 
 ## Recommended next action
 
-- Review committed candidate `5a66cde` with one Full gate, Package, Security, release policy, pre-commit, immutable-runtime proof, and clean-checkout bootstrap.
+- In a new implementation role, align the Node normal-regression suite with PR #11's explicit manual-smoke exclusion and expose one honest skipped check, then run focused self-tests and Fast.
