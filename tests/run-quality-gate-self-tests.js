@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const { normalizeSourcePath } = require("../tools/Test-PackageSource.js");
+const { normalize: normalizeSummary } = require("../tools/Write-ValidationSummary.js");
 
 const root = path.resolve(__dirname, "..");
 const pwsh = process.platform === "win32" ? "pwsh.exe" : "pwsh";
@@ -133,6 +134,35 @@ assert.strictEqual(normalizeSourcePath("core\\Main.lua"), "core/Main.lua");
 const scratch = path.join(root, "build", "quality-gate-self-test");
 fs.rmSync(scratch, { recursive: true, force: true });
 fs.mkdirSync(path.join(scratch, "logs"), { recursive: true });
+
+function summaryWithResult(result, blocking = true, includeResult = true) {
+    const check = {
+        id: "matrix-check",
+        count: "0/1",
+        duration_seconds: 0,
+        log: "logs/matrix.log",
+        command: "fixture",
+        blocking,
+    };
+    if (includeResult) check.result = result;
+    return normalizeSummary({
+        schema: 1,
+        mode: "Fast",
+        head: "fixture",
+        duration_seconds: 0,
+        checks: [check],
+    });
+}
+
+assert.strictEqual(summaryWithResult("pass").result, "pass");
+for (const result of ["skipped", "unavailable", "fail", "error", "unknown"]) {
+    assert.strictEqual(summaryWithResult(result).result, "fail",
+        `blocking ${result} produced aggregate success`);
+}
+assert.strictEqual(summaryWithResult(undefined, true, false).result, "fail",
+    "blocking missing result produced aggregate success");
+assert.strictEqual(summaryWithResult("unavailable", false).result, "pass",
+    "advisory unavailable incorrectly failed the aggregate");
 
 const deletionRepository = path.join(scratch, "deleted-paths");
 const deletedPaths = [

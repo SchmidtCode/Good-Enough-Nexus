@@ -206,7 +206,7 @@ depends_on: [41.1]
 
 depends_on: [41.2]
 
-- Status: `NOT_STARTED`
+- Status: `IN_REVIEW`
 - Objective:
   - Make every blocking non-pass fail and make Package a required exact-base CI job.
 - Deliverables:
@@ -215,11 +215,11 @@ depends_on: [41.2]
   - Aggregate dependency and condition coverage for required Package.
   - Package cleanup/no-publication regression coverage.
 - Acceptance:
-  - [ ] Only blocking `pass` can produce blocking success; advisory unavailable remains advisory.
-  - [ ] Multiple failures remain visible in deterministic compact output.
-  - [ ] Package receives BaseRef, full history, and the real Package profile.
-  - [ ] Failed or skipped Package fails aggregate; successful Package uploads and retains no package.
-  - [ ] Summary, workflow-policy, Package, and Fast checks pass.
+  - [x] Only blocking `pass` can produce blocking success; advisory unavailable remains advisory.
+  - [x] Multiple failures remain visible in deterministic compact output.
+  - [x] Package receives BaseRef, full history, and the real Package profile.
+  - [x] Failed or skipped Package fails aggregate; successful Package uploads and retains no package.
+  - [x] Summary, workflow-policy, Package, and Fast checks pass.
 - Demo commands:
   - `node tests/run-quality-gate-self-tests.js`
   - `node tests/run-quality-workflow-policy.js`

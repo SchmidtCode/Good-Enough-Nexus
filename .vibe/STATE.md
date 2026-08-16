@@ -8,9 +8,9 @@
 
 - Stage: 41
 - Checkpoint: 41.3
-- Status: NOT_STARTED
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: reviewed checkpoint 41.2 head `f769d52` plus the current Vibe receipt commit
+- Candidate head: checkpoint 41.3 implementation commit (resolve with `git rev-parse HEAD` after commit)
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
@@ -27,11 +27,11 @@ Make every blocking non-pass fail and make Package a required exact-base CI job.
 
 ## Acceptance (current checkpoint)
 
-- [ ] Only blocking `pass` can produce blocking success; advisory unavailable remains advisory.
-- [ ] Multiple failures remain visible in deterministic compact output.
-- [ ] Package receives BaseRef, full history, and the real Package profile.
-- [ ] Failed or skipped Package fails aggregate; successful Package uploads and retains no package.
-- [ ] Summary, workflow-policy, Package, and Fast checks pass.
+- [x] Only blocking `pass` can produce blocking success; advisory unavailable remains advisory.
+- [x] Multiple failures remain visible in deterministic compact output.
+- [x] Package receives BaseRef, full history, and the real Package profile.
+- [x] Failed or skipped Package fails aggregate; successful Package uploads and retains no package.
+- [x] Summary, workflow-policy, Package, and Fast checks pass.
 
 ## Evidence
 
@@ -78,6 +78,7 @@ Make every blocking non-pass fail and make Package a required exact-base CI job.
 - Checkpoint 41.2 expected red reproduced acceptance of Git-quoted `.codex/context\n.txt`. Staged/all-tracked enumeration now uses raw NUL records, Fast and the scanner share one exact path/content policy, disposable hostile fixtures clean in `finally`, and current-base Fast passes `15/15`.
 - Formal 41.2 review passed at exact `f769d52` after changing the centralized content read from silent failure to fail closed. Hostile/security/scanner tests and current-base Fast `15/15` passed; an outside-root adversarial probe failed as required; fixture cleanup and scope were clean. No checkpoint-hygiene signal was identified.
 - Completed bounded 41.2 hygiene: the shared artifact-policy helper removed the prior Fast/scanner rule duplication, fixtures have deterministic `finally` cleanup, and no redundant branch, stale compatibility path, or attributable debt remains; no code byte changed after review.
+- Checkpoint 41.3 expected red reproduced blocking `skipped` aggregating PASS. Summary normalization now permits only blocking `pass`; Package is an exact-base required CI job with failure-log-only evidence, dry-run cleanup verification, and aggregate enforcement. Package passed `10/10`, Fast passed `15/15`, and no package output remained.
 
 ## Workflow state
 
@@ -90,8 +91,6 @@ Make every blocking non-pass fail and make Package a required exact-base CI job.
 
 ## Active issues
 
-- Blocking skipped or malformed summary results can pass.
-- Package is absent from required exact-head CI aggregation.
 - PSScriptAnalyzer baseline is count-only rather than owner-exact.
 - Security bootstrap lacks archive-layout validation and Python distribution hashes.
 - Committed terminal Vibe state conflicts with fresh-checkout dispatcher truth.
@@ -117,4 +116,4 @@ Make every blocking non-pass fail and make Package a required exact-base CI job.
 
 ## Recommended next action
 
-- Implement checkpoint 41.3 expected-red blocking-status and Package-CI fixtures, apply the smallest fail-closed/aggregate repair, run Package and Fast, commit, and stop for review.
+- Formally review checkpoint 41.3 at its exact commit, including status normalization, multi-failure output, Package BaseRef/cleanup/no-upload policy, aggregate skip/failure semantics, Package, and Fast.

@@ -42,7 +42,7 @@ function normalize(payload) {
     const checks = [...(payload.checks || [])]
         .map((check) => ({
             id: boundedText(check.id, 80),
-            result: boundedText(check.result, 20),
+            result: boundedText(check.result, 20).toLowerCase(),
             count: boundedText(check.count || "0/0", 32),
             duration_seconds: Number(check.duration_seconds || 0),
             log: relativeLog(check.log),
@@ -55,8 +55,7 @@ function normalize(payload) {
     const unavailable = checks.filter((check) => check.result === "unavailable").length;
     const skipped = checks.filter((check) => check.result === "skipped").length;
     const passed = checks.filter((check) => check.result === "pass").length;
-    const blockingFailure = checks.some((check) => check.blocking
-        && (check.result === "fail" || check.result === "unavailable"));
+    const blockingFailure = checks.some((check) => check.blocking && check.result !== "pass");
     return {
         schema: 1,
         mode: boundedText(payload.mode, 20),
