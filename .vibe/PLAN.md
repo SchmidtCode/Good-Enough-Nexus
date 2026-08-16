@@ -85,3 +85,36 @@ depends_on: [38.6]
 
 - [DEFERRED] Native test.17 follow-up remains owned by the completed product workflow.
 - [DEFERRED] Release, installation, live SavedVariables, WoW validation, and artifact publication require separate authorization.
+
+## Stage 39 — Post-publication PR #10 base reconciliation
+
+- Goal: refresh draft PR #13 onto the exact current PR #10 branch head without rewriting history, changing PR #11 product bytes, or reopening Stage 38 implementation.
+- Base transition: `36f187824b8a24f6fb51562e6ec1101c300308ef` -> `d0681b6a885db447c94a75f40df7e81f60b74c55`.
+- Decision: use one normal merge commit because PR #13 is already published; rebase and force-push remain prohibited.
+
+### 39.1 — Merge current base and refresh exact-head review
+
+- Status: `NOT_STARTED`
+- Objective:
+  - Merge the current remote PR #10 base into the infrastructure branch while preserving PR #11 exactly and retaining the 38-path infrastructure-only PR surface.
+- Deliverables:
+  - Normal base-reconciliation merge with conservative conflict handling.
+  - Current-base scope and immutable-runtime proof.
+  - Exact-head clean-bootstrap and Fast/Full/Package/Security validation receipts.
+  - Updated draft PR #13, issue #12, CI, review-thread, and parity evidence.
+- Acceptance:
+  - [ ] Merge ancestry includes both `91c962e` and `d0681b6` without rebase or force-push.
+  - [ ] PR #13-owned changes remain limited to the existing infrastructure/workflow/tooling/configuration/documentation surface.
+  - [ ] PR #11 production, TOC, bundled-data, runtime-test, version, protocol, author, SavedVariables, and artifact bytes match the current base.
+  - [ ] Local clean bootstrap and required quality/security/policy gates pass or report advisory tools unavailable honestly.
+  - [ ] Exact-head CI matches local compact summaries; PR #13 remains draft and unmerged.
+  - [ ] Root, lag-hotfix, and product worktrees remain byte-untouched.
+- Demo commands:
+  - `pwsh -NoProfile -File tools/Bootstrap-QualityTools.ps1`
+  - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Full`
+  - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Package; pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Security`
+  - `pre-commit run --all-files`
+- Evidence:
+  - Merge parents and current-base changed-path list.
+  - Compact local summaries and immutable-runtime blob comparison.
+  - Remote head, exact-head workflow run IDs, draft/review state, and issue comment URL.

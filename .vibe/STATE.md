@@ -6,30 +6,32 @@
 
 ## Current focus
 
-- Stage: 38
-- Checkpoint: 38.7
-- Status: DONE
+- Stage: 39
+- Checkpoint: 39.1
+- Status: NOT_STARTED
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: `ddcc6dfa71cd594c486611fe5644614e2cb7171d`
+- Candidate head: `91c962e99e75df430b6eded256f27e5657a74a80`
 - Worktree: `.infra-viberun-quality-gate-worktree`
-- Base: `origin/refactor/nexus-1.20-test17` at `36f187824b8a24f6fb51562e6ec1101c300308ef`
+- Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
 ## Objective (current checkpoint)
 
-Publish the validated infrastructure branch as one draft PR targeting PR #10, link issue #12, and inspect exact-head CI without merging.
+Reconcile the published infrastructure branch with PR #10's advanced base using one normal merge, then refresh exact-head validation and draft coordination without changing PR #11 product bytes.
 
 ## Deliverables (current checkpoint)
 
-- Final exact-head local validation and non-force remote branch publication.
-- Draft PR plus issue #12 coordination comment with factual validation and limitations.
-- Exact-head CI, review-thread, mergeability, and local/CI parity inspection.
+- Normal merge of current `origin/refactor/nexus-1.20-test17` into the infrastructure branch.
+- Current-base scope proof plus clean-bootstrap, local gate, and policy receipts.
+- Non-force branch refresh, factual PR #13 and issue #12 updates, and exact-head CI inspection.
 
 ## Acceptance (current checkpoint)
 
-- [ ] Final local and remote branch heads equal the validated commit.
-- [ ] The new PR remains draft against `refactor/nexus-1.20-test17` and issue #12 remains open with a linking comment.
-- [ ] Exact-head required CI and reviews are inspected with local/CI parity reported honestly.
-- [ ] No merge, force-push, addon artifact, tag, release, install, live action, deployment, or settings mutation occurs.
+- [ ] The exact current PR #10 base is merged normally without rebase or force-push, preserving all PR #11 bytes.
+- [ ] The current-base-to-head diff remains infrastructure-only and every reconciliation-only difference is reported.
+- [ ] Clean bootstrap plus Fast, Full, Package, Security, release-policy, pre-commit, and diff validation are factual at one exact head.
+- [ ] Local and remote heads match; PR #13 stays draft; issue #12 receives the exact reconciliation status.
+- [ ] Exact-head CI and review/thread state are inspected with compact local/CI parity.
+- [ ] Root, lag-hotfix, product, runtime, artifact, install, live, release, merge, and settings boundaries remain unchanged.
 
 ## Evidence
 
@@ -55,6 +57,7 @@ Publish the validated infrastructure branch as one draft PR targeting PR #10, li
 - Replacement CI run `31919930699` passed preflight/Fast but exposed an Ubuntu PowerShell dotfile-read defect in the blocking staged-artifact scan. The focused repair adds `-Force` to the existing tracked-file metadata read so hidden dotfiles remain scanned.
 - Formal dotfile-repair review passed at exact `a3a574a`: Full `16/16`, Security 10 pass / 3 advisory-unavailable, all-files artifact policy, strict Vibe validation, and diff checks passed.
 - Completed bounded dotfile-repair hygiene: `-Force` is the standard direct PowerShell mechanism for hidden tracked files and adds no suppression, duplication, or debt; Full was not repeated.
+- Dispatcher-selected Stage 39 design records the material post-publication base drift: PR #10 advanced nine commits from `36f1878` to `d0681b6`, while the clean infrastructure branch remains at validated head `91c962e`.
 
 ## Workflow state
 
@@ -86,8 +89,8 @@ Publish the validated infrastructure branch as one draft PR targeting PR #10, li
 
 ## Last completed loop
 
-- Checkpoint 38.7 staged-artifact dotfile repair passed review and is ready for bounded hygiene.
+- Stage 38 publication and exact-head CI completed; post-publication base drift now requires one bounded reconciliation checkpoint.
 
 ## Recommended next action
 
-- Complete bounded hygiene, then run final exact-head validation, push normally, and inspect replacement CI.
+- Merge current `origin/refactor/nexus-1.20-test17` normally into the infrastructure branch, then prove scope and run focused validation before review.
