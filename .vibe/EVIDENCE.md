@@ -101,3 +101,9 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Pre-commit all-files PASS: all applicable hooks passed and illegal-Windows-name remained an explicit no-files skip. The first sandbox-ownership/cache attempt failed unavailable and was corrected with repository-scoped Git trust plus an ignored local hook cache; no hook was weakened.
 - Clean-checkout proof PASS at exact `34d84fa`: tracked bootstrap ran `npm ci`, installed checksum-verified pinned security tools, Lua 5.1 parsed `272/272`, the integration runner passed, and Fast passed `5/5`. The exact disposable worktree and generated dependencies were removed after proof.
 - Adversarial review rechecked 38 base-to-head paths, zero forbidden runtime/artifact paths, immutable Lua/TOC identity, compact summaries, no retained package, and unchanged root/lag/product ownership. No checkpoint-hygiene signal was identified.
+
+## Checkpoint 38.6 hygiene
+
+- Bounded scope: the exact-head scope and formal review receipts in `.vibe/STATE.md` and append-only `.vibe/EVIDENCE.md` only.
+- Hot spots, quick wins, and debt items: none. The receipts are compact, preserve the external publication boundary, and do not duplicate historical Stage 35-37 detail.
+- Validation: stale-marker/temporary-path/debug scan, strict Vibe validation, and base-range `git diff --check` passed. No product or test byte changed, so Full was not repeated.

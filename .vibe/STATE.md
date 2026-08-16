@@ -46,6 +46,7 @@ Prove the complete infrastructure branch at one exact clean head, publish a draf
 - Checkpoint 38.6 formal local review passed at exact `34d84fa`: Full `16/16`, Security 10 pass / 3 advisory-unavailable, Package `8/8`, release policy, pre-commit, and base-range diff checks passed.
 - A disposable clean worktree at exact `34d84fa` completed tracked bootstrap through `npm ci`, checksum-verified security bootstrap, Lua 5.1 parse `272/272`, integration, and Fast `5/5`; the disposable worktree was removed afterward.
 - No checkpoint-hygiene signal or adversarial scope escape was identified. Publication and exact-head CI remain the explicit external boundary after Vibe hygiene.
+- Completed bounded 38.6 hygiene: the scope/review receipts contain no stale marker, temporary path, duplicate workflow state, or directly attributable debt; Full was not repeated because no product or test byte changed.
 
 ## Workflow state
 
