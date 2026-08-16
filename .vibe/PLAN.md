@@ -23,28 +23,11 @@ depends_on: [38.2]
 
 - Receipt: supported role/profile policy, exact schema-v1 headings, bounded evidence/history reads, strict dispatcher validation, Fast `6/6`, and exact-head Full `16/16` passed. See `.vibe/EVIDENCE.md`, `232a552`, and `8bab598`.
 
-### 38.4 — Add staged-artifact, static-analysis, and security policy
+### (DONE) 38.4 — Add staged-artifact, static-analysis, and security policy
 
 depends_on: [38.3]
 
-- Status: `IN_REVIEW`
-- Objective:
-  - Reject unsafe staged material and establish pinned, honest Lua, PowerShell, secret, and workflow analysis without rewriting source.
-- Deliverables:
-  - Pinned pre-commit hooks and staged-artifact policy with self-tests.
-  - LuaLS, advisory Luacheck, check-only StyLua, and PSScriptAnalyzer policies.
-  - Checksum-verified Gitleaks, actionlint, and zizmor bootstrap integrated with Security mode.
-- Acceptance:
-  - [x] Forbidden artifacts, credentials, private paths, caches, and generated data are rejected.
-  - [x] Lua tooling targets 5.1 with narrow globals and no repository reformat.
-  - [x] Blocking versus advisory findings and unavailable tools are reported honestly.
-  - [x] Security tools are exact-versioned and downloaded bytes are checksum-verified.
-- Demo commands:
-  - `pwsh -NoProfile -File tools/Test-StagedArtifacts.ps1`
-  - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Security`
-  - `pre-commit run --all-files`
-- Evidence:
-  - Policy fixture totals, pinned checksum receipt, static-analysis baseline, and compact Security summary.
+- Receipt: verified cross-platform pins, artifact/self-tests, Lua 5.1/static policy, exact-head Full `16/16`, Security 10 pass / 3 advisory-unavailable, and pre-commit passed without normalization. See `.vibe/EVIDENCE.md` and `b792c82`.
 
 ### 38.5 — Add exact-head GitHub Actions quality gate
 

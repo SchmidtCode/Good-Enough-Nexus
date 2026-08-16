@@ -62,3 +62,5 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - PSScriptAnalyzer baseline: zero blocking findings, six inherited advisory findings across four rules, and zero new advisory rules/counts. The exact baseline makes excess warnings blocking without claiming legacy style passed.
 - Pre-commit all-files PASS after adding a narrow three-file mixed-ending baseline; illegal-Windows-name hook reported no applicable files and is not claimed as a pass. No line ending was rewritten.
 - Implementation validation: Fast `12/12`, strict Vibe validation, and `git diff --check` passed.
+- Formal review PASS at exact `b792c82b75c176151ded62568f82788cb18f654f`: Full passed `16/16` in 248.900 seconds; Security passed 10 checks with the three Lua advisory tools explicitly unavailable; zero failures/skips occurred.
+- Adversarial review: quality-gate multiple-failure/unavailable propagation and staged-artifact 5-reject/2-allow probes passed. Exact-head pre-commit passed all applicable hooks with the illegal-Windows-name no-files skip visible. No checkpoint-hygiene signal was identified.
