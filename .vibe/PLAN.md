@@ -126,9 +126,9 @@ depends_on: [38.6]
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`.
 - Decision: update the existing draft PR #13 with a normal non-force push; do not create a replacement PR or merge either PR.
 
-### 40.1 — Refresh draft PR and inspect exact-head CI
+### (DONE) 40.1 — Refresh draft PR and inspect exact-head CI
 
-- Status: `NOT_STARTED`
+- Status: `DONE`
 - Objective:
   - Publish the exact reviewed infrastructure head and leave PR #13 as an accurate draft against the current PR #10 branch.
 - Deliverables:

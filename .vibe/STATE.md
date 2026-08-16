@@ -8,9 +8,9 @@
 
 - Stage: 40
 - Checkpoint: 40.1
-- Status: IN_REVIEW
+- Status: DONE
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: `21db9ae313c9d708fd541ea5eee4a8b1060ae957`
+- Candidate head: `c4997a75249652b45c53e03cd92652c6a607a4a8`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
@@ -66,6 +66,7 @@ Publish the reviewed PR #10 base reconciliation to the existing draft infrastruc
 - Stage 40 expected red confirmed remote `infra/viberun-quality-gate` remains at `91c962e` while local reviewed/design head is `b48b506`; exact-head Fast passed `15/15`, current-base changed-path count is 40, and forbidden runtime/artifact count is zero.
 - Published head `1c6e3c9` matched remote and release-policy run `31924278239` passed, but Quality gate run `31924278205` failed preflight because Ubuntu PowerShell parsed `$base...HEAD` ambiguously. Braced range expansion plus a regression assertion now pass the focused 40-path expression, Security 12 pass / 3 advisory-unavailable, and Fast `15/15`.
 - Replacement exact-head Quality gate run `31924436571` and Release policy run `31924436622` passed at `21db9ae`; CI/local parity is Fast `15/15`, Full 18 pass / 1 explicit manual skip, and Security 12 pass / 3 advisory-unavailable. PR #13 remains open/draft/mergeable with zero reviews or threads, and issue #12 remains open.
+- Independent publication review at exact local/remote `c4997a7` passed Fast `15/15`, current-base ancestry/diff/scope, Quality gate run `31924926793`, Release policy run `31924926788`, and zero-review/thread inspection; no checkpoint-hygiene signal was identified.
 
 ## Workflow state
 
@@ -97,8 +98,8 @@ Publish the reviewed PR #10 base reconciliation to the existing draft infrastruc
 
 ## Last completed loop
 
-- Stage 40 publication implementation and direct CI repair pass locally and remotely at `21db9ae`; the compact receipt is ready for exact-head handoff review.
+- Stage 40.1 publication review passed at exact local/remote `c4997a7`; one bounded hygiene loop remains before the final factual PR/issue refresh and stop.
 
 ## Recommended next action
 
-- Review the committed publication receipt, branch/base/head equality, exact-head CI parity, PR/issue state, and protected boundaries without repeating Full locally.
+- Run one bounded publication-checkpoint hygiene pass without repeating Full, then refresh final PR/issue facts and stop before merge.
