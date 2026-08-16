@@ -17,29 +17,11 @@ depends_on: [38.1]
 
 - Receipt: Fast `11/11`, Package `8/8`, Full `16/16`, compact summaries, deterministic routing, and self-tests passed. Security correctly retained four unavailable owners for 38.4. See `.vibe/EVIDENCE.md`, `1b096cb`, and `b71ee32`.
 
-### 38.3 — Bind VibeRun roles and compact hot context
+### (DONE) 38.3 — Bind VibeRun roles and compact hot context
 
 depends_on: [38.2]
 
-- Status: `IN_REVIEW`
-- Objective:
-  - Make installed VibeRun implementation, review, hygiene, and consolidation roles select the right deterministic profile without another orchestrator or unsupported schema.
-- Deliverables:
-  - Role policy for Fast implementation, one Full review, bounded hygiene, and non-product consolidation.
-  - Compact branch-local hot context and bounded evidence/history reads.
-  - Operator documentation using only installed VibeRun prompts and state schema.
-- Acceptance:
-  - [x] VibeRun is the sole dispatcher, state owner, and roadmap owner.
-  - [x] Implementation stops after expected red, focused checks, Fast, and one clean commit.
-  - [x] Review runs Full once and opens only failing or suspicious logs.
-  - [x] Hygiene avoids Full when no product/test byte changed.
-  - [x] No `.ai/**`, local prompt catalog, second plugin, unsupported role field, or Stage 35–37 bulk exists.
-- Demo commands:
-  - `py -3 "<installed-vibe-loop>/scripts/agentctl.py" --repo-root . validate --strict`
-  - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Fast`
-  - `git diff --check`
-- Evidence:
-  - Strict Vibe validation, Fast summary, before/after hot-context lines/bytes, prohibited-namespace scan, and exact changed-path scope.
+- Receipt: supported role/profile policy, exact schema-v1 headings, bounded evidence/history reads, strict dispatcher validation, Fast `6/6`, and exact-head Full `16/16` passed. See `.vibe/EVIDENCE.md`, `232a552`, and `8bab598`.
 
 ### 38.4 — Add staged-artifact, static-analysis, and security policy
 
