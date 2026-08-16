@@ -121,3 +121,9 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Bounded scope: the publication checkpoint plan plus its compact STATE/EVIDENCE receipts only.
 - Hot spots, quick wins, and debt items: none. Branch, base, URL, validation, and stop-boundary wording remain explicit without another publication helper or state layer.
 - Validation: stale/temporary/debug marker scan, strict Vibe validation, and base-range `git diff --check` passed. No product or test byte changed, so Full was not repeated.
+
+## Checkpoint 38.7 CI portability repair
+
+- Expected red: exact-head Quality gate run `31919314063`, Fast job `95096491463`, failed 12/13 because `run-quality-workflow-policy.js` hashed checkout-specific bytes. Windows CRLF produced `e625c623...`; Ubuntu LF produced `13648de3...`; the underlying release-policy Git blob and workflow behavior were unchanged.
+- Isolation: the failing log identified only the release-policy ownership assertion. Preflight and release-policy run `31919314018` passed, and the CI checkout retained read-only permissions plus immutable action pins.
+- Smallest coherent repair: normalize CRLF/CR to LF in the workflow-policy self-test before hashing and assert the stable normalized digest. No workflow, release-policy, product, package, or runtime file changed.

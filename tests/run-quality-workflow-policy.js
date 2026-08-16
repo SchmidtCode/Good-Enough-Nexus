@@ -7,7 +7,8 @@ const path = require("path");
 
 const root = path.resolve(__dirname, "..");
 const workflow = fs.readFileSync(path.join(root, ".github/workflows/quality-gate.yml"), "utf8");
-const release = fs.readFileSync(path.join(root, ".github/workflows/release-policy.yml"));
+const release = fs.readFileSync(path.join(root, ".github/workflows/release-policy.yml"), "utf8")
+    .replace(/\r\n?/g, "\n");
 
 assert.match(workflow, /\non:\s*\n\s+pull_request:\s*\n\s+push:[\s\S]*branches:[\s\S]*- main[\s\S]*workflow_dispatch:/);
 assert(!workflow.includes("pull_request_target"));
@@ -27,6 +28,6 @@ assert.match(workflow, /quality-gate:[\s\S]*if: always\(\)/);
 assert.match(workflow, /failure\(\) \|\| \(github\.event_name == 'workflow_dispatch' && inputs\.upload_logs\)/);
 assert.strictEqual((workflow.match(/retention-days: 5/g) || []).length, 3);
 assert(!/^\s+paths(?:-ignore)?:/m.test(workflow));
-assert.strictEqual(crypto.createHash("sha256").update(release).digest("hex"), "e625c6232917092f16b9acd421e5641bb3a9527ef5a9402be50bc90e1e203b93");
+assert.strictEqual(crypto.createHash("sha256").update(release, "utf8").digest("hex"), "13648de3a462392e3d400d912fe775840269f4a4469838bc23a252789f01e3d1");
 
 console.log("quality workflow policy: triggers, permissions, pins, concurrency, jobs, skips, artifacts, release ownership -- OK");

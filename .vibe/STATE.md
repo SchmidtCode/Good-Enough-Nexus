@@ -8,7 +8,7 @@
 
 - Stage: 38
 - Checkpoint: 38.7
-- Status: DONE
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
 - Candidate head: `ddcc6dfa71cd594c486611fe5644614e2cb7171d`
 - Worktree: `.infra-viberun-quality-gate-worktree`
@@ -49,6 +49,7 @@ Publish the validated infrastructure branch as one draft PR targeting PR #10, li
 - Checkpoint 38.7 expected-red reconfirmed no remote infrastructure branch or draft PR exists; PR #10 remains open/draft/mergeable at the selected base and Fast passed `5/5` at `98add8c`.
 - Checkpoint 38.7 formal pre-publication review passed at exact `ddcc6df`: Full `16/16`, Security 10 pass / 3 advisory-unavailable, release policy, forbidden-scope, and diff checks passed.
 - Completed bounded 38.7 hygiene: branch/base/URL/state markers are consistent, no temporary or debug residue was introduced, and Full was not repeated because no product or test byte changed.
+- Exact-head CI run `31919314063` exposed a cross-platform workflow-policy self-test defect: the release-policy file hash differed only because Git checked out LF on Ubuntu and CRLF on Windows. The focused repair normalizes line endings before hashing without changing the release workflow.
 
 ## Workflow state
 
@@ -80,8 +81,8 @@ Publish the validated infrastructure branch as one draft PR targeting PR #10, li
 
 ## Last completed loop
 
-- Checkpoint 38.7 pre-publication review passed; the plan is exhausted pending bounded hygiene and the authorized external push/PR/CI boundary.
+- Checkpoint 38.7 CI portability repair is ready for independent review before the next non-force push.
 
 ## Recommended next action
 
-- Complete bounded publication-handoff hygiene, then perform final exact-head validation and the authorized non-force draft publication.
+- Review the focused line-ending-independent workflow-policy self-test repair, then repeat bounded hygiene and exact-head CI.
