@@ -30,7 +30,7 @@ for raw in toc:gmatch("[^\r\n]+") do
     end
 end
 
-assert(tocLuaFiles == 66, "boot fixture did not load every TOC Lua file")
+assert(tocLuaFiles == 68, "boot fixture did not load every TOC Lua file")
 assert(type(SlashCmdList.NEXUS) == "function",
     "Main did not register the Nexus command owner")
 

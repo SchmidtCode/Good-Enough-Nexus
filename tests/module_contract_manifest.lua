@@ -114,7 +114,11 @@ return {
         },
         {
             id="Store", path="core/Store.lua", namespaces={Store="facade"},
-            symbols=Symbols("Store", {"Init", "SettingsVersion", "Settings", "State"}),
+            symbols=Symbols("Store", {
+                "Init", "CurrentOwnerKey", "RegisterCurrentCharacter",
+                "IsAccountOwnerKey", "IsAccountBuild", "AccountCharacters",
+                "SettingsVersion", "Settings", "State",
+            }),
             assignedMembers={},
             callbackSites=0, callbackGroups={},
         },

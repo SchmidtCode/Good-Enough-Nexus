@@ -5,6 +5,8 @@
 -- never earlier (the client replaces the global when the file loads).
 
 Nexus = Nexus or {}
+local Identity = assert(Nexus.Identity,
+    "Nexus Identity must load before Store")
 local Store = {}
 Nexus.Store = Store
 
@@ -74,6 +76,11 @@ local function NormalizeVersion(value)
         return 0
     end
     return value
+end
+
+local function HasFutureSettingsOwner(db)
+    return type(db) == "table"
+        and NormalizeVersion(rawget(db, "settingsVersion")) > SETTINGS_VERSION
 end
 
 local function ReadLegacyMigrationMarker(db)
@@ -154,7 +161,7 @@ local function CompleteLegacyMigration(db, decision)
     WishlistRealizerDB = nil
 end
 
-local function MigratePendingToggleRecords(db)
+local function MigratePendingToggleRecords(db, sourceVersion)
     for _, state in pairs(db.chars) do
         local pending = type(state) == "table" and state.tomeTogglePending
         if type(pending) == "table" then
@@ -166,6 +173,18 @@ local function MigratePendingToggleRecords(db)
             end
         end
     end
+
+    -- v1.19.x had no qualification toggle.  Defaulting that newly introduced
+    -- filter on during an upgrade can make a successfully migrated library
+    -- appear empty when the legacy cache has only one DPS category per
+    -- loadout.  Preserve an explicit newer preference, but let legacy users
+    -- see their converted builds on first open.
+    local legacyBuildFilters = type(db.buildFilters) == "table"
+        and db.buildFilters or nil
+    if sourceVersion == 1 and legacyBuildFilters
+        and legacyBuildFilters.qualifiedOnly == nil then
+        legacyBuildFilters.qualifiedOnly = false
+    end
 end
 
 local MIGRATIONS = {
@@ -175,11 +194,12 @@ local MIGRATIONS = {
 
 local function ApplyMigrations(db)
     local version = NormalizeVersion(db.settingsVersion)
+    local sourceVersion = version
     if version > SETTINGS_VERSION then return end -- future owner wins
     while version < SETTINGS_VERSION do
         local nextVersion = version + 1
         local migrate = MIGRATIONS[nextVersion]
-        if migrate then migrate(db) end
+        if migrate then migrate(db, sourceVersion) end
         version = nextVersion
         -- Stamp only after the idempotent migration completed successfully.
         db.settingsVersion = version
@@ -194,21 +214,24 @@ function Store.Init()
     -- deliberately last so dependency failures retain the recovery reference.
     local db, legacyDecision = SelectDatabaseForLegacyMigration()
     NexusDB = db
-    if type(db.chars) ~= "table" then db.chars = {} end
-    if type(db.settings) ~= "table" then db.settings = {} end
+    local futureSettingsOwner = HasFutureSettingsOwner(db)
+    if not futureSettingsOwner then
+        if type(db.chars) ~= "table" then db.chars = {} end
+        if type(db.settings) ~= "table" then db.settings = {} end
 
-    local profile = Nexus.DefaultProfile
-    local defaults = profile and profile.defaultSettings or {}
+        local profile = Nexus.DefaultProfile
+        local defaults = profile and profile.defaultSettings or {}
 
-    ApplyMigrations(db)
-    FillMissing(db.settings, defaults)
+        ApplyMigrations(db)
+        FillMissing(db.settings, defaults)
 
-    -- Per-character shape drift is filled recursively without replacing the
-    -- state table, its safety latches, or fields owned by newer builds.
-    for name, state in pairs(db.chars) do
-        state = EnsureStateShape(state)
-        db.chars[name] = state
-        FillMissing(state, FreshState())
+        -- Per-character shape drift is filled recursively without replacing
+        -- the state table, its safety latches, or newer fields.
+        for name, state in pairs(db.chars) do
+            state = EnsureStateShape(state)
+            db.chars[name] = state
+            FillMissing(state, FreshState())
+        end
     end
 
     -- The evidence pool is bound before BuildCatalog so overlay writes can
@@ -226,12 +249,99 @@ function Store.Init()
     if Nexus.BuildCatalog and Nexus.BuildCatalog.Init then
         catalogSummary = Nexus.BuildCatalog.Init(db, Nexus.BundledBuilds)
     end
-    if Nexus.DataCompaction and Nexus.DataCompaction.Init
+    if not (catalogSummary and catalogSummary.readOnly) then
+        db.accountCharacters = type(db.accountCharacters) == "table"
+            and db.accountCharacters or {}
+        Store.RegisterCurrentCharacter()
+    end
+    local migrationSummary
+    if Nexus.LegacyDataMigration and Nexus.LegacyDataMigration.Init
         and not (catalogSummary and catalogSummary.readOnly) then
+        migrationSummary = Nexus.LegacyDataMigration.Init(db)
+    end
+    local dataReady = not migrationSummary
+        or migrationSummary.complete == true
+    -- DPS migration owns generated build references. It must finish before
+    -- compaction/retention can classify an automatic page as unreferenced.
+    if Nexus.DpsCapture
+        and type(Nexus.DpsCapture.MigrateLegacyLeaderboard) == "function"
+        and not (catalogSummary and catalogSummary.readOnly)
+        and dataReady then
+        Nexus.DpsCapture.MigrateLegacyLeaderboard()
+    end
+    if Nexus.DataCompaction and Nexus.DataCompaction.Init
+        and not (catalogSummary and catalogSummary.readOnly)
+        and dataReady then
         Nexus.DataCompaction.Init(db)
+    end
+    if Nexus.DataRetention and Nexus.DataRetention.Init
+        and not (catalogSummary and catalogSummary.readOnly)
+        and dataReady then
+        Nexus.DataRetention.Init(db)
     end
 
     CompleteLegacyMigration(db, legacyDecision)
+end
+
+local function CurrentIdentity()
+    local name = UnitName and UnitName("player") or nil
+    if not name or name == "" or name == "Unknown" then return nil end
+    local realm = GetNormalizedRealmName and GetNormalizedRealmName()
+    if not realm or realm == "" then realm = GetRealmName and GetRealmName() end
+    realm = tostring(realm or ""):gsub("%s+", "")
+    if realm == "" or realm:lower() == "unknown" then return nil end
+    local ownerKey = Identity.OwnerKey(name, realm)
+    if not ownerKey then return nil end
+    return ownerKey, tostring(name), ownerKey:match("@(.+)$")
+end
+
+function Store.CurrentOwnerKey()
+    return CurrentIdentity()
+end
+
+function Store.RegisterCurrentCharacter()
+    local ownerKey, name, realm = CurrentIdentity()
+    local database = NexusDB
+    if not ownerKey or type(database) ~= "table" then return nil end
+    local characters = type(database.accountCharacters) == "table"
+        and database.accountCharacters or {}
+    database.accountCharacters = characters
+    local playerKey = ownerKey:match("^([^@]+)@")
+    if playerKey then characters[playerKey .. "@unknown"] = nil end
+    local row = type(characters[ownerKey]) == "table"
+        and characters[ownerKey] or {}
+    row.name, row.realm = name, realm
+    local class = UnitClass and select(2, UnitClass("player")) or nil
+    if class and class ~= "" then row.class = tostring(class):upper() end
+    local ok, stamp = pcall(function() return time and time() or 0 end)
+    if ok and tonumber(stamp) and tonumber(stamp) > 0 then
+        row.lastSeen = math.floor(tonumber(stamp))
+    end
+    characters[ownerKey] = row
+    return ownerKey, row
+end
+
+function Store.IsAccountOwnerKey(ownerKey)
+    local canonical = Identity.CanonicalOwnerKey(ownerKey)
+    if not canonical or canonical:match("@unknown$") then return false end
+    local database = NexusDB
+    local characters = type(database) == "table"
+        and database.accountCharacters or nil
+    return type(characters) == "table"
+        and type(characters[canonical]) == "table"
+end
+
+function Store.IsAccountBuild(build)
+    if type(build) ~= "table" then return false end
+    if build.isMine == true or build.importedSavedBuild == true then return true end
+    return Store.IsAccountOwnerKey(build.ownerKey)
+end
+
+function Store.AccountCharacters()
+    local database = NexusDB
+    return type(database) == "table"
+        and type(database.accountCharacters) == "table"
+        and database.accountCharacters or {}
 end
 
 function Store.SettingsVersion()
@@ -242,7 +352,8 @@ end
 -- invalid pre-init globals are never latched.
 function Store.Settings()
     local db = NexusDB
-    if db and type(db.settings) == "table" then return db.settings end
+    if db and not HasFutureSettingsOwner(db)
+        and type(db.settings) == "table" then return db.settings end
     if not transientSettings then
         local profile = Nexus.DefaultProfile
         transientSettings = DeepCopy(profile and profile.defaultSettings or {})
@@ -258,12 +369,14 @@ function Store.State()
     local name = UnitName and UnitName("player") or nil
     local db = NexusDB
     if not name or name == "" or name == "Unknown"
-        or not db or type(db.chars) ~= "table" then
+        or not db or HasFutureSettingsOwner(db)
+        or type(db.chars) ~= "table" then
         transientState = transientState or FreshState()
         return transientState
     end
     local state = db.chars[name]
     state = EnsureStateShape(state)
     db.chars[name] = state
+    Store.RegisterCurrentCharacter()
     return state
 end

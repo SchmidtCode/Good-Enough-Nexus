@@ -373,6 +373,16 @@ local function Reuse(job)
     job.reused = job.reused + 1
 end
 
+local function RollbackRejected(job)
+    if type(job) ~= "table" then return end
+    runtime.rejected = math.max(0,
+        runtime.rejected - (tonumber(job.rejected) or 0))
+    for _, field in pairs(REASON_FIELD) do
+        runtime[field] = math.max(0,
+            runtime[field] - (tonumber(job[field]) or 0))
+    end
+end
+
 local function ClassifyPair(job, fingerprint, pair)
     local catalog = Nexus.BuildCatalog
     if not (pair.dummy and pair.lk) then
@@ -481,6 +491,11 @@ function Repair.Pump(limit)
         work = work + 1
         if active.dpsRevision ~= CurrentDpsRevision() then
             local database = active.database
+            -- Rejections have no durable side effect. Discard the abandoned
+            -- pass's diagnostic totals before its replacement reclassifies
+            -- the same rows, otherwise hash iteration order can double-count
+            -- whichever rejection happened to precede the restart.
+            RollbackRejected(active)
             runtime.restarts = runtime.restarts + 1
             active = NewJob(database, "restart", true, false)
             runtime.pending = active ~= nil
@@ -492,6 +507,7 @@ function Repair.Pump(limit)
                 active.cursor)
             if err then
                 local database = active.database
+                RollbackRejected(active)
                 runtime.restarts = runtime.restarts + 1
                 active = NewJob(database, "restart", true, false)
                 runtime.pending = active ~= nil
@@ -605,5 +621,11 @@ function Repair.Stats()
 end
 
 function Repair.Init()
+    local migration = Nexus and Nexus.LegacyDataMigration
+    if migration and type(migration.BlocksDpsMigration) == "function"
+        and migration.BlocksDpsMigration(NexusDB) then
+        runtime.lastReason="legacy-data-migration-pending"
+        return true,"deferred"
+    end
     return Repair.Request("startup")
 end

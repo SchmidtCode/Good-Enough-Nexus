@@ -38,13 +38,16 @@ GetNormalizedRealmName = function() return "Ebonhold" end
 NexusDB = {
     settingsVersion=1,
     settings={autoPick=false,customPreference="keep"},
+    buildFilters={classFilter="MAGE",futureFilter="keep"},
     chars={},communityBuilds={},syncTombstones={},dpsCapture={},
     updateNotice={version="99.0.0-rc.1",observedAt="bad",source=42},
 }
 Nexus.Store.Init()
 assert(NexusDB.settings.autoPick == false
     and NexusDB.settings.customPreference == "keep"
-    and NexusDB.settings.updateNotifications == true,
+    and NexusDB.settings.updateNotifications == true
+    and NexusDB.buildFilters.qualifiedOnly == false
+    and NexusDB.buildFilters.futureFilter == "keep",
     "additive update setting reset unrelated preferences")
 
 local notices, refreshes = {}, 0

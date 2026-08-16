@@ -24,6 +24,7 @@ local scrollValue, scrollMax = 0, 0
 local dataReady = false
 local refreshDirty = true
 local deferredDirty = false
+local interactivePending = false
 local lastDataError = nil
 local viewDiagnostic = {
     publishedAt=nil,projectionCurrent=false,
@@ -59,6 +60,15 @@ local CLASS_ICON = {
 local NEUTRAL_CLASS_ICON = "Interface\\Icons\\INV_Misc_Note_01"
 local CLASS_ORDER = {"ALL","DEATHKNIGHT","DRUID","HUNTER","MAGE","PALADIN","PRIEST","ROGUE","SHAMAN","WARLOCK","WARRIOR"}
 local classFilter = "ALL"
+
+-- Category, class, search, and explicit Show requests are user work. They
+-- must remain responsive while background Sync coalesces revision-driven
+-- refreshes. The flag also lets OnUpdate recreate a projection job if a Sync
+-- revision invalidates it between bounded pumps.
+local function RefreshInteractive()
+    interactivePending = true
+    return M.RefreshData()
+end
 
 local function DiagnosticClockNow()
     if type(GetTime) ~= "function" then return nil end
@@ -801,7 +811,7 @@ local function EnsureFrame()
     local board=MakeNavButton(frame,"Leaderboard",102); board:SetPoint("LEFT",builds,"RIGHT",4,0); board:SetText("|cffffd200Leaderboard|r"); board:Disable()
     local wish=MakeNavButton(frame,"Wishlists",92); wish:SetPoint("LEFT",board,"RIGHT",4,0); wish:SetScript("OnClick",function() M.Hide(); if Nexus.WishlistEditor then Nexus.WishlistEditor.Show() end end)
 
-    searchBox=CreateFrame("EditBox","NexusLeaderboardSearch",frame,"InputBoxTemplate"); searchBox:SetSize(265,22); searchBox:SetPoint("TOPLEFT",18,-50); searchBox:SetAutoFocus(false); searchBox:SetScript("OnTextChanged",function() M.RefreshData() end)
+    searchBox=CreateFrame("EditBox","NexusLeaderboardSearch",frame,"InputBoxTemplate"); searchBox:SetSize(265,22); searchBox:SetPoint("TOPLEFT",18,-50); searchBox:SetAutoFocus(false); searchBox:SetScript("OnTextChanged",RefreshInteractive)
     local ph=frame:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); ph:SetPoint("LEFT",searchBox,"LEFT",6,0); ph:SetText("Search player or build...")
     searchBox:SetScript("OnEditFocusGained",function() ph:Hide() end); searchBox:SetScript("OnEditFocusLost",function(self) if self:GetText()=="" then ph:Show() end end)
 
@@ -814,14 +824,14 @@ local function EnsureFrame()
         rb.bg=rb:CreateTexture(nil,"BACKGROUND"); rb.bg:SetAllPoints(rb); rb.bg:SetTexture(0.12,0.12,0.17,0); local t=rb:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); t:SetPoint("LEFT",9,0)
         local c=CLASS_COLOR[k] or {1,0.82,0}; t:SetText(k=="ALL" and "All Classes" or CLASS_LABEL[k]); t:SetTextColor(c[1],c[2],c[3])
         rb:SetScript("OnEnter",function(self) self.bg:SetTexture(0.14,0.18,0.25,0.9) end); rb:SetScript("OnLeave",function(self) self.bg:SetTexture(0.12,0.12,0.17,0) end)
-        rb:SetScript("OnClick",function() classFilter=k; classMenu:Hide(); selectedKey=nil; M.RefreshData() end)
+        rb:SetScript("OnClick",function() classFilter=k; classMenu:Hide(); selectedKey=nil; RefreshInteractive() end)
     end
     classBtn:SetScript("OnClick",function(self) if classMenu:IsShown() then classMenu:Hide() else classMenu:ClearAllPoints(); classMenu:SetPoint("TOPLEFT",self,"BOTTOMLEFT",0,-2); classMenu:Show() end end)
 
     syncBtn=MakeNavButton(frame,"Sync Now",90); syncBtn:SetPoint("TOPRIGHT",-18,-50); syncBtn:SetScript("OnClick",function() classMenu:Hide(); if Nexus.Sync then Nexus.Sync.RequestSync() end end)
-    dummyBtn=MakeTab(frame,"Training Dummy",118); dummyBtn:SetPoint("TOPLEFT",18,-82); dummyBtn:SetScript("OnClick",function() category="dummy"; selectedKey=nil; classMenu:Hide(); M.RefreshData() end)
-    lkBtn=MakeTab(frame,"Lich King",100); lkBtn:SetPoint("LEFT",dummyBtn,"RIGHT",5,0); lkBtn:SetScript("OnClick",function() category="lk"; selectedKey=nil; classMenu:Hide(); M.RefreshData() end)
-    combinedBtn=MakeTab(frame,"Best Average",112); combinedBtn:SetPoint("LEFT",lkBtn,"RIGHT",5,0); combinedBtn:SetScript("OnClick",function() category="combined"; selectedKey=nil; classMenu:Hide(); M.RefreshData() end)
+    dummyBtn=MakeTab(frame,"Training Dummy",118); dummyBtn:SetPoint("TOPLEFT",18,-82); dummyBtn:SetScript("OnClick",function() category="dummy"; selectedKey=nil; classMenu:Hide(); RefreshInteractive() end)
+    lkBtn=MakeTab(frame,"Lich King",100); lkBtn:SetPoint("LEFT",dummyBtn,"RIGHT",5,0); lkBtn:SetScript("OnClick",function() category="lk"; selectedKey=nil; classMenu:Hide(); RefreshInteractive() end)
+    combinedBtn=MakeTab(frame,"Best Average",112); combinedBtn:SetPoint("LEFT",lkBtn,"RIGHT",5,0); combinedBtn:SetScript("OnClick",function() category="combined"; selectedKey=nil; classMenu:Hide(); RefreshInteractive() end)
     statusText=frame:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); statusText:SetPoint("LEFT",combinedBtn,"RIGHT",12,0); statusText:SetSize(250,14); statusText:SetJustifyH("LEFT")
     countText=frame:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); countText:SetPoint("TOPLEFT",18,-113); countText:SetSize(LIST_W,14); countText:SetJustifyH("LEFT")
 
@@ -856,7 +866,12 @@ local function EnsureFrame()
             and Nexus.Sync.IsReceiving() or false
         local projections = Nexus and Nexus.ViewProjections
         local coldStart = not dataReady
-        if projections and (not receiving or coldStart)
+        if interactivePending or viewDiagnostic.projectionPending then
+            -- Requesting again is O(1) while the job is current and recreates
+            -- it after a represented-data revision canceled the prior cursor.
+            M.RefreshData()
+        end
+        if projections and (not receiving or coldStart or interactivePending)
             and type(projections.PumpLeaderboard) == "function" then
             -- Populate persisted rankings even when login Sync is already
             -- receiving. Once a last-good board exists, receive bursts remain
@@ -890,6 +905,7 @@ end
 function M.RefreshData()
     if not frame or not frame:IsShown() then return end
     if dataReady and not refreshDirty and ProjectionCurrent() then
+        interactivePending = false
         virtualStats.dataSkips = virtualStats.dataSkips + 1
         M.RefreshStatus()
         return true
@@ -904,9 +920,15 @@ function M.RefreshData()
             viewDiagnostic.projectionPending = true
             viewDiagnostic.projectionError = false
             viewDiagnostic.projectionCurrent = false
+            if interactivePending and countText then
+                local label=category=="lk" and "Lich King"
+                    or (category=="dummy" and "Training Dummy" or "Best Average")
+                countText:SetText("Loading "..label.." records...")
+            end
             M.RefreshStatus()
             return false, "pending"
         end
+        interactivePending = false
         viewDiagnostic.projectionPending = false
         viewDiagnostic.projectionError = true
         viewDiagnostic.projectionCurrent = false
@@ -960,6 +982,7 @@ function M.RefreshData()
         })
     end
     dataReady = true
+    interactivePending = false
     viewDiagnostic.publishedAt = DiagnosticClockNow()
     viewDiagnostic.projectionPending = false
     viewDiagnostic.projectionError = false
@@ -991,11 +1014,11 @@ function M.MarkDataDirty()
 end
 
 function M.Init(adapter) Adapter=adapter end
-function M.Show(mode) EnsureFrame(); if Nexus.Panel and Nexus.Panel.AttachMenuFrame then Nexus.Panel.AttachMenuFrame(frame) end; if Nexus.Theme and Nexus.Theme.StyleWindow then Nexus.Theme.StyleWindow(frame, 0.96) end; if Nexus.Theme and Nexus.Theme.StyleTree and not frame._nexusLeaderboardTreeStyled then Nexus.Theme.StyleTree(frame); frame._nexusLeaderboardTreeStyled=true; virtualStats.themeTreeWalks=virtualStats.themeTreeWalks+1 end; if Nexus.Panel and Nexus.Panel.CloseOtherWindows then Nexus.Panel.CloseOtherWindows("NexusLeaderboardFrame") end; if mode=="lk" or mode=="dummy" or mode=="combined" then category=mode end; frame:Show(); M.RefreshData() end
+function M.Show(mode) EnsureFrame(); if Nexus.Panel and Nexus.Panel.AttachMenuFrame then Nexus.Panel.AttachMenuFrame(frame) end; if Nexus.Theme and Nexus.Theme.StyleWindow then Nexus.Theme.StyleWindow(frame, 0.96) end; if Nexus.Theme and Nexus.Theme.StyleTree and not frame._nexusLeaderboardTreeStyled then Nexus.Theme.StyleTree(frame); frame._nexusLeaderboardTreeStyled=true; virtualStats.themeTreeWalks=virtualStats.themeTreeWalks+1 end; if Nexus.Panel and Nexus.Panel.CloseOtherWindows then Nexus.Panel.CloseOtherWindows("NexusLeaderboardFrame") end; if mode=="lk" or mode=="dummy" or mode=="combined" then category=mode end; frame:Show(); RefreshInteractive() end
 function M.Hide() if frame then frame:Hide(); classMenu:Hide() end end
 function M.Toggle(mode) EnsureFrame(); if frame:IsShown() then M.Hide() else M.Show(mode) end end
-function M.SetCategory(mode) category=(mode=="dummy" or mode=="combined") and mode or "lk"; selectedKey=nil; M.RefreshData() end
-function M.SetClassFilter(value) classFilter=CLASS_LABEL[value] and value or "ALL"; selectedKey=nil; M.RefreshData() end
+function M.SetCategory(mode) category=(mode=="dummy" or mode=="combined") and mode or "lk"; selectedKey=nil; RefreshInteractive() end
+function M.SetClassFilter(value) classFilter=CLASS_LABEL[value] and value or "ALL"; selectedKey=nil; RefreshInteractive() end
 function M.ScrollTo(offset) if not setScrollValue then return false end; setScrollValue(offset,"scroll"); return true end
 function M.SelectKey(key)
     if currentRowByKey and currentRowByKey[key] then
@@ -1014,6 +1037,7 @@ function M.VirtualStats()
     out.category=category
     out.classFilter=classFilter
     out.refreshDirty=refreshDirty
+    out.interactivePending=interactivePending
     out.dataReady=dataReady
     out.lastDataError=lastDataError
     out.publishedRows=#currentRows

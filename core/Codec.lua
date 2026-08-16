@@ -121,7 +121,20 @@ function Codec.JSONEncode(value)
             for i = 1, #value do parts[#parts + 1] = Codec.JSONEncode(value[i]) end
             return "[" .. table.concat(parts, ",") .. "]"
         else
-            for k, v in pairs(value) do
+            -- Lua table iteration is deliberately unspecified. Canonical key
+            -- order keeps wire bytes, hashes, diagnostics, and migration
+            -- snapshots stable across clients and reloads.
+            local keys = {}
+            for key, child in pairs(value) do
+                if child ~= nil then keys[#keys + 1] = key end
+            end
+            table.sort(keys, function(left, right)
+                local leftType, rightType = type(left), type(right)
+                if leftType ~= rightType then return leftType < rightType end
+                return tostring(left) < tostring(right)
+            end)
+            for _, k in ipairs(keys) do
+                local v = value[k]
                 if v ~= nil then
                     parts[#parts + 1] = Codec.JSONEncode(tostring(k)) .. ":" .. Codec.JSONEncode(v)
                 end

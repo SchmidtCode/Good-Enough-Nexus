@@ -36,9 +36,11 @@ local function Signature(value, seen)
     return table.concat(out)
 end
 
-local function Build(id, spellId, class)
+local function Build(id, spellId, class, author, realm, verified)
     local fingerprint = tostring(spellId).."x1"
-    return {id=id,title=id,class=class,fingerprint=fingerprint,
+    return {id=id,title=id,class=class,author=author,
+        ownerKey=author and realm and Nexus.Identity.OwnerKey(author,realm) or nil,
+        ownerVerified=verified == true or nil,fingerprint=fingerprint,
         echoes={{spellId=spellId,stacks=1}}}
 end
 
@@ -48,16 +50,39 @@ local bundle = {schemaVersion=1,catalogVersion="class-test",sourceVersion="test"
     tombstoned=Build("tombstoned",810003,"PRIEST"),
     ambiguousA=Build("ambiguousA",810004,"SHAMAN"),
     ambiguousB=Build("ambiguousB",810004,"SHAMAN"),
+    ownerOnly=Build("ownerOnly",810005,"HUNTER","Owneronly","RealmA",true),
+    ownerConflictA=Build("ownerConflictA",810006,"MAGE","Ownerconflict","RealmA",true),
+    ownerConflictB=Build("ownerConflictB",810007,"ROGUE","Ownerconflict","RealmA",true),
+    sameNameA=Build("sameNameA",810009,"MAGE","Sameperson","RealmA",true),
+    sameNameB=Build("sameNameB",810010,"ROGUE","Sameperson","RealmB",true),
+    unverifiedOnly=Build("unverifiedOnly",810011,"PRIEST","Unverified","RealmA",false),
 }}
 local db = {communityBuilds={},syncTombstones={tombstoned={stamp=50,author="Owner"}}}
 Nexus.BuildCatalog.Init(db,bundle)
+local ownerKey = Nexus.Identity.OwnerKey("Owneronly","RealmA")
+local ownerClass, ownerSource = Nexus.BuildCatalog.ResolveOwnerClass(ownerKey,true)
+assert(ownerClass=="HUNTER" and ownerSource=="owner-consensus",
+    "verified owner class index did not resolve its single class")
+assert(Nexus.BuildCatalog.ResolveOwnerClass(ownerKey,false)==nil,
+    "unverified requester gained owner class authority")
+local conflictBuild = Build(
+    "ownerOnlyConflict",810008,"MAGE","Owneronly","RealmA",true)
+assert(Nexus.BuildCatalog.Put(conflictBuild))
+local conflictedClass, conflictReason =
+    Nexus.BuildCatalog.ResolveOwnerClass(ownerKey,true)
+assert(conflictedClass==nil and conflictReason=="owner class evidence conflicts",
+    "incremental owner class conflict did not fail closed")
+assert(Nexus.BuildCatalog.RemoveOverlay(conflictBuild.id))
+assert(Nexus.BuildCatalog.ResolveOwnerClass(ownerKey,true)=="HUNTER",
+    "owner class index did not recover after incremental removal")
 
 local rows = {
     {player="Protocolmage",class="MAGE",dps=1000000,duration=60,ts=1,
         buildId="row-mage",fingerprint="820001x1",echoes={{spellId=820001,stacks=1}}},
     {player="Exactwarrior",dps=999000,duration=60,ts=2,
         buildId="exact",fingerprint="810001x1"},
-    {player="Currenthero",ownerKey="currenthero@ebonhold",dps=998000,duration=60,ts=3,
+    {player="Currenthero",ownerKey="currenthero@ebonhold",ownerVerified=true,
+        dps=998000,duration=60,ts=3,
         buildId="current",fingerprint="820003x1",echoes={{spellId=820003,stacks=1}}},
     {player="Recoveredpaladin",protocolVersion=6,dps=997000,duration=60,ts=4,
         buildId="missing",fingerprint="810002x1"},
@@ -82,8 +107,35 @@ local rows = {
     {player="Categoryconflict",class="MAGE",dps=989000,duration=60,ts=12,
         buildId="conflict",fingerprint="820012x1",classEvidenceMismatch=true,
         echoes={{spellId=820012,stacks=1}}},
+    {player="Owneronly",ownerKey="owneronly@realma",ownerVerified=true,
+        dps=988000,duration=60,ts=13,
+        buildId="missing-owner",fingerprint="820013x1",
+        echoes={{spellId=820013,stacks=1}}},
+    {player="Ownerconflict",ownerKey="ownerconflict@realma",ownerVerified=true,
+        dps=987000,duration=60,ts=14,
+        buildId="missing-owner-conflict",fingerprint="820014x1",
+        echoes={{spellId=820014,stacks=1}}},
+    {player="Sameperson-RealmA",ownerKey="sameperson@realma",ownerVerified=true,
+        dps=986000,duration=60,ts=15,buildId="missing-same-a",
+        fingerprint="820015x1",echoes={{spellId=820015,stacks=1}}},
+    {player="Sameperson-RealmB",ownerKey="sameperson@realmb",ownerVerified=true,
+        dps=985000,duration=60,ts=16,buildId="missing-same-b",
+        fingerprint="820016x1",echoes={{spellId=820016,stacks=1}}},
+    {player="Sameperson",dps=984000,duration=60,ts=17,
+        buildId="missing-same-realm",fingerprint="820017x1",
+        echoes={{spellId=820017,stacks=1}}},
+    {player="Sameperson-RealmC",ownerKey="sameperson@realmc",ownerVerified=true,
+        dps=983000,duration=60,ts=18,buildId="missing-same-c",
+        fingerprint="820018x1",echoes={{spellId=820018,stacks=1}}},
+    {player="Unverified",ownerKey="unverified@realma",ownerVerified=false,
+        dps=982000,duration=60,ts=19,buildId="missing-unverified",
+        fingerprint="820019x1",echoes={{spellId=820019,stacks=1}}},
+    {player="Currenthero-OtherRealm",ownerKey="currenthero@otherrealm",
+        ownerVerified=true,dps=981000,duration=60,ts=20,
+        buildId="missing-current-other",fingerprint="820020x1",
+        echoes={{spellId=820020,stacks=1}}},
 }
-for index = 13, 200 do
+for index = 21, 200 do
     local spellId = 820000 + index
     rows[index] = {player=string.format("Bulk%03d",index),
         class=index%2==0 and "MAGE" or "ROGUE",
@@ -118,9 +170,15 @@ assert(byPlayer.Exactwarrior.resolvedClass=="WARRIOR"
 assert(byPlayer.Currenthero.resolvedClass=="DRUID"
     and byPlayer.Currenthero.classSource=="current-player",
     "proven current-player class repair failed")
+assert(byPlayer.Owneronly.resolvedClass=="HUNTER"
+    and byPlayer.Owneronly.classSource=="owner-consensus"
+    and byPlayer["Sameperson-RealmA"].resolvedClass=="MAGE"
+    and byPlayer["Sameperson-RealmB"].resolvedClass=="ROGUE",
+    "verified realm-qualified owner class was not recovered")
 for _, player in ipairs({"Unknownlegacy","Invalidlegacy","Mismatchedrow",
         "Laterrogue","Tombstonedpriest","Ambiguousshaman","Stalehunter",
-        "Categoryconflict"}) do
+        "Categoryconflict","Ownerconflict","Sameperson",
+        "Sameperson-RealmC","Unverified","Currenthero-OtherRealm"}) do
     assert(byPlayer[player].resolvedClass==nil
         and byPlayer[player].classUnavailable==true,
         player.." gained unproven class authority")
@@ -138,6 +196,7 @@ assert(#warm==200 and boardReads==coldReads
     and warmStats.classFromRecord==coldStats.classFromRecord
     and warmStats.classFromBuild==coldStats.classFromBuild
     and warmStats.classFromCurrentPlayer==coldStats.classFromCurrentPlayer
+    and warmStats.classFromOwner==coldStats.classFromOwner
     and warmStats.classUnavailable==coldStats.classUnavailable,
     "warm Leaderboard projection repeated source/class work")
 for key, value in pairs(warmStats) do
@@ -147,6 +206,9 @@ end
 local paladin = assert(P.Leaderboard("dummy",{classFilter="PALADIN"}))
 assert(#paladin==1 and paladin[1].player=="Recoveredpaladin",
     "exact recovered class did not pass its filter")
+local hunter = assert(P.Leaderboard("dummy",{classFilter="HUNTER"}))
+assert(#hunter==1 and hunter[1].player=="Owneronly",
+    "owner-consensus class did not pass its filter")
 local unavailableFiltered = assert(P.Leaderboard("dummy",{classFilter="PRIEST"}))
 assert(#unavailableFiltered==0,
     "tombstoned/unavailable class passed a specific filter")
@@ -209,6 +271,7 @@ assert(Nexus.Leaderboard.VirtualStats().results==200
 
 local finalStats = P.WorkStats()
 print(string.format(
-    "leaderboard class presentation: rows=%d record=%d build=%d current=%d unavailable=%d warm_delta=0 -- OK",
+    "leaderboard class presentation: rows=%d record=%d build=%d current=%d owner=%d unavailable=%d warm_delta=0 -- OK",
     #all,finalStats.classFromRecord,finalStats.classFromBuild,
-    finalStats.classFromCurrentPlayer,finalStats.classUnavailable))
+    finalStats.classFromCurrentPlayer,finalStats.classFromOwner,
+    finalStats.classUnavailable))

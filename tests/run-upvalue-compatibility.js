@@ -35,7 +35,7 @@ assert.strictEqual(aboveLimit.overLimit, true,
 
 const root = path.resolve(__dirname, "..");
 const toc = auditToc(root, "Nexus.toc");
-assert.strictEqual(toc.fileCount, 66,
+assert.strictEqual(toc.fileCount, 68,
     "compatibility gate did not cover every current TOC Lua entry");
 assert(toc.functionCount > toc.fileCount,
     "compatibility gate did not inspect nested TOC-loaded functions");

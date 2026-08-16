@@ -184,10 +184,11 @@ DPS = Nexus.DpsCapture
 local localRow = {
     dps=30000,level=80,ts=40001,duration=60,player="Local",class="MAGE",
     ownerKey="local@ebonhold",realm="ebonhold",fingerprint="200200x2",
-    echoes={{spellId=200200,count=2}},protocolVersion=7,
+    ownerVerified=true,echoes={{spellId=200200,count=2}},protocolVersion=7,
 }
 local personalRow = {
     dps=30000,level=80,ts=40001,duration=60,player="Local",class="MAGE",
+    ownerKey="local@ebonhold",ownerVerified=true,
     fingerprint="200200x2",echoes={{spellId=200200,count=2}},protocolVersion=7,
 }
 NexusDB.dpsCapture = {
