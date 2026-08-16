@@ -28,15 +28,16 @@ function ConvertTo-PSScriptAnalyzerFindingRecord {
     )
 
     $root = [System.IO.Path]::GetFullPath($RepositoryRoot)
-    $rootPrefix = $root.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
     $occurrences = @{}
     $ordered = @($Finding | Sort-Object ScriptPath, RuleName, Message, Line, Column)
     foreach ($item in $ordered) {
         $fullPath = [System.IO.Path]::GetFullPath([string] $item.ScriptPath)
-        if (-not $fullPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $relativePath = [System.IO.Path]::GetRelativePath($root, $fullPath)
+        if ([System.IO.Path]::IsPathRooted($relativePath) -or $relativePath -eq '..' `
+            -or $relativePath.StartsWith("..$([System.IO.Path]::DirectorySeparatorChar)", [System.StringComparison]::Ordinal)) {
             throw "PSScriptAnalyzer finding is outside the repository: $fullPath"
         }
-        $path = [System.IO.Path]::GetRelativePath($root, $fullPath) -replace '\\', '/'
+        $path = $relativePath -replace '\\', '/'
         $rule = [string] $item.RuleName
         $messageHash = Get-PSScriptAnalyzerMessageHash -Message ([string] $item.Message)
         if (-not $path -or -not $rule) { throw 'PSScriptAnalyzer finding is missing its path or rule.' }

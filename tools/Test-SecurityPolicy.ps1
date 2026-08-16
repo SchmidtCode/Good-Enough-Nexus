@@ -71,7 +71,9 @@ try {
             $findings = @(Invoke-ScriptAnalyzer -Path (Join-Path $repositoryRoot 'tools') -Recurse -Settings $settings)
             $blockingRules = @('PSAvoidUsingConvertToSecureStringWithPlainText', 'PSAvoidUsingPlainTextForPassword', 'PSUsePSCredentialType', 'PSAvoidUsingInvokeExpression')
             $blocking = @($findings | Where-Object { $_.Severity -eq 'Error' -or $_.RuleName -in $blockingRules })
-            $advisory = @($findings | Where-Object { $_ -notin $blocking })
+            $advisory = @($findings | Where-Object {
+                -not ($_.Severity -eq 'Error' -or $_.RuleName -in $blockingRules)
+            })
             $baselineDocument = Get-Content -Raw -LiteralPath (Join-Path $repositoryRoot 'tests/security-advisory-baseline.json') | ConvertFrom-Json
             if ([int] $baselineDocument.schema -ne 2) { throw 'Unsupported security advisory baseline schema.' }
             $findingRecord = @(ConvertTo-PSScriptAnalyzerFindingRecord -Finding $advisory -RepositoryRoot $repositoryRoot)

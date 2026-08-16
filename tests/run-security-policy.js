@@ -53,7 +53,7 @@ assert.strictEqual(artifact.status, 0, `${artifact.stdout}\n${artifact.stderr}`)
 assert.match(artifact.stdout, /5 rejected \/ 4 allowed/);
 const pssaBaseline = run("tests/Test-PSScriptAnalyzerBaseline.ps1", []);
 assert.strictEqual(pssaBaseline.status, 0, `${pssaBaseline.stdout}\n${pssaBaseline.stderr}`);
-assert.match(pssaBaseline.stdout, /owner\/message drift, duplicates, stale entries -- OK/);
+assert.match(pssaBaseline.stdout, /owner\/message drift, duplicates, stale and malformed entries -- OK/);
 
 const scratch = path.join(root, "build", "staged-artifact-hostile-tests");
 fs.rmSync(scratch, { recursive: true, force: true });
@@ -130,7 +130,7 @@ assert.strictEqual(manifest.pre_commit.packages[0], `pre-commit==${manifest.pre_
 assert(manifest.pre_commit.packages.every((entry) => /^[A-Za-z0-9_-]+==[^=]+$/.test(entry)), "pre-commit dependency is not exact");
 const advisory = JSON.parse(fs.readFileSync(path.join(root, "tests/security-advisory-baseline.json"), "utf8"));
 assert.strictEqual(advisory.schema, 2);
-assert.strictEqual(advisory.psscriptanalyzer.length, 4);
+assert.strictEqual(advisory.psscriptanalyzer.length, 6);
 assert(advisory.psscriptanalyzer.every((finding) =>
     /^tools\/.+\.ps1$/.test(finding.path)
     && /^PS[A-Za-z]+$/.test(finding.rule)
@@ -138,7 +138,7 @@ assert(advisory.psscriptanalyzer.every((finding) =>
     && Number.isInteger(finding.occurrence)
     && finding.occurrence > 0
     && finding.fingerprint === `${finding.path}|${finding.rule}|${finding.message_sha256}|${finding.occurrence}`));
-assert.strictEqual(new Set(advisory.psscriptanalyzer.map((finding) => finding.fingerprint)).size, 4);
+assert.strictEqual(new Set(advisory.psscriptanalyzer.map((finding) => finding.fingerprint)).size, 6);
 assert.deepStrictEqual(advisory.mixed_line_endings, [
     ".gitignore",
     "tools/check-lua51-upvalues.js",

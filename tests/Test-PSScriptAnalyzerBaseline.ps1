@@ -29,6 +29,13 @@ function Assert-Count {
     if ($Actual -ne $Expected) { throw "$Label expected $Expected, got $Actual." }
 }
 
+function Assert-Throws {
+    param([string] $Label, [scriptblock] $Action)
+    try { & $Action }
+    catch { return }
+    throw "$Label did not fail closed."
+}
+
 $inherited = New-PSScriptAnalyzerFinding -Path 'tools/A.ps1' -Rule 'RuleA' -Message 'reviewed finding' -Line 10
 $baseline = @(ConvertTo-PSScriptAnalyzerFindingRecord -Finding @($inherited) -RepositoryRoot $repositoryRoot)
 
@@ -77,4 +84,13 @@ $staleResult = Compare-PSScriptAnalyzerFindingBaseline -FindingRecord $otherOwne
 Assert-Count 'stale baseline cannot hide new' $staleResult.New.Count 1
 Assert-Count 'stale baseline improvement' $staleResult.Resolved.Count 1
 
-Write-Output 'PSScriptAnalyzer baseline fixtures: inheritance, improvement, owner/message drift, duplicates, stale entries -- OK'
+Assert-Throws 'outside-repository owner' {
+    ConvertTo-PSScriptAnalyzerFindingRecord -Finding @(
+        (New-PSScriptAnalyzerFinding -Path '../Outside.ps1' -Rule 'RuleA' -Message 'outside')
+    ) -RepositoryRoot $repositoryRoot
+}
+Assert-Throws 'duplicate baseline fingerprint' {
+    Compare-PSScriptAnalyzerFindingBaseline -FindingRecord $baseline -BaselineRecord @($baseline[0], $baseline[0])
+}
+
+Write-Output 'PSScriptAnalyzer baseline fixtures: inheritance, improvement, owner/message drift, duplicates, stale and malformed entries -- OK'
