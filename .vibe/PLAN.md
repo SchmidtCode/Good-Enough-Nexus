@@ -33,7 +33,7 @@
 
 depends_on: [43.1]
 
-- Status: `NOT_STARTED`
+- Status: `IN_PROGRESS`
 - Objective:
   - Publish the reviewed repair head normally, record exact CI/review truth, and leave Vibe at a clean terminal external-review boundary.
 - Deliverables:

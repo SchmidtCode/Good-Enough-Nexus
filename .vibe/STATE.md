@@ -8,7 +8,7 @@
 
 - Stage: 43
 - Checkpoint: 43.2
-- Status: NOT_STARTED
+- Status: IN_PROGRESS
 - Branch: `infra/viberun-quality-gate`
 - Candidate head: reviewed formal code/tooling candidate `4c1002e` plus receipt-only branch `HEAD`
 - Worktree: `.infra-viberun-quality-gate-worktree`
@@ -44,7 +44,6 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 
 ## Work log
 
-- Checkpoint 42.2 formal review validated all three real pinned Linux tar layouts, added executable-link rejection, re-ran security policy, Security `12` blocking checks, and exact-base Fast `15/15`, and found no unresolved acceptance defect.
 - Checkpoint 42.2 hygiene found distinct entry-reading, layout-resolution, hash-lock, and bounded-cleanup owners with focused fixtures; no duplicate policy, unnecessary branch, or actionable debt remains, so no code changed.
 - Stage 42 retrospective recorded five actionable lessons from its 10 loops; neither checkpoint needed a repeat review, split, skip, blocker, or decision-required issue.
 - Stage 43 design preserved two rollback-safe checkpoints: one unchanged formal candidate with Full exactly once and fresh-checkout proof, then one terminal Vibe/publication/CI boundary with no merge.
@@ -54,6 +53,7 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 - Checkpoint 43.1 formal candidate `4c1002e` passed the single local Full plus Package/Security/focused/hooks/scope gates; a detached dependency-clean checkout passed tracked bootstrap, Fast, and receipt-independent Vibe status before complete cleanup.
 - Checkpoint 43.1 formal review confirmed the post-Full delta is only three Vibe receipt files, Fast passes `15/15` at receipt head `49801d5`, exact-base scope remains 47 infrastructure paths / 0 protected paths, and Full was not repeated.
 - Checkpoint 43.1 hygiene found no duplicate proof owner, stale marker, unnecessary abstraction, or actionable debt in the receipt-only delta; code, tooling, workflow, and test bytes remain unchanged.
+- Checkpoint 43.2 normally published receipt head `8c4d977`: Quality Gate `31957168510` passed every required job with zero artifacts, while Release Policy `31957168563` exposed a LuaJIT-only nondeterministic runtime-test failure outside this infrastructure ownership.
 
 ## Workflow state
 
@@ -66,7 +66,13 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 
 ## Active issues
 
-- Committed terminal Vibe state conflicts with fresh-checkout dispatcher truth.
+- [ ] ISSUE-43-2-1: Release Lua regression is nondeterministic across unchanged product bytes
+  - Impact: MAJOR
+  - Status: IN_PROGRESS
+  - Owner: agent
+  - Unblock Condition: A replacement exact-head Release Policy run passes without changing production or runtime-test Lua, or the task stops at the authorization boundary.
+  - Evidence Needed: Exact replacement run ID plus the successful `lua-regression` and `release-policy` job conclusions.
+  - Notes: Run `31957168563` failed only `tests/run_startup_catalog_cost.lua:103`; old exact-head run `31925777820` passed the same test and this repair range changes zero product/runtime-test Lua paths.
 
 ## Blockers
 
@@ -85,8 +91,8 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 
 ## Last completed loop
 
-- Checkpoint 43.1 bounded hygiene passed without code changes; checkpoint 43.2 implementation is next.
+- Checkpoint 43.2 remains in progress at the external CI boundary because the first Release Policy replacement failed a product/runtime-test assertion outside authorized infrastructure scope.
 
 ## Recommended next action
 
-- Implement checkpoint 43.2 publication, exact-head CI reconciliation, and terminal stop without crossing the independent-review boundary.
+- Publish the Vibe progress receipt normally, inspect its replacement exact-head workflows, and stop if the unrelated LuaJIT failure repeats.
