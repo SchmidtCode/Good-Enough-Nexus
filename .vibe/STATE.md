@@ -77,6 +77,7 @@ Make every blocking non-pass fail and make Package a required exact-base CI job.
 - Completed bounded 41.1 hygiene: the shared byte reader, record expansion, planner integration, route map, workflow delegation, and fixtures contain no redundant parser, unnecessary branch, speculative abstraction, or attributable debt; no code byte changed and review validation was not repeated.
 - Checkpoint 41.2 expected red reproduced acceptance of Git-quoted `.codex/context\n.txt`. Staged/all-tracked enumeration now uses raw NUL records, Fast and the scanner share one exact path/content policy, disposable hostile fixtures clean in `finally`, and current-base Fast passes `15/15`.
 - Formal 41.2 review passed at exact `f769d52` after changing the centralized content read from silent failure to fail closed. Hostile/security/scanner tests and current-base Fast `15/15` passed; an outside-root adversarial probe failed as required; fixture cleanup and scope were clean. No checkpoint-hygiene signal was identified.
+- Completed bounded 41.2 hygiene: the shared artifact-policy helper removed the prior Fast/scanner rule duplication, fixtures have deterministic `finally` cleanup, and no redundant branch, stale compatibility path, or attributable debt remains; no code byte changed after review.
 
 ## Workflow state
 
