@@ -57,7 +57,7 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 
 ## Workflow state
 
-- [ ] RUN_STOPPED
+- [x] RUN_STOPPED
 - [ ] RUN_CONTEXT_CAPTURE
 - [x] STAGE_DESIGNED
 - [x] MAINTENANCE_CYCLE_DONE
