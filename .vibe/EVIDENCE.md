@@ -34,3 +34,11 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Quick wins: none; no behavior-preserving simplification had enough value to justify churn after the passing exact-head review.
 - Debt items: none; checkpoint 38.4 already owns the explicitly unavailable security tools.
 - Validation: status clean, stale/debug marker scan clean except the intentional self-test result line, and `git diff --check` passed. No product or test byte changed, so Full was not repeated.
+
+## Checkpoint 38.3 - VibeRun roles and compact hot context
+
+- Expected red: branch-local `AGENTS.md` had no role-to-profile behavior, `CONTEXT.md` retained unresolved bootstrap placeholders, and hot context totaled 334 lines / 18,653 bytes across `AGENTS.md`, `STATE.md`, `PLAN.md`, and `CONTEXT.md`.
+- Dispatcher discrepancy: after 38.2 hygiene, the authoritative pointer selected implementation at 38.3 while the auxiliary ready list named 38.1 because completed headings used an unsupported suffix marker. Headings now use the installed schema's `(DONE) <checkpoint>` form; no flag or pointer was manufactured.
+- Implementation: installed VibeRun remains the sole dispatcher; Fast/Full/hygiene/consolidation behavior, bounded evidence/history reads, current invariants, and the supported state chain are documented without local prompts, role metadata, or another namespace.
+- Hot-context result: 267 lines / 15,414 bytes, down from 334 lines / 18,653 bytes (20.1% fewer lines and 17.4% fewer bytes) while retaining current stage, base, acceptance, invariants, evidence references, and all four remaining checkpoint boundaries.
+- Focused validation: strict Vibe schema/plan validation passed; the dependency DAG reports 38.1/38.2 done, 38.3 ready, and later checkpoints correctly dependency-blocked; Fast passed `6/6`; prohibited namespace scan and `git diff --check` passed.

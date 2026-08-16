@@ -117,6 +117,16 @@ workflow, Lua, and PowerShell policy. Results are written under ignored
 `build/verify/`: compact `summary.json` and `summary.md` files plus detailed
 per-check logs. Successful logs are not copied into the summary.
 
+VibeRun remains the project workflow owner. Its implementation role runs
+expected-red and focused checks followed by `Fast`, then stops after one clean
+commit. Its independent review role runs `Full` once at the committed candidate,
+reads the compact summary, and opens detailed logs only for a failure or a
+suspicious result. A hygiene pass does not repeat `Full` when no product or test
+byte changed. Consolidation archives receipts without changing product bytes or
+inventing a new stage. Normal sessions read `AGENTS.md`, current `STATE`, only
+the active `PLAN` checkpoint, and `CONTEXT`; evidence and history reads stay
+bounded to the receipt needed for the current decision.
+
 The adjacent upvalue command audits every TOC-loaded function against the WoW 3.3.5a hard limit of 60. It reports a production advisory above 48 to retain a practical 12-upvalue maintenance margin where feasible; the regression fixture keeps every reviewed exception explicit.
 
 These checks do not prove in-game behavior; `/reload` and live Project Ebonhold
