@@ -54,6 +54,7 @@ Publish the validated infrastructure branch as one draft PR targeting PR #10, li
 - Completed bounded CI-repair hygiene: the one-test normalization is direct, deterministic, and free of stale/debug residue; Full was not repeated because review already covered the committed repair.
 - Replacement CI run `31919930699` passed preflight/Fast but exposed an Ubuntu PowerShell dotfile-read defect in the blocking staged-artifact scan. The focused repair adds `-Force` to the existing tracked-file metadata read so hidden dotfiles remain scanned.
 - Formal dotfile-repair review passed at exact `a3a574a`: Full `16/16`, Security 10 pass / 3 advisory-unavailable, all-files artifact policy, strict Vibe validation, and diff checks passed.
+- Completed bounded dotfile-repair hygiene: `-Force` is the standard direct PowerShell mechanism for hidden tracked files and adds no suppression, duplication, or debt; Full was not repeated.
 
 ## Workflow state
 

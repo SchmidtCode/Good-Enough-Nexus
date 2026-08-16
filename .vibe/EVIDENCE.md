@@ -134,3 +134,4 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Isolation: the scan's preceding `Test-Path` found the dotfile; the metadata read alone failed. Adding `-Force` preserves content scanning for dotfiles rather than excluding, skipping, or advisory-downgrading them.
 - Focused repair validation PASS: all-files artifact policy, Security 10 pass / 3 advisory-unavailable, and Fast `13/13` passed.
 - Formal dotfile-repair review PASS at exact `a3a574a6b43288e85eb769393306ab7470d0b6ca`: Full passed `16/16` in 261.112 seconds; Security passed 10 blocking checks with three advisory-unavailable checks; strict Vibe validation and `git diff --check` passed.
+- Dotfile-repair hygiene: the single `-Force` flag is the direct cross-platform PowerShell fix, preserves the blocking content scan, and introduces no suppression, helper, stale marker, or debt. Full was not repeated.
