@@ -67,6 +67,7 @@ Publish the reviewed PR #10 base reconciliation to the existing draft infrastruc
 - Published head `1c6e3c9` matched remote and release-policy run `31924278239` passed, but Quality gate run `31924278205` failed preflight because Ubuntu PowerShell parsed `$base...HEAD` ambiguously. Braced range expansion plus a regression assertion now pass the focused 40-path expression, Security 12 pass / 3 advisory-unavailable, and Fast `15/15`.
 - Replacement exact-head Quality gate run `31924436571` and Release policy run `31924436622` passed at `21db9ae`; CI/local parity is Fast `15/15`, Full 18 pass / 1 explicit manual skip, and Security 12 pass / 3 advisory-unavailable. PR #13 remains open/draft/mergeable with zero reviews or threads, and issue #12 remains open.
 - Independent publication review at exact local/remote `c4997a7` passed Fast `15/15`, current-base ancestry/diff/scope, Quality gate run `31924926793`, Release policy run `31924926788`, and zero-review/thread inspection; no checkpoint-hygiene signal was identified.
+- Completed bounded 40.1 hygiene at reviewed head `db17828`: the five-path publication/CI-repair surface has no stale/debug marker, duplicate branch, unnecessary abstraction, or attributable debt; exact-head Quality gate `31925298936` and Release policy `31925298955` passed, and Full was not repeated locally.
 
 ## Workflow state
 
@@ -98,8 +99,8 @@ Publish the reviewed PR #10 base reconciliation to the existing draft infrastruc
 
 ## Last completed loop
 
-- Stage 40.1 publication review passed at exact local/remote `c4997a7`; one bounded hygiene loop remains before the final factual PR/issue refresh and stop.
+- Stage 40.1 publication review and bounded hygiene passed; the final compact receipt is ready for normal push, exact-head CI, factual PR/issue refresh, and stop.
 
 ## Recommended next action
 
-- Run one bounded publication-checkpoint hygiene pass without repeating Full, then refresh final PR/issue facts and stop before merge.
+- Push the final compact hygiene receipt normally, wait for exact-head CI, refresh PR #13 and issue #12 facts, then stop before merge.
