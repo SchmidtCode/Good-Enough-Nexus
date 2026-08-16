@@ -15,9 +15,102 @@ function run(script, args) {
     });
 }
 
+function runGit(repository, args, options = {}) {
+    const result = spawnSync("git", [
+        "-c", `safe.directory=${repository.replace(/\\/g, "/")}`,
+        "-C", repository,
+        ...args,
+    ], { encoding: "utf8", ...options });
+    assert.strictEqual(result.status, 0,
+        `git ${args.join(" ")} failed:\n${result.stdout}\n${result.stderr}`);
+    return String(result.stdout || "").trim();
+}
+
+function initializeRepository(repository) {
+    fs.mkdirSync(repository, { recursive: true });
+    runGit(repository, ["init", "-b", "main"]);
+    runGit(repository, ["config", "user.name", "Artifact Policy Self-Test"]);
+    runGit(repository, ["config", "user.email", "artifact-policy@example.invalid"]);
+    fs.writeFileSync(path.join(repository, "safe.lua"), "return true\n");
+    runGit(repository, ["add", "safe.lua"]);
+    runGit(repository, ["commit", "-m", "baseline"]);
+}
+
+function stageIndexPath(repository, hostilePath) {
+    const hash = runGit(repository, ["hash-object", "-w", "--stdin"],
+        { input: "hostile fixture\n" });
+    runGit(repository,
+        ["update-index", "--add", "--cacheinfo", "100644", hash, hostilePath]);
+}
+
+function artifactScan(repository, mode = "Staged", paths = []) {
+    return run("tools/Test-StagedArtifacts.ps1",
+        ["-RepositoryRoot", repository, "-Mode", mode, ...paths]);
+}
+
 const artifact = run("tools/Test-StagedArtifacts.ps1", ["-SelfTest"]);
 assert.strictEqual(artifact.status, 0, `${artifact.stdout}\n${artifact.stderr}`);
-assert.match(artifact.stdout, /5 rejected \/ 2 allowed/);
+assert.match(artifact.stdout, /5 rejected \/ 4 allowed/);
+
+const scratch = path.join(root, "build", "staged-artifact-hostile-tests");
+fs.rmSync(scratch, { recursive: true, force: true });
+try {
+    const hostilePaths = [
+        ".codex/context\n.txt",
+        ".ai/prompt\tcopy.md",
+        ".chatgpt/session log.txt",
+        "build/test.zip",
+        "BUILD/test.zip",
+    ];
+    for (const [index, hostilePath] of hostilePaths.entries()) {
+        const repository = path.join(scratch, `index-${index}`);
+        initializeRepository(repository);
+        const cannotRepresentOnWindows = process.platform === "win32"
+            && /[\t\r\n]/.test(hostilePath);
+        if (!cannotRepresentOnWindows) {
+            stageIndexPath(repository, hostilePath);
+            const indexed = runGit(repository, ["ls-files", "-z"]);
+            assert(indexed.includes(hostilePath),
+                `hostile fixture was not written to the Git index: ${JSON.stringify(indexed)}`);
+        }
+        const staged = artifactScan(repository, "Staged",
+            cannotRepresentOnWindows ? [hostilePath] : []);
+        assert.notStrictEqual(staged.status, 0,
+            `staged hostile path was accepted: ${JSON.stringify(hostilePath)}\n${staged.stdout}\n${staged.stderr}`);
+        if (!cannotRepresentOnWindows && (index === 0 || index === 2)) {
+            const tracked = artifactScan(repository, "All");
+            assert.notStrictEqual(tracked.status, 0,
+                `all-tracked scan accepted hostile path: ${JSON.stringify(hostilePath)}`);
+        }
+    }
+
+    const forceAddedRepository = path.join(scratch, "force-added");
+    initializeRepository(forceAddedRepository);
+    fs.writeFileSync(path.join(forceAddedRepository, ".gitignore"), "build/\n");
+    fs.mkdirSync(path.join(forceAddedRepository, "build"), { recursive: true });
+    fs.writeFileSync(path.join(forceAddedRepository, "build", "forced.zip"), "fixture\n");
+    runGit(forceAddedRepository, ["add", ".gitignore"]);
+    runGit(forceAddedRepository, ["add", "-f", "build/forced.zip"]);
+    assert.notStrictEqual(artifactScan(forceAddedRepository).status, 0,
+        "force-added ignored archive was accepted");
+
+    const safeRepository = path.join(scratch, "safe-source");
+    initializeRepository(safeRepository);
+    fs.writeFileSync(path.join(safeRepository, "safe.lua"), "return false\n");
+    runGit(safeRepository, ["add", "safe.lua"]);
+    const safeScan = artifactScan(safeRepository);
+    assert.strictEqual(safeScan.status, 0, `${safeScan.stdout}\n${safeScan.stderr}`);
+
+    for (const separatorPath of ["build\\test.zip", "BUILD\\test.zip",
+        ".codex\\context.txt"]) {
+        const separated = artifactScan(safeRepository, "Staged", [separatorPath]);
+        assert.notStrictEqual(separated.status, 0,
+            `backslash-separated hostile path was accepted: ${separatorPath}`);
+    }
+}
+finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+}
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "tools/security-tools.json"), "utf8"));
 assert.strictEqual(manifest.schema, 1);

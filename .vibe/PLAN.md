@@ -183,7 +183,7 @@ depends_on: [38.6]
 
 depends_on: [41.1]
 
-- Status: `NOT_STARTED`
+- Status: `IN_REVIEW`
 - Objective:
   - Reject forbidden staged paths from exact NUL-delimited Git records, including force-added and quoted hostile names.
 - Deliverables:
@@ -191,10 +191,10 @@ depends_on: [41.1]
   - Exact repository-relative normalization after record extraction.
   - Disposable hostile filename and `git add -f` fixtures.
 - Acceptance:
-  - [ ] `.codex` newline, `.ai` tab, `.chatgpt` space, build ZIP, case variant, and separator-hostile paths fail.
-  - [ ] Force-added ignored artifacts fail while an ordinary safe source passes.
-  - [ ] No hostile filename is created in the real worktree.
-  - [ ] Security-policy focused tests and Fast pass.
+  - [x] `.codex` newline, `.ai` tab, `.chatgpt` space, build ZIP, case variant, and separator-hostile paths fail.
+  - [x] Force-added ignored artifacts fail while an ordinary safe source passes.
+  - [x] No hostile filename is created in the real worktree.
+  - [x] Security-policy focused tests and Fast pass.
 - Demo commands:
   - `node tests/run-security-policy.js`
   - `pwsh -NoProfile -File tools/Test-StagedArtifacts.ps1 -SelfTest`

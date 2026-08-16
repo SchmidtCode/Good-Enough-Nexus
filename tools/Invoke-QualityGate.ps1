@@ -153,22 +153,15 @@ function Add-ArtifactPathCheck {
     [CmdletBinding()]
     param([Parameter(Mandatory)][AllowEmptyCollection()][string[]] $Paths)
 
-    $forbidden = @(
-        '(?i)(^|/)(build|dist|node_modules|\.tools|\.ai|\.codex|\.chatgpt)/',
-        '(?i)\.zip$',
-        '(?i)(^|/)Nexus\.lua$',
-        '(?i)(savedvariables|profiler|transcript|chat[-_ ]?export|prompt[-_ ]?log)'
-    )
-    $violations = @($Paths | Where-Object {
-        $candidate = $_
-        $forbidden | Where-Object { $candidate -match $_ }
-    } | Sort-Object -Unique)
+    . (Join-Path $PSScriptRoot 'ArtifactPathPolicy.ps1')
+    $violations = @(Test-ArtifactPathSet -RepositoryRoot $repositoryRoot `
+        -Candidates $Paths -ReadContent)
     if ($violations.Count -gt 0) {
-        Add-CheckResult -Id 'artifact-paths' -Result fail -Command 'staged/local artifact path policy' `
+        Add-CheckResult -Id 'artifact-paths' -Result fail -Command 'shared artifact path policy' `
             -Reason 'forbidden artifact path detected' -Count "0/$($violations.Count)" -LogLines $violations
     }
     else {
-        Add-CheckResult -Id 'artifact-paths' -Result pass -Command 'staged/local artifact path policy' `
+        Add-CheckResult -Id 'artifact-paths' -Result pass -Command 'shared artifact path policy' `
             -Count "$($Paths.Count)/$($Paths.Count)" -LogLines @("Checked $($Paths.Count) changed path(s).")
     }
 }

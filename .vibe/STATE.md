@@ -8,9 +8,9 @@
 
 - Stage: 41
 - Checkpoint: 41.2
-- Status: NOT_STARTED
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: reviewed checkpoint 41.1 head `4129105` plus the current Vibe receipt commit
+- Candidate head: checkpoint 41.2 implementation commit (resolve with `git rev-parse HEAD` after commit)
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
@@ -26,10 +26,10 @@ Reject forbidden staged paths from exact NUL-delimited Git records, including fo
 
 ## Acceptance (current checkpoint)
 
-- [ ] `.codex` newline, `.ai` tab, `.chatgpt` space, build ZIP, case variant, and separator-hostile paths fail.
-- [ ] Force-added ignored artifacts fail while an ordinary safe source passes.
-- [ ] No hostile filename is created in the real worktree.
-- [ ] Security-policy focused tests and Fast pass.
+- [x] `.codex` newline, `.ai` tab, `.chatgpt` space, build ZIP, case variant, and separator-hostile paths fail.
+- [x] Force-added ignored artifacts fail while an ordinary safe source passes.
+- [x] No hostile filename is created in the real worktree.
+- [x] Security-policy focused tests and Fast pass.
 
 ## Evidence
 
@@ -73,6 +73,7 @@ Reject forbidden staged paths from exact NUL-delimited Git records, including fo
 - Current-base Fast passed 279 checks and failed only the existing artifact-path policy on the legitimate analyzer names `tests/run-savedvariables-analyzer.js` and `tools/analyze-savedvariables.js`; this is retained as honest evidence for checkpoint 41.2, not relabeled as a 41.1 pass.
 - Formal 41.1 review passed at exact `4129105`: focused routing/workflow tests passed; exact checkpoint-range Fast passed `14/14`; missing final NUL and unknown status probes failed closed; committed diff checks passed; and zero product/runtime-test paths changed. No checkpoint-hygiene signal was identified.
 - Completed bounded 41.1 hygiene: the shared byte reader, record expansion, planner integration, route map, workflow delegation, and fixtures contain no redundant parser, unnecessary branch, speculative abstraction, or attributable debt; no code byte changed and review validation was not repeated.
+- Checkpoint 41.2 expected red reproduced acceptance of Git-quoted `.codex/context\n.txt`. Staged/all-tracked enumeration now uses raw NUL records, Fast and the scanner share one exact path/content policy, disposable hostile fixtures clean in `finally`, and current-base Fast passes `15/15`.
 
 ## Workflow state
 
@@ -85,7 +86,6 @@ Reject forbidden staged paths from exact NUL-delimited Git records, including fo
 
 ## Active issues
 
-- Staged-artifact discovery can accept Git-quoted hostile paths.
 - Blocking skipped or malformed summary results can pass.
 - Package is absent from required exact-head CI aggregation.
 - PSScriptAnalyzer baseline is count-only rather than owner-exact.
@@ -113,4 +113,4 @@ Reject forbidden staged paths from exact NUL-delimited Git records, including fo
 
 ## Recommended next action
 
-- Implement checkpoint 41.2 expected-red hostile staged-path fixtures, route enumeration through the shared NUL-safe reader, run focused checks and Fast, commit, and stop for review.
+- Formally review checkpoint 41.2 at its exact commit, including NUL enumeration, hostile/force-added fixtures, shared policy behavior, cleanup, all-tracked scan, and current-base Fast.
