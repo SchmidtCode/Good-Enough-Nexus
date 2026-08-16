@@ -41,7 +41,6 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 
 ## Work log
 
-- Stage 41 retrospective recorded five actionable lessons from its 10 delivery loops; no repeated review cycle, split, skip, blocker, or decision-required issue occurred.
 - Stage 42 design confirmed two bounded owners: 42.1 exact advisory fingerprints in `Test-SecurityPolicy.ps1`, then 42.2 archive-layout and Python-distribution integrity in `Bootstrap-SecurityTools.ps1`; no split or pointer change was needed.
 - Stage 42 maintenance refactor scan selected pure baseline comparison for 42.1 and pure archive-layout/executable resolution for 42.2; both are already scoped by PLAN, and the 42.1 product pointer remains `NOT_STARTED`.
 - Checkpoint 42.1 replaced rule-count allowances with repository-relative owner/rule/message fingerprints, removed eight Stage 41 helper warnings rather than baselining them, and passed the synthetic matrix, current PSScriptAnalyzer reconciliation, security-policy tests, and Fast `15/15`.
@@ -51,12 +50,13 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 - Checkpoint 42.2 formal review validated all three real pinned Linux tar layouts, added executable-link rejection, re-ran security policy, Security `12` blocking checks, and exact-base Fast `15/15`, and found no unresolved acceptance defect.
 - Checkpoint 42.2 hygiene found distinct entry-reading, layout-resolution, hash-lock, and bounded-cleanup owners with focused fixtures; no duplicate policy, unnecessary branch, or actionable debt remains, so no code changed.
 - Stage 42 retrospective recorded five actionable lessons from its 10 loops; neither checkpoint needed a repeat review, split, skip, blocker, or decision-required issue.
+- Stage 43 design preserved two rollback-safe checkpoints: one unchanged formal candidate with Full exactly once and fresh-checkout proof, then one terminal Vibe/publication/CI boundary with no merge.
 
 ## Workflow state
 
 - [ ] RUN_STOPPED
 - [x] RUN_CONTEXT_CAPTURE
-- [ ] STAGE_DESIGNED
+- [x] STAGE_DESIGNED
 - [ ] MAINTENANCE_CYCLE_DONE
 - [x] RETROSPECTIVE_DONE
 - [x] PROCESS_IMPROVEMENTS_DONE
@@ -82,8 +82,8 @@ Validate all eight repairs together on one unchanged exact-head candidate and pr
 
 ## Last completed loop
 
-- Stage 42 retrospective recorded five actionable lessons from its 10 loops; neither checkpoint needed a repeat review, split, skip, blocker, or decision-required issue.
+- Stage 43 design confirmed the existing 43.1/43.2 split and exact-head/terminal-state ownership without changing the product pointer.
 
 ## Recommended next action
 
-- Capture compact Stage 43 hot context, then follow the dispatcher-selected design and maintenance routes before formal exact-head validation.
+- Follow the dispatcher-selected Stage 43 maintenance/context routes, then freeze the 43.1 candidate and run Full exactly once.
