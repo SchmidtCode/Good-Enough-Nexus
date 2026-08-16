@@ -7,47 +7,44 @@
 ## Current focus
 
 - Stage: 38
-- Checkpoint: 38.5
-- Status: IN_REVIEW
+- Checkpoint: 38.6
+- Status: NOT_STARTED
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: `b792c82b75c176151ded62568f82788cb18f654f`
+- Candidate head: `7633a4ca967ee37560fa0cda1ee9be6930bfc156`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `36f187824b8a24f6fb51562e6ec1101c300308ef`
 
 ## Objective (current checkpoint)
 
-Add an exact-head GitHub Actions quality gate using the tracked profiles, least privilege, immutable actions, visible policy skips, and deterministic final aggregation.
+Prove the complete infrastructure branch at one exact clean head, publish a draft PR targeting PR #10, link issue #12, and inspect exact-head CI without merging.
 
 ## Deliverables (current checkpoint)
 
-- `.github/workflows/quality-gate.yml` with preflight, Fast, Security, conditional Full, and final aggregation jobs.
-- In-workflow changed-path classification and compact summary/artifact policy.
-- Workflow self-tests for triggers, permissions, pins, concurrency, credentials, conditions, and final results.
+- Base-to-head source-scope and immutable runtime/metadata/storage/artifact proof.
+- Clean-checkout bootstrap plus exact-head Fast, Full, Package, Security, release-policy, pre-commit, and diff receipts.
+- Draft PR, issue #12 coordination comment, and exact-head CI/review/mergeability/local-parity inspection.
 
 ## Acceptance (current checkpoint)
 
-- [x] Pull requests, main pushes, and dispatch run without trigger path filters.
-- [x] Permissions are `contents: read`, credentials do not persist, and every external action uses a complete SHA.
-- [x] Full runs for relevant paths/main/manual full and documentation-only skips are visible.
-- [x] Final `if: always()` job rejects required failures and unexpected skips.
-- [x] Detailed logs upload only on failure or explicit dispatch with short retention.
-- [x] Existing `release-policy.yml` remains present and byte-unchanged.
+- [ ] Changed paths are limited to authorized infrastructure categories.
+- [ ] Root and `.lag-hotfix-worktree` remain byte-untouched; product and infrastructure cleanliness is reconciled.
+- [ ] Required exact-head local checks pass or remain honestly advisory/unavailable.
+- [ ] Remote branch equals the validated head and the new PR remains draft against `refactor/nexus-1.20-test17`.
+- [ ] Issue #12 is updated and exact-head CI/reviews are inspected.
+- [ ] No merge, force-push, artifact, tag, release, install, live action, publication, or settings mutation occurs.
 
 ## Evidence
 
 - path: .vibe/EVIDENCE.md
-- 38.2 local Fast/Full/Package/Security orchestration and compact summaries are committed and reviewed.
-- 38.3 role-specific validation and 23.7% hot-context reduction are reviewed.
-- 38.4 exact-head `b792c82` passed Full `16/16`, Security 10 pass / 3 advisory-unavailable, artifact/self-tests, and pre-commit.
-- Existing release-policy workflow is unchanged from selected base and its run `31857811990` passed.
-- 38.5 workflow policy, actionlint, high-severity offline zizmor, Fast `13/13`, Security 10 pass / 3 advisory-unavailable, and pre-commit pass locally.
+- 38.1–38.4 toolchain, profiles, Vibe roles/hot context, and security policy are reviewed.
+- 38.5 exact `7633a4c` passed Full `16/16` in 253.631 seconds, workflow policy, actionlint, zizmor, and release-workflow parity.
+- Fast currently passes `13/13`; Security passes 10 checks with LuaLS/Luacheck/StyLua explicitly advisory-unavailable.
+- Existing release-policy workflow SHA-256 remains `e625c6232917092f16b9acd421e5641bb3a9527ef5a9402be50bc90e1e203b93`.
 
 ## Work log
 
-- Checkpoint 38.4 review passed and auto-advanced to 38.5; all exact security pins, baselines, and honest advisory status are preserved.
-- The installed dispatcher DAG marks 38.1–38.4 done and 38.5 ready.
-- Completed bounded 38.4 hygiene with no floating version, unsafe download path, debug marker, redundant policy runner, or directly attributable debt.
-- Implemented immutable exact-head CI with preflight classification, Fast/Security, conditional Full, final always-run aggregation, compact step summaries, and failure/dispatch-only five-day logs.
+- Checkpoint 38.5 review passed and advanced to final exact-head scope/publication checkpoint 38.6.
+- The installed dispatcher DAG marks 38.1–38.5 done and only 38.6 remains.
 
 ## Workflow state
 
@@ -73,14 +70,14 @@ Add an exact-head GitHub Actions quality gate using the tracked profiles, least 
 
 ## Decisions
 
-- Use installed VibeRun as sole orchestrator and the same tracked local gate beneath CI.
-- Keep release-policy ownership separate and unchanged.
-- Target the infrastructure PR at `refactor/nexus-1.20-test17` while PR #10 remains open and authoritative.
+- Publish only a draft infrastructure PR against the current PR #10 branch after exact-head validation.
+- Keep VibeRun authoritative and retain compact summaries rather than successful log dumps.
+- Stop at exact-head CI/review boundary without merge.
 
 ## Last completed loop
 
-- Checkpoint 38.4 adversarial review passed at exact `b792c82` and advanced to 38.5.
+- Checkpoint 38.5 adversarial review passed at exact `7633a4c` and advanced to 38.6.
 
 ## Recommended next action
 
-- Review committed 38.5 workflow policy and run Full once before final exact-head publication work.
+- Run mandatory bounded 38.5 hygiene, then execute final clean-checkout/scope validation and draft publication.

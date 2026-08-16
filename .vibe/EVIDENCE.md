@@ -80,3 +80,5 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Detailed logs upload only on failure or explicit dispatch, retain five days, and exclude packages, SavedVariables, prompts, transcripts, and credentials by path policy.
 - Existing release-policy workflow SHA-256 remains `e625c6232917092f16b9acd421e5641bb3a9527ef5a9402be50bc90e1e203b93`.
 - Implementation validation: workflow self-test, actionlint, high-severity offline zizmor, Fast `13/13`, Security 10 pass / 3 advisory-unavailable, pre-commit, and `git diff --check` passed.
+- Formal review PASS at exact `7633a4ca967ee37560fa0cda1ee9be6930bfc156`: Full passed `16/16` in 253.631 seconds; workflow policy, actionlint, high-severity offline zizmor, release-policy hash, and `git diff --check` passed.
+- Adversarial workflow review confirmed required-Full cannot accept a skipped Full job, documentation-only policy may accept the classifier-proven skip, required Fast/Security/preflight skips fail, and the final job always runs. No checkpoint-hygiene signal was identified.

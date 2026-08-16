@@ -29,28 +29,11 @@ depends_on: [38.3]
 
 - Receipt: verified cross-platform pins, artifact/self-tests, Lua 5.1/static policy, exact-head Full `16/16`, Security 10 pass / 3 advisory-unavailable, and pre-commit passed without normalization. See `.vibe/EVIDENCE.md` and `b792c82`.
 
-### 38.5 — Add exact-head GitHub Actions quality gate
+### (DONE) 38.5 — Add exact-head GitHub Actions quality gate
 
 depends_on: [38.4]
 
-- Status: `IN_REVIEW`
-- Objective:
-  - Run the tracked profiles in GitHub Actions with least privilege, immutable dependencies, visible policy skips, and one final gate result.
-- Deliverables:
-  - `preflight`, `fast-quality`, `security-quality`, `full-quality`, and final `quality-gate` jobs.
-  - In-workflow path classification, compact summaries, and failure-only/explicit logs with short retention.
-  - Workflow self-tests for triggers, permissions, pins, concurrency, checkout credentials, conditions, and aggregation.
-- Acceptance:
-  - [x] Pull requests, main pushes, and dispatch are covered without trigger path filtering.
-  - [x] Permissions are read-only, credentials do not persist, and all actions use complete SHAs.
-  - [x] Required Full runs and documentation-only skips are deterministic and visible.
-  - [x] Existing `release-policy.yml` remains unchanged.
-- Demo commands:
-  - `node tests/run-quality-workflow-policy.js`
-  - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Fast`
-  - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Security`
-- Evidence:
-  - Workflow-policy totals, exact workflow diff, and compact local summaries.
+- Receipt: immutable least-privilege jobs, internal path classification, conditional Full, final aggregation, compact/failure-only logs, actionlint/zizmor, and exact-head Full `16/16` passed while release-policy bytes remained unchanged. See `.vibe/EVIDENCE.md` and `7633a4c`.
 
 ### 38.6 — Adversarial exact-head review and draft publication
 
