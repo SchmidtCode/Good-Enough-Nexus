@@ -17,7 +17,7 @@ local lastInitSummary
 local libraryGeneration = 0
 local authorIndex, authorIndexGeneration = {}, -1
 local relatedIndex = {
-    exact={},fingerprints={},titles={},spells={},saved={},authorClasses={}}
+    exact={},fingerprints={},titles={},spells={},saved={},ownerClasses={}}
 local relatedRows, relatedIndexGeneration = {}, -1
 local recordEpoch, exactEpoch, exactRevisionClock = 0, 0, 0
 local recordRevisions, exactRevisions = {}, {}
@@ -35,7 +35,7 @@ local debugStats = {
     exactLookups=0,exactCandidates=0,maxExactCandidates=0,
     identityResolutions=0,identityResolutionFailures=0,
     identityRawHits=0,identityFingerprintHits=0,
-    authorClassLookups=0,authorClassHits=0,authorClassConflicts=0,
+    ownerClassLookups=0,ownerClassHits=0,ownerClassConflicts=0,
 }
 
 local function DeepCopy(value, seen)
@@ -501,22 +501,6 @@ local function ExactFingerprint(record)
     return stored or RelatedFingerprint(record)
 end
 
--- Protocol-v6 legacy DPS summaries may retain only "@<hash>" as their
--- fingerprint while the referenced build carries the complete fingerprint.
--- The build id plus its persisted fingerprintHash is still an exact bounded
--- identity; accepting that pair restores navigation/class metadata without
--- treating a bare hash as authority over another catalog row.
-local function FingerprintMatches(record, fingerprint)
-    local exact = ExactFingerprint(record)
-    if exact == fingerprint then return true end
-    if type(record) ~= "table" or type(fingerprint) ~= "string"
-        or fingerprint:sub(1, 1) ~= "@" then return false end
-    local alias = fingerprint:sub(2):lower()
-    local hash = type(record.fingerprintHash) == "string"
-        and record.fingerprintHash:lower() or nil
-    return alias ~= "" and hash ~= nil and alias == hash
-end
-
 local function FingerprintSpells(fingerprint)
     local spells, total = {}, 0
     if type(fingerprint) ~= "string" then return spells, total end
@@ -560,14 +544,18 @@ local function RemoveBucket(index, key, id)
     if bucket.count == 0 then index[key] = nil end
 end
 
-local function AddAuthorClass(author, id, value)
-    local key = Identity.PlayerKey(author)
-    local class = NormalizedClass(value)
-    if not key or not class then return nil end
-    local bucket = relatedIndex.authorClasses[key]
+local function AddOwnerClass(record, id)
+    if type(record) ~= "table" or record.ownerVerified ~= true then return nil end
+    local key = Identity.CanonicalOwnerKey(record.ownerKey)
+    local class = NormalizedClass(record.class)
+    if not key or key:match("@unknown$") or not class
+        or not Identity.OwnerKeyMatchesAuthor(key, record.author) then
+        return nil
+    end
+    local bucket = relatedIndex.ownerClasses[key]
     if not bucket then
         bucket = {ids={},classes={},count=0}
-        relatedIndex.authorClasses[key] = bucket
+        relatedIndex.ownerClasses[key] = bucket
     end
     if bucket.ids[id] == nil then
         bucket.ids[id] = class
@@ -577,15 +565,15 @@ local function AddAuthorClass(author, id, value)
     return key
 end
 
-local function RemoveAuthorClass(key, id)
-    local bucket = key and relatedIndex.authorClasses[key]
+local function RemoveOwnerClass(key, id)
+    local bucket = key and relatedIndex.ownerClasses[key]
     local class = bucket and bucket.ids[id]
     if not class then return end
     bucket.ids[id] = nil
     bucket.count = math.max(0, bucket.count - 1)
     bucket.classes[class] = math.max(0, (bucket.classes[class] or 0) - 1)
     if bucket.classes[class] == 0 then bucket.classes[class] = nil end
-    if bucket.count == 0 then relatedIndex.authorClasses[key] = nil end
+    if bucket.count == 0 then relatedIndex.ownerClasses[key] = nil end
 end
 
 local function BetterExactCandidate(id, record, currentId, currentRecord)
@@ -632,7 +620,7 @@ local function RemoveRelatedRow(id)
     RemoveBucket(relatedIndex.fingerprints, indexed.fingerprint, id)
     RemoveBucket(relatedIndex.titles, indexed.title, id)
     RemoveBucket(relatedIndex.saved, indexed.saved, id)
-    RemoveAuthorClass(indexed.classAuthor, id)
+    RemoveOwnerClass(indexed.classOwner, id)
     for _, key in ipairs(indexed.spells or {}) do
         RemoveBucket(relatedIndex.spells, key, id)
     end
@@ -650,11 +638,11 @@ local function AddRelatedRow(id, record)
     end
     local _, source = SelectedRaw(id)
     ConsiderExactWinner(exactBucket, id, record, source)
-    local classAuthor = AddAuthorClass(record.author, id, record.class)
+    local classOwner = AddOwnerClass(record, id)
     local author = RelatedText(record.author)
     if author == "" then
         relatedRows[id] = {
-            exact=exact,exactAuto=exactAuto,classAuthor=classAuthor}
+            exact=exact,exactAuto=exactAuto,classOwner=classOwner}
         return
     end
     if record.importedSavedBuild then
@@ -662,7 +650,7 @@ local function AddRelatedRow(id, record)
         AddBucket(relatedIndex.saved, saved, id)
         relatedRows[id] = {
             exact=exact,exactAuto=exactAuto,saved=saved,
-            classAuthor=classAuthor,
+            classOwner=classOwner,
         }
         return
     end
@@ -683,7 +671,7 @@ local function AddRelatedRow(id, record)
     relatedRows[id] = {
         exact=exact,exactAuto=exactAuto,
         fingerprint=fingerprintKey,title=titleKey,spells=spellKeys,
-        classAuthor=classAuthor,
+        classOwner=classOwner,
     }
 end
 
@@ -701,7 +689,7 @@ end
 
 local function RebuildRelatedIndex()
     relatedIndex = {
-        exact={},fingerprints={},titles={},spells={},saved={},authorClasses={}}
+        exact={},fingerprints={},titles={},spells={},saved={},ownerClasses={}}
     relatedRows = {}
     local seen = {}
     for id in pairs(baseline) do
@@ -901,6 +889,37 @@ function Catalog.FindExactFingerprint(fingerprint)
     return id, PublicRecord(record, source)
 end
 
+-- Resolve and validate a protocol-v6 @hash claim only through its exact typed
+-- raw build ID and canonical ordinary Echo evidence. Persisted hash metadata is
+-- corroborating input, never independent identity authority.
+function Catalog.ValidateLegacyFingerprintClaim(rawId, record)
+    EnsureBound()
+    if rawId == nil or (type(rawId) ~= "string" and type(rawId) ~= "number")
+        or tostring(rawId) == "" then
+        return nil, "legacy claim requires an exact typed build ID"
+    end
+    local raw, source = SelectedRaw(rawId)
+    if source == "tombstone" then
+        return nil, "historical build identity is tombstoned"
+    end
+    if type(raw) ~= "table" then
+        return nil, "exact represented build is unavailable"
+    end
+    local evidence = Nexus and Nexus.LoadoutEvidence
+    if not (evidence
+        and type(evidence.ValidateLegacyFingerprintClaim) == "function") then
+        return nil, "legacy claim validator is unavailable"
+    end
+    local claim = type(record) == "table" and record or {
+        buildId=rawId,
+    }
+    local ok, proof, reason = pcall(
+        evidence.ValidateLegacyFingerprintClaim, claim, raw)
+    if not ok then return nil, "legacy claim validation failed" end
+    if type(proof) ~= "table" then return nil, reason end
+    return proof
+end
+
 -- Resolve a display/navigation identity without rewriting the historical raw
 -- build ID. The selected raw row wins only when its exact fingerprint still
 -- agrees; otherwise the incrementally maintained exact bucket supplies the
@@ -921,6 +940,22 @@ function Catalog.ResolveFingerprintIdentity(rawId, fingerprint, options)
     elseif type(options) == "boolean" then
         allowClassOnly = options == true
     end
+    if fingerprint:sub(1, 1) == "@" then
+        local legacyRecord = type(options) == "table"
+            and options.legacyRecord or nil
+        if type(legacyRecord) ~= "table" then
+            legacyRecord = {buildId=rawId,fingerprint=fingerprint}
+        end
+        local proof, reason =
+            Catalog.ValidateLegacyFingerprintClaim(rawId, legacyRecord)
+        if proof then
+            debugStats.identityRawHits = debugStats.identityRawHits + 1
+            return rawId, "legacy-alias", proof.fingerprint
+        end
+        debugStats.identityResolutionFailures =
+            debugStats.identityResolutionFailures + 1
+        return nil, reason or "legacy fingerprint identity is unavailable"
+    end
     if rawId ~= nil then
         local raw, rawSource = SelectedRaw(rawId)
         if rawSource == "tombstone" then
@@ -928,7 +963,7 @@ function Catalog.ResolveFingerprintIdentity(rawId, fingerprint, options)
                 debugStats.identityResolutionFailures + 1
             return nil, "historical build identity is tombstoned"
         end
-        if raw and FingerprintMatches(raw, fingerprint)
+        if raw and ExactFingerprint(raw) == fingerprint
             and (OrdinaryComplete(raw) or
                 (allowClassOnly and HasStringClass(raw))) then
             debugStats.identityRawHits = debugStats.identityRawHits + 1
@@ -958,35 +993,39 @@ function Catalog.ResolveFingerprintIdentity(rawId, fingerprint, options)
     return nil, "exact build identity is unavailable"
 end
 
--- Historical DPS summaries sometimes retain a stale build identity but the
--- catalog still contains other represented builds authored by that character.
--- Character class is invariant, so expose it only when every classified build
--- for the exact normalized author agrees. This is display/filter evidence only:
--- callers receive one scalar and no record identity or ownership authority.
-function Catalog.ResolveAuthorClass(author)
+-- Historical DPS summaries sometimes retain a stale build identity while the
+-- catalog still contains other represented builds owned by that character.
+-- Recover display/filter class only from an exact, realm-qualified owner whose
+-- provenance was verified on both the indexed build and the requesting row.
+-- Realm-less author text is deliberately never identity authority.
+function Catalog.ResolveOwnerClass(ownerKey, ownerVerified)
     EnsureBound()
-    debugStats.authorClassLookups = debugStats.authorClassLookups + 1
+    debugStats.ownerClassLookups = debugStats.ownerClassLookups + 1
     if relatedIndexGeneration ~= libraryGeneration then
-        return nil, "author class index stale"
+        return nil, "owner class index stale"
     end
-    local key = Identity.PlayerKey(author)
-    local bucket = key and relatedIndex.authorClasses[key] or nil
-    if not bucket then return nil, "author class unavailable" end
+    if ownerVerified ~= true then return nil, "owner identity is unverified" end
+    local key = Identity.CanonicalOwnerKey(ownerKey)
+    if not key or key:match("@unknown$") then
+        return nil, "realm-qualified owner is unavailable"
+    end
+    local bucket = relatedIndex.ownerClasses[key]
+    if not bucket then return nil, "owner class unavailable" end
     local resolved, distinct = nil, 0
     for value in pairs(bucket.classes) do
         resolved = value
         distinct = distinct + 1
         if distinct > 1 then
-            debugStats.authorClassConflicts =
-                debugStats.authorClassConflicts + 1
-            return nil, "author class evidence conflicts"
+            debugStats.ownerClassConflicts =
+                debugStats.ownerClassConflicts + 1
+            return nil, "owner class evidence conflicts"
         end
     end
     if distinct == 1 then
-        debugStats.authorClassHits = debugStats.authorClassHits + 1
-        return resolved, "author-consensus"
+        debugStats.ownerClassHits = debugStats.ownerClassHits + 1
+        return resolved, "owner-consensus"
     end
-    return nil, "author class unavailable"
+    return nil, "owner class unavailable"
 end
 
 -- Saved-loadout reconciliation reads only narrow revision-owned candidate

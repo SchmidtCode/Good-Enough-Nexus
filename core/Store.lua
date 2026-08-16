@@ -78,6 +78,11 @@ local function NormalizeVersion(value)
     return value
 end
 
+local function HasFutureSettingsOwner(db)
+    return type(db) == "table"
+        and NormalizeVersion(rawget(db, "settingsVersion")) > SETTINGS_VERSION
+end
+
 local function ReadLegacyMigrationMarker(db)
     local migrations = rawget(db, LEGACY_MIGRATION_NAMESPACE)
     if migrations == nil then return nil, nil end
@@ -209,21 +214,24 @@ function Store.Init()
     -- deliberately last so dependency failures retain the recovery reference.
     local db, legacyDecision = SelectDatabaseForLegacyMigration()
     NexusDB = db
-    if type(db.chars) ~= "table" then db.chars = {} end
-    if type(db.settings) ~= "table" then db.settings = {} end
+    local futureSettingsOwner = HasFutureSettingsOwner(db)
+    if not futureSettingsOwner then
+        if type(db.chars) ~= "table" then db.chars = {} end
+        if type(db.settings) ~= "table" then db.settings = {} end
 
-    local profile = Nexus.DefaultProfile
-    local defaults = profile and profile.defaultSettings or {}
+        local profile = Nexus.DefaultProfile
+        local defaults = profile and profile.defaultSettings or {}
 
-    ApplyMigrations(db)
-    FillMissing(db.settings, defaults)
+        ApplyMigrations(db)
+        FillMissing(db.settings, defaults)
 
-    -- Per-character shape drift is filled recursively without replacing the
-    -- state table, its safety latches, or fields owned by newer builds.
-    for name, state in pairs(db.chars) do
-        state = EnsureStateShape(state)
-        db.chars[name] = state
-        FillMissing(state, FreshState())
+        -- Per-character shape drift is filled recursively without replacing
+        -- the state table, its safety latches, or newer fields.
+        for name, state in pairs(db.chars) do
+            state = EnsureStateShape(state)
+            db.chars[name] = state
+            FillMissing(state, FreshState())
+        end
     end
 
     -- The evidence pool is bound before BuildCatalog so overlay writes can
@@ -344,7 +352,8 @@ end
 -- invalid pre-init globals are never latched.
 function Store.Settings()
     local db = NexusDB
-    if db and type(db.settings) == "table" then return db.settings end
+    if db and not HasFutureSettingsOwner(db)
+        and type(db.settings) == "table" then return db.settings end
     if not transientSettings then
         local profile = Nexus.DefaultProfile
         transientSettings = DeepCopy(profile and profile.defaultSettings or {})
@@ -360,7 +369,8 @@ function Store.State()
     local name = UnitName and UnitName("player") or nil
     local db = NexusDB
     if not name or name == "" or name == "Unknown"
-        or not db or type(db.chars) ~= "table" then
+        or not db or HasFutureSettingsOwner(db)
+        or type(db.chars) ~= "table" then
         transientState = transientState or FreshState()
         return transientState
     end

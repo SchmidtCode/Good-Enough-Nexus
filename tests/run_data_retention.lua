@@ -123,6 +123,12 @@ for i = 1, 150 do
     }
 end
 
+overlay["retained-marker-build"] = {
+    id="retained-marker-build",title="Retained exact marker",
+    author="MarkerPeer",autoDps=true,lastModified=now,
+    loadoutAvailable=true,
+}
+
 for i = 1, 2100 do
     NexusDB.syncTombstones[string.format("old-delete-%04d", i)] = {
         stamp=now - 200 * 24 * 60 * 60 + i, author="OldPeer",
@@ -133,6 +139,9 @@ NexusDB.syncTombstones["release-mask"] = {
 }
 NexusDB.syncTombstones.pending = {
     stamp=now - 300 * 24 * 60 * 60, author="Boganic", pending=true,
+}
+NexusDB.syncTombstones["retained-delete"] = {
+    stamp=now - 1, author="OldPeer",
 }
 
 Nexus.LoadoutEvidence.Init(NexusDB)
@@ -172,10 +181,15 @@ assert(overlay["remote-char-001"] ~= nil,
     "Average selection did not preserve its lower raw-category contributor")
 assert(summary.orphanAutoBuildsRemoved >= 45,
     "superseded automatic DPS pages were not reclaimed")
-assert((NexusDB.communityBuildRetentionFloor or 0) > 0
+local evictedStamp = NexusDB.communityRetentionEvictions
+    and NexusDB.communityRetentionEvictions["retained-marker-build"]
+assert(evictedStamp
     and not Nexus.DataRetention.AllowsRemoteRevision(
-        "Peer1", 1001, NexusDB, "remote-0001"),
-    "evicted mesh history could immediately re-enter and churn Sync")
+        "MarkerPeer", evictedStamp, NexusDB, "retained-marker-build")
+    and Nexus.DataRetention.AllowsRemoteRevision(
+        "OtherPeer", 1, NexusDB, "unrelated-older-build")
+    and NexusDB.communityBuildRetentionFloor == nil,
+    "exact eviction marker suppressed an unrelated build or lost its own ID")
 
 local characterCount = 0
 for _ in pairs(dummy) do characterCount = characterCount + 1 end
@@ -205,14 +219,33 @@ assert(NexusDB.syncTombstones["release-mask"] ~= nil
 assert(NexusDB.syncTombstones.pending ~= nil,
     "pending local delete was compacted before transmission")
 assert(summary.tombstonesRemoved == 2100
-    and (NexusDB.syncTombstoneFloor or 0) > 0,
-    "old exact tombstones were not replaced by a retention floor")
-assert(not Nexus.DataRetention.AllowsRemoteRevision(
-    "OldPeer", NexusDB.syncTombstoneFloor, NexusDB),
-    "compacted deletion floor accepted a stale resurrection")
+    and NexusDB.syncTombstoneFloor == nil
+    and NexusDB.syncTombstones["old-delete-0001"] == nil,
+    "old non-baseline tombstones were not safely forgotten")
 assert(Nexus.DataRetention.AllowsRemoteRevision(
-    "OldPeer", NexusDB.syncTombstoneFloor + 1, NexusDB),
-    "compacted deletion floor rejected a newer revision")
+        "OldPeer", 1, NexusDB, "unrelated-after-tombstone-compaction")
+    and Nexus.DataRetention.AllowsRemoteRevision(
+        "OldPeer", 1, NexusDB, "old-delete-0001"),
+    "forgotten tombstone suppressed its own or an unrelated ID")
+local retainedDelete = NexusDB.syncTombstones["retained-delete"]
+assert(type(retainedDelete) == "table"
+        and 1 <= (tonumber(retainedDelete.stamp) or 0),
+    "recent exact tombstone was compacted")
+
+-- Divergent local retention histories must not partition the mesh. Only B is
+-- suppressed on the peer that still remembers B; A remains admissible to both,
+-- and forgetting B's exact marker restores convergence for B.
+local peerOne = {communityRetentionEvictions={B=200}}
+local peerTwo = {communityRetentionEvictions={}}
+assert(Nexus.DataRetention.AllowsRemoteRevision("Peer",150,peerOne,"A")
+        and Nexus.DataRetention.AllowsRemoteRevision("Peer",150,peerTwo,"A")
+        and not Nexus.DataRetention.AllowsRemoteRevision("Peer",150,peerOne,"B")
+        and Nexus.DataRetention.AllowsRemoteRevision("Peer",150,peerTwo,"B"),
+    "one build's exact retention history affected another build")
+peerOne.communityRetentionEvictions.B = nil
+assert(Nexus.DataRetention.AllowsRemoteRevision("Peer",150,peerOne,"B")
+        and Nexus.DataRetention.AllowsRemoteRevision("Peer",150,peerTwo,"B"),
+    "peers did not converge after exact suppression was forgotten")
 
 overlay.superseded = {
     id="superseded", title="Old DPS page", author="Remote",
@@ -285,6 +318,11 @@ assert(relaxedLimits.enabled == false
 
 local unlimited = {
     settings={communityRetentionEnabled=false},
+    communityBuildRetentionFloor=now,
+    syncTombstoneFloor=now,
+    communityRetentionEvictions={
+        ["disabled-exact-marker"]=now,
+    },
     communityBuilds={},syncTombstones={},
     dpsCapture={personalBest={},buildBest={},characterBest={dummy={},lk={}}},
 }
@@ -318,7 +356,13 @@ assert(unlimitedSummary.contentUnlimited == true
         and UnlimitedCount(unlimited.dpsCapture.characterBest.dummy) == 1100
         and UnlimitedCount(unlimited.dpsCapture.characterBest.lk) == 1100
         and UnlimitedCount(unlimited.dpsCapture.personalBest) == 1100
-        and UnlimitedCount(unlimited.dpsCapture.buildBest) == 1100,
+        and UnlimitedCount(unlimited.dpsCapture.buildBest) == 1100
+        and unlimited.communityBuildRetentionFloor == nil
+        and unlimited.syncTombstoneFloor == nil
+        and Nexus.DataRetention.AllowsRemoteRevision(
+            "Peer",1,unlimited,"unrelated-disabled")
+        and not Nexus.DataRetention.AllowsRemoteRevision(
+            "Peer",now,unlimited,"disabled-exact-marker"),
     "disabled retention still capped build or DPS content")
 
 print("bounded community/DPS retention and tombstone compaction -- OK")

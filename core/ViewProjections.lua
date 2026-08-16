@@ -27,7 +27,7 @@ local workStats = {
     maxSourceRowsPerPump=0,maxComparisonsPerPump=0,
     maxSortMovesPerPump=0,maxJoinsPerPump=0,maxCopiesPerPump=0,
     classFromRecord=0,classFromBuild=0,classFromCurrentPlayer=0,
-    classFromAuthor=0,
+    classFromOwner=0,
     classUnavailable=0,classConflicts=0,
 }
 local MAX_SOURCE_PER_PUMP = 25
@@ -864,7 +864,8 @@ end
 -- retaining their complete inline ordinary evidence. Hydrate only the class
 -- scalar from that represented identity: the summary must never become the row's
 -- display build or replace either historical identity field.
-local function RecoveredInlineClass(row, buildId, enforceRevision)
+local function RecoveredInlineClass(row, buildId, enforceRevision,
+    verifiedFingerprint)
     if type(row) ~= "table" or row.recordIdentityMismatch
         or row.resolvedIdentityMismatch or row.classEvidenceMismatch then
         return nil
@@ -879,14 +880,12 @@ local function RecoveredInlineClass(row, buildId, enforceRevision)
     if not ok or type(summary) ~= "table" then return nil end
     if type(summary.id) ~= type(buildId) or summary.id ~= buildId then return nil end
 
-    local rowFingerprint = type(row.fingerprint) == "string" and row.fingerprint or nil
-    if type(summary.fingerprint) == "string" and type(rowFingerprint) == "string"
-        and rowFingerprint ~= summary.fingerprint then
-        local alias = rowFingerprint:sub(1, 1) == "@"
-            and rowFingerprint:sub(2):lower() or nil
-        local summaryHash = type(summary.fingerprintHash) == "string"
-            and summary.fingerprintHash:lower() or nil
-        if not alias or alias == "" or alias ~= summaryHash then return nil end
+    local comparisonFingerprint = verifiedFingerprint
+        or (type(row.fingerprint) == "string" and row.fingerprint or nil)
+    if type(summary.fingerprint) == "string"
+        and type(comparisonFingerprint) == "string"
+        and comparisonFingerprint ~= summary.fingerprint then
+        return nil
     end
 
     if enforceRevision and type(summary.fingerprint) == "string"
@@ -925,8 +924,11 @@ local function ResolveLeaderboardOrdinary(row)
         return nil, nil, type(verdict) == "table" and verdict.reason
             or "ordinary evidence unavailable"
     end
-    local resolvedId, resolvedSource = catalog.ResolveFingerprintIdentity(
-        row and row.buildId, row and row.fingerprint, {allowClassOnly = true})
+    local resolvedId, resolvedSource, resolvedFingerprint =
+        catalog.ResolveFingerprintIdentity(
+            row and row.buildId, row and row.fingerprint, {
+                allowClassOnly=true,legacyRecord=row,
+            })
     if resolvedId == nil then
         return nil, nil, type(verdict) == "table" and verdict.reason
             or "ordinary evidence unavailable"
@@ -946,7 +948,7 @@ local function ResolveLeaderboardOrdinary(row)
         local enforceRevision = row.resolvedFingerprintEpoch ~= nil
             and row.resolvedFingerprintRevision ~= nil
         recoveredInlineClass = RecoveredInlineClass(
-            row, resolvedId, enforceRevision)
+            row, resolvedId, enforceRevision, resolvedFingerprint)
     end
     if recovered ~= nil then
         return recovered, resolvedId, resolvedSource or "catalog", build,
@@ -958,10 +960,9 @@ end
 
 local function IsCurrentPlayerRow(row, context)
     if type(row) ~= "table" then return false end
-    local player = type(context) == "table" and context.player or ""
     local owner = type(context) == "table" and context.ownerKey or ""
-    if player ~= "" and Identity.PlayerKey(row.player) == player then return true end
-    if owner ~= "" and type(Identity.CanonicalOwnerKey) == "function" then
+    if row.ownerVerified == true and owner ~= ""
+        and type(Identity.CanonicalOwnerKey) == "function" then
         return Identity.CanonicalOwnerKey(row.ownerKey) == owner
     end
     return false
@@ -992,23 +993,24 @@ local function ResolveLeaderboardClass(row, resolvedBuild, context,
         if buildClass then return buildClass, "exact-build" end
     end
 
+    -- A legacy summary can outlive its exact build reference. Recover only a
+    -- display/filter class when verified records for the exact realm-qualified
+    -- owner agree. Short author names and unverified relay claims never grant
+    -- class authority.
+    local catalog = Nexus and Nexus.BuildCatalog
+    if catalog and type(catalog.ResolveOwnerClass) == "function" then
+        local ok, recovered, source = pcall(
+            catalog.ResolveOwnerClass, row.ownerKey, row.ownerVerified)
+        recovered = ok and NormalizeClass(recovered) or nil
+        if recovered then return recovered, source or "owner-consensus" end
+        if ok and source == "owner class evidence conflicts" then
+            return nil, "unavailable", source
+        end
+    end
+
     if IsCurrentPlayerRow(row, context) then
         local current = NormalizeClass(context and context.currentClass)
         if current then return current, "current-player" end
-    end
-
-    -- A legacy summary can outlive its exact build reference. Recover only a
-    -- display/filter class when the indexed catalog has one conflict-free class
-    -- for this exact normalized author. This grants no build or owner identity.
-    local catalog = Nexus and Nexus.BuildCatalog
-    if catalog and type(catalog.ResolveAuthorClass) == "function" then
-        local ok, recovered, source = pcall(
-            catalog.ResolveAuthorClass, row.player)
-        recovered = ok and NormalizeClass(recovered) or nil
-        if recovered then return recovered, source or "author-consensus" end
-        if ok and source == "author class evidence conflicts" then
-            return nil, "unavailable", source
-        end
     end
     return nil, "unavailable", "class unavailable"
 end
@@ -1020,12 +1022,12 @@ local function CountLeaderboardClass(source, reason)
         workStats.classFromBuild = workStats.classFromBuild + 1
     elseif source == "current-player" then
         workStats.classFromCurrentPlayer = workStats.classFromCurrentPlayer + 1
-    elseif source == "author-consensus" then
-        workStats.classFromAuthor = workStats.classFromAuthor + 1
+    elseif source == "owner-consensus" then
+        workStats.classFromOwner = workStats.classFromOwner + 1
     else
         workStats.classUnavailable = workStats.classUnavailable + 1
         if reason == "record categories disagree"
-            or reason == "author class evidence conflicts" then
+            or reason == "owner class evidence conflicts" then
             workStats.classConflicts = workStats.classConflicts + 1
         end
     end
@@ -1485,7 +1487,7 @@ function Projections.Reset()
         maxSourceRowsPerPump=0,maxComparisonsPerPump=0,
         maxSortMovesPerPump=0,maxJoinsPerPump=0,maxCopiesPerPump=0,
         classFromRecord=0,classFromBuild=0,classFromCurrentPlayer=0,
-        classFromAuthor=0,
+        classFromOwner=0,
         classUnavailable=0,classConflicts=0,
     }
 end

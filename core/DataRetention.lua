@@ -11,7 +11,7 @@ local Identity = assert(Nexus.Identity,
 local Retention = {}
 Nexus.DataRetention = Retention
 
-local SCHEMA_VERSION = 2
+local SCHEMA_VERSION = 3
 local DEFAULT_LIMITS = {
     topPerCategory = 100,
     minPerClassPerCategory = 15,
@@ -504,7 +504,12 @@ local function PruneEvictionMarkers(database, now)
     local source = type(database.communityRetentionEvictions) == "table"
         and database.communityRetentionEvictions or {}
     local before = Count(source)
-    local floor = tonumber(database.communityBuildRetentionFloor) or 0
+    -- Retention suppression is exact-ID authority. Older schema versions
+    -- compacted removed markers into a global timestamp floor, which allowed
+    -- build B's history to reject an unrelated older build A. Forget the
+    -- obsolete floor; once an exact marker is deliberately removed, that one
+    -- build may re-enter and converge normally.
+    database.communityBuildRetentionFloor = nil
     local cutoff = now > DEFAULT_LIMITS.evictionMarkerAge
         and now - DEFAULT_LIMITS.evictionMarkerAge or 0
     local rows = {}
@@ -512,7 +517,7 @@ local function PruneEvictionMarkers(database, now)
         local stamp = tonumber(value) or 0
         rows[#rows + 1] = {
             id=id, stamp=stamp,
-            expired=stamp <= floor or (cutoff > 0 and stamp > 0 and stamp <= cutoff),
+            expired=cutoff > 0 and stamp > 0 and stamp <= cutoff,
         }
     end
     table.sort(rows, function(left, right)
@@ -524,7 +529,6 @@ local function PruneEvictionMarkers(database, now)
         if row.expired then
             source[row.id] = nil
             removed, remaining = removed + 1, remaining - 1
-            floor = math.max(floor, row.stamp)
         end
     end
     if remaining > DEFAULT_LIMITS.evictionMarkers then
@@ -533,14 +537,12 @@ local function PruneEvictionMarkers(database, now)
             if source[row.id] ~= nil then
                 source[row.id] = nil
                 removed, remaining = removed + 1, remaining - 1
-                floor = math.max(floor, row.stamp)
             end
         end
     end
-    if removed > 0 then database.communityBuildRetentionFloor = floor end
     return {
         before=before, after=math.max(0, before - removed), removed=removed,
-        floor=tonumber(database.communityBuildRetentionFloor) or 0,
+        floor=0,
     }
 end
 
@@ -553,7 +555,11 @@ local function PruneTombstones(database, now)
     local source = type(database.syncTombstones) == "table"
         and database.syncTombstones or {}
     local exactBefore = Count(source)
-    local floor = tonumber(database.syncTombstoneFloor) or 0
+    -- As with eviction markers, a deleted build's exact tombstone cannot act
+    -- as a namespace-wide watermark. Immutable baseline masks and pending
+    -- deletes remain exact and are never candidates here; forgotten remote
+    -- tombstones permit only their own IDs to re-enter.
+    database.syncTombstoneFloor = nil
     local cutoff = now > DEFAULT_LIMITS.tombstoneAge
         and now - DEFAULT_LIMITS.tombstoneAge or 0
     local candidates = {}
@@ -566,7 +572,7 @@ local function PruneTombstones(database, now)
         if stamp > 0 and not pending and not bundled then
             candidates[#candidates + 1] = {
                 id=id, stamp=stamp,
-                expired=(stamp <= floor or (cutoff > 0 and stamp <= cutoff)),
+                expired=cutoff > 0 and stamp <= cutoff,
             }
         end
     end
@@ -580,7 +586,6 @@ local function PruneTombstones(database, now)
         if entry.expired then
             marked[entry.id] = true
             countAfter = countAfter - 1
-            floor = math.max(floor, entry.stamp)
         end
     end
     if countAfter > DEFAULT_LIMITS.exactTombstones then
@@ -589,7 +594,6 @@ local function PruneTombstones(database, now)
             if not marked[entry.id] then
                 marked[entry.id] = true
                 countAfter = countAfter - 1
-                floor = math.max(floor, entry.stamp)
             end
         end
     end
@@ -608,10 +612,9 @@ local function PruneTombstones(database, now)
             end
         end
     end
-    if removed > 0 then database.syncTombstoneFloor = floor end
     return {
         before=exactBefore, after=math.max(0, exactBefore - removed),
-        removed=removed, floor=tonumber(database.syncTombstoneFloor) or 0,
+        removed=removed, floor=0,
     }
 end
 
@@ -803,15 +806,10 @@ end
 
 function Retention.AllowsRemoteRevision(_, stamp, database, buildId)
     database = type(database) == "table" and database or NexusDB
-    local tombstoneFloor = type(database) == "table"
-        and tonumber(database.syncTombstoneFloor) or 0
-    local buildFloor = type(database) == "table"
-        and tonumber(database.communityBuildRetentionFloor) or 0
     local marker = type(database) == "table"
         and type(database.communityRetentionEvictions) == "table"
         and tonumber(database.communityRetentionEvictions[buildId]) or 0
-    return (tonumber(stamp) or 0) > math.max(
-        tombstoneFloor or 0, buildFloor or 0, marker or 0)
+    return (tonumber(stamp) or 0) > (marker or 0)
 end
 
 function Retention.ReleaseSupersededAutoBuild(buildId, database)

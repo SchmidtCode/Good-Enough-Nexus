@@ -2182,9 +2182,20 @@ local function DpsBoardEntry(row, category, summaryOnly)
     local catalog = Catalog()
     local buildIdentityMismatch = false
     local recordIdentityMismatch = false
+    local legacyProof
+    if type(row.fingerprint) == "string"
+        and row.fingerprint:sub(1, 1) == "@"
+        and catalog
+        and type(catalog.ValidateLegacyFingerprintClaim) == "function" then
+        local ok, proof = pcall(
+            catalog.ValidateLegacyFingerprintClaim, rawBuildId, row)
+        if ok and type(proof) == "table" then legacyProof = proof end
+    end
     local rowKey = EchoKey(rowEchoes)
     if row.fingerprint and rowKey
-        and tostring(row.fingerprint) ~= tostring(rowKey) then
+        and tostring(row.fingerprint) ~= tostring(rowKey)
+        and not (legacyProof
+            and tostring(legacyProof.fingerprint) == tostring(rowKey)) then
         recordIdentityMismatch = true
     end
     local idBuild = summaryOnly and rowEchoes and catalog
@@ -2194,7 +2205,11 @@ local function DpsBoardEntry(row, category, summaryOnly)
     if build then
         local buildKey = build.fingerprint or EchoKey(BuildSnapshot(build))
         if row.fingerprint and buildKey
-            and tostring(buildKey) ~= tostring(row.fingerprint) then
+            and tostring(buildKey) ~= tostring(row.fingerprint)
+            and not (legacyProof
+                and type(build.id) == type(legacyProof.buildId)
+                and build.id == legacyProof.buildId
+                and tostring(buildKey) == tostring(legacyProof.fingerprint)) then
             buildIdentityMismatch = true
             build = nil
         end
@@ -2203,22 +2218,25 @@ local function DpsBoardEntry(row, category, summaryOnly)
     local legacyProtocol = protocolVersion and protocolVersion == math.floor(protocolVersion)
         and protocolVersion > 0 and protocolVersion < PROTOCOL_VERSION
     if summaryOnly and build and legacyProtocol then
-        resolvedBuildId = buildId
+        resolvedBuildId = legacyProof and legacyProof.buildId or buildId
         if type(catalog.ExactFingerprintRevision) == "function" then
             resolvedFingerprintEpoch, resolvedFingerprintRevision =
-                catalog.ExactFingerprintRevision(row.fingerprint)
+                catalog.ExactFingerprintRevision(
+                    legacyProof and legacyProof.fingerprint or row.fingerprint)
         end
     end
     if summaryOnly and not build and rowEchoes and not recordIdentityMismatch
         and legacyProtocol and catalog
         and type(catalog.ResolveFingerprintIdentity) == "function" then
-        local ok, resolved = pcall(catalog.ResolveFingerprintIdentity,
-            rawBuildId, row.fingerprint)
+        local ok, resolved, _, resolvedFingerprint = pcall(
+            catalog.ResolveFingerprintIdentity,
+            rawBuildId, row.fingerprint, {legacyRecord=row})
         if ok and resolved then
             resolvedBuildId = resolved
             if type(catalog.ExactFingerprintRevision) == "function" then
                 resolvedFingerprintEpoch, resolvedFingerprintRevision =
-                    catalog.ExactFingerprintRevision(row.fingerprint)
+                    catalog.ExactFingerprintRevision(
+                        resolvedFingerprint or row.fingerprint)
             end
         end
     end

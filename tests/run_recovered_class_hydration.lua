@@ -71,6 +71,7 @@ local INCOMPLETE_SPELL = 930008
 local NOCLASS_SPELL = 930009
 local SAME_PLAYER_SPELL = 930010
 local LEGACY_HASH_SPELL = 930011
+local LEGACY_STALE_HASH_SPELL = 930012
 
 local targetFingerprint = Fingerprint(TARGET_SPELL)
 local rawId = "stage36-class-raw-collision"
@@ -80,7 +81,13 @@ local mismatchId = "stage36-class-mismatch"
 local noClassId = "stage36-class-no-class-evidence"
 local incompleteId = "stage36-class-incomplete-build"
 local legacyHashId = "stage36-class-legacy-hash"
-local legacyHash = "1a2b3c4d"
+local legacyStoredHashId = "stage36-class-legacy-stored-hash"
+local legacyFingerprint = Fingerprint(LEGACY_HASH_SPELL)
+local legacyHash = assert(Nexus.LoadoutEvidence.CompatibilityHash(
+    legacyFingerprint))
+local ambiguousLegacyHash = assert(Nexus.LoadoutEvidence.CompatibilityHash(
+    Fingerprint(AMBIGUOUS_SPELL)))
+local maliciousStoredHash = "deadbeef"
 
 local bundle = {
     schemaVersion=1,catalogVersion="stage36-class-red",sourceVersion="test",
@@ -131,9 +138,15 @@ local bundle = {
         },
         [legacyHashId]={
             id=legacyHashId,title="Legacy hash record",author="Legacyhash",
-            class="PRIEST",fingerprint=Fingerprint(LEGACY_HASH_SPELL),
+            class="PRIEST",fingerprint=legacyFingerprint,
             fingerprintHash=legacyHash,echoes=Echoes(LEGACY_HASH_SPELL),
             autoDps=true,lastModified=10,
+        },
+        [legacyStoredHashId]={
+            id=legacyStoredHashId,title="Untrusted stored hash",author="Storedhash",
+            class="WARLOCK",fingerprint=Fingerprint(LEGACY_STALE_HASH_SPELL),
+            fingerprintHash=maliciousStoredHash,
+            echoes=Echoes(LEGACY_STALE_HASH_SPELL),autoDps=true,lastModified=10,
         },
     },
 }
@@ -197,11 +210,47 @@ characterBest.dummy.legacyHash = {
     player="Legacyhash",dps=838000,duration=60,level=80,ts=7.6,
     protocolVersion=6,buildId=legacyHashId,
     fingerprint="@" .. legacyHash,loadoutHash=legacyHash,
+    echoes=Echoes(LEGACY_HASH_SPELL),
+}
+characterBest.dummy.legacyHashSummary = {
+    player="Legacyhashsummary",dps=837900,duration=60,level=80,ts=7.61,
+    protocolVersion=6,buildId=legacyHashId,
+    fingerprint="@" .. legacyHash,loadoutHash=legacyHash,
 }
 characterBest.dummy.legacyHashMismatch = {
     player="Legacyhashmismatch",dps=837000,duration=60,level=80,ts=7.7,
     protocolVersion=6,buildId=legacyHashId,
     fingerprint="@deadbeef",loadoutHash="deadbeef",
+}
+characterBest.dummy.legacyStoredHash = {
+    player="Legacystoredhash",dps=836900,duration=60,level=80,ts=7.71,
+    protocolVersion=6,buildId=legacyStoredHashId,
+    fingerprint="@"..maliciousStoredHash,loadoutHash=maliciousStoredHash,
+    echoes=Echoes(LEGACY_STALE_HASH_SPELL),
+}
+characterBest.dummy.legacyLoadoutHashMismatch = {
+    player="Legacyloadoutmismatch",dps=836800,duration=60,level=80,ts=7.72,
+    protocolVersion=6,buildId=legacyHashId,
+    fingerprint="@"..legacyHash,loadoutHash=maliciousStoredHash,
+    echoes=Echoes(LEGACY_HASH_SPELL),
+}
+characterBest.dummy.legacyInlineMismatch = {
+    player="Legacyinlinemismatch",dps=836700,duration=60,level=80,ts=7.73,
+    protocolVersion=6,buildId=legacyHashId,
+    fingerprint="@"..legacyHash,loadoutHash=legacyHash,
+    echoes=Echoes(MISMATCH_INLINE_SPELL),
+}
+characterBest.dummy.legacyIdMismatch = {
+    player="Legacyidmismatch",dps=836600,duration=60,level=80,ts=7.74,
+    protocolVersion=6,buildId=mismatchId,
+    fingerprint="@"..legacyHash,loadoutHash=legacyHash,
+    echoes=Echoes(LEGACY_HASH_SPELL),
+}
+characterBest.dummy.legacyAmbiguous = {
+    player="Legacyambiguous",dps=836500,duration=60,level=80,ts=7.75,
+    protocolVersion=6,buildId="stage36-class-ambiguous-missing",
+    fingerprint="@"..ambiguousLegacyHash,loadoutHash=ambiguousLegacyHash,
+    echoes=Echoes(AMBIGUOUS_SPELL),
 }
 characterBest.lk.conflict = {
     player="Categoryconflict",class="ROGUE",dps=830000,duration=30,
@@ -302,17 +351,17 @@ local classless = allByPlayer.Classless
 local incompleteRecovered = allByPlayer.Incompletetest
 local incompletePlayer = "Incompletetest"
 local legacyHashRow = allByPlayer.Legacyhash
+local legacyHashSummary = allByPlayer.Legacyhashsummary
 local legacyHashMismatch = allByPlayer.Legacyhashmismatch
+local legacyStoredHash = allByPlayer.Legacystoredhash
+local legacyLoadoutHashMismatch = allByPlayer.Legacyloadoutmismatch
+local legacyInlineMismatch = allByPlayer.Legacyinlinemismatch
+local legacyIdMismatch = allByPlayer.Legacyidmismatch
+local legacyAmbiguous = allByPlayer.Legacyambiguous
 local targetResolvedByPlayer = FindByPlayerBuild(targetPlayerRows, targetPlayer, rawId)
-if incompleteRecovered ~= nil then
-    print("incomplete", incompleteRecovered.player, tostring(incompleteRecovered.ordinaryEvidenceSource),
-        tostring(incompleteRecovered.classSource), tostring(incompleteRecovered.ordinaryComplete),
-        tostring(incompleteRecovered.classUnavailable), tostring(incompleteRecovered.classUnavailableReason),
-        tostring(incompleteRecovered.ordinaryCompletenessReason))
-end
 local targetByResolvedMap = targetResolvedByPlayer or target
 
-Control(#allRows == 11 and allSummary.filtered == 11,
+Control(#allRows == 17 and allSummary.filtered == 17,
     "All Classes did not retain every accepted row")
 Control(targetByResolvedMap and targetByResolvedMap.buildId == rawId
         and targetByResolvedMap.resolvedBuildId == resolvedId
@@ -348,9 +397,18 @@ Desired(incompleteRecovered and incompleteRecovered.classSource == "exact-build"
     "same-player row with recovered incomplete identity did not use exact-build class source")
 Desired(legacyHashRow and legacyHashRow.resolvedClass == "PRIEST"
         and legacyHashRow.classSource == "exact-build",
-    "legacy @hash fingerprint did not recover class from its exact build id/hash")
-Control(legacyHashMismatch and legacyHashMismatch.resolvedClass == nil,
-    "mismatched legacy hash gained catalog class authority")
+    "legacy @hash with inline evidence did not recover its exact build class")
+Desired(legacyHashSummary and legacyHashSummary.resolvedClass == "PRIEST"
+        and legacyHashSummary.classSource == "exact-build",
+    "summary-only legacy @hash did not recover its exact build class")
+for label, row in pairs({
+    alias=legacyHashMismatch,storedHash=legacyStoredHash,
+    loadoutHash=legacyLoadoutHashMismatch,inline=legacyInlineMismatch,
+    buildId=legacyIdMismatch,ambiguous=legacyAmbiguous,
+}) do
+    Control(row and row.resolvedClass == nil and row.classUnavailable == true,
+        "hostile legacy "..label.." claim gained catalog class authority")
+end
 
 local currentToken = select(2, UnitClass("player"))
 local currentRows = Project("dummy", currentToken)
@@ -375,7 +433,9 @@ Desired(druidByTarget ~= nil,
 liveClass = "MAGE"
 
 local priestRows = Project("dummy", "PRIEST")
-Control(#priestRows == 1 and priestRows[1].player == "Legacyhash",
+local priestByPlayer = ByPlayer(priestRows)
+Control(#priestRows == 2 and priestByPlayer.Legacyhash
+        and priestByPlayer.Legacyhashsummary,
     "legacy hash recovery or unknown/mismatched class filtering changed")
 
 local combinedRows = Project("combined", "ALL")

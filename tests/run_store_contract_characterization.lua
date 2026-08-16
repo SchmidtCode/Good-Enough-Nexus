@@ -7,6 +7,28 @@ dofile("core/Store.lua")
 
 local Store = Nexus.Store
 
+local function Copy(value, seen)
+    if type(value) ~= "table" then return value end
+    seen = seen or {}
+    if seen[value] then return seen[value] end
+    local out = {}; seen[value] = out
+    for key, child in pairs(value) do out[Copy(key, seen)] = Copy(child, seen) end
+    return out
+end
+
+local function Equal(left, right, seen)
+    if left == right then return true end
+    if type(left) ~= type(right) or type(left) ~= "table" then return false end
+    seen = seen or {}
+    if seen[left] then return seen[left] == right end
+    seen[left] = right
+    for key, value in pairs(left) do
+        if not Equal(value, right[key], seen) then return false end
+    end
+    for key in pairs(right) do if left[key] == nil then return false end end
+    return true
+end
+
 NexusDB = nil
 WishlistRealizerDB = nil
 UnitName = function() return "Unknown" end
@@ -42,6 +64,8 @@ local root = {
     loadoutEvidence=evidence,
     futureRoot={keep=true},
 }
+local futureSettingsBefore = Copy(settings)
+local futureCharsBefore = Copy(chars)
 NexusDB = root
 UnitName = function() return "Hero" end
 
@@ -70,23 +94,31 @@ assert(NexusDB == root and NexusDB.settings == settings
     and NexusDB.chars == chars and NexusDB.chars.Hero == hero,
     "Store initialization replaced root, settings, chars, or character state")
 assert(NexusDB.settingsVersion == 99 and settings.autoPick == false
-    and settings.autoSave == true and #settings.anchorNames == 0
+    and settings.autoSave == nil and #settings.anchorNames == 0
     and settings.futurePreference.keep and hero.priorAutoAccept == false
-    and hero.futureSafety.keep and NexusDB.futureRoot.keep,
-    "Store downgraded future schema or replaced explicit/unknown fields")
+    and hero.futureSafety.keep and NexusDB.futureRoot.keep
+    and Equal(settings, futureSettingsBefore)
+    and Equal(chars, futureCharsBefore),
+    "Store mutated future settings or character ownership")
 assert(NexusDB.communityBuilds == builds and NexusDB.dpsCapture == dps
     and NexusDB.syncTombstones == tombstones
     and NexusDB.diagnosticLogs == diagnostics
     and NexusDB.loadoutEvidence == evidence,
     "Store initialization replaced another SavedVariables owner")
-assert(Store.SettingsVersion() == 2 and Store.Settings() == settings
-    and Store.State() == hero,
-    "Store public accessors changed version or live-table identity")
+assert(Store.SettingsVersion() == 2 and Store.Settings() == transientSettings
+    and Store.State() == transientState
+    and Store.Settings() ~= settings and Store.State() ~= hero
+    and Equal(settings, futureSettingsBefore)
+    and Equal(chars, futureCharsBefore),
+    "Store public accessors exposed or mutated a future owner")
 
 calls = {}
 Store.Init()
 assert(table.concat(calls, ",") == "evidence,catalog,compaction"
-    and NexusDB == root and Store.Settings() == settings and Store.State() == hero,
+    and NexusDB == root and Store.Settings() == transientSettings
+    and Store.State() == transientState
+    and Equal(settings, futureSettingsBefore)
+    and Equal(chars, futureCharsBefore),
     "repeat initialization changed order or live-table identity")
 
 calls = {}
@@ -154,7 +186,10 @@ Nexus.DataCompaction.Init = function(db)
 end
 Store.Init()
 assert(table.concat(calls, ",") == "evidence,catalog,compaction"
-    and NexusDB == root and Store.Settings() == settings and Store.State() == hero,
+    and NexusDB == root and Store.Settings() == transientSettings
+    and Store.State() == transientState
+    and Equal(settings, futureSettingsBefore)
+    and Equal(chars, futureCharsBefore),
     "Store retry did not complete against the preserved live root")
 
 print("Store order, identity, future fields, failure, and retry behavior -- OK")
