@@ -85,6 +85,12 @@ if type(Protocol) == "table" and type(Identity.PlayerKey) == "function" then
     Check(Identity.OwnerKey(accented, "ebonhold-cluster")
         == string.format("%s@ebonhold-cluster", accented:lower()),
         "accented owner key was normalized incorrectly")
+    Check(Identity.OwnerKey(accented, "Rogue-Lite(Live)")
+        == string.format("%s@rogue-lite(live)", accented:lower())
+        and Identity.CanonicalOwnerKey(
+            string.format("%s@rogue-lite(live)", accented:lower()))
+            == string.format("%s@rogue-lite(live)", accented:lower()),
+        "production Ebonhold realm format was rejected")
     Check(Identity.PlayerKey(wrongRealm) == nil,
         "realm-qualified owner text was not rejected in PlayerKey")
 end

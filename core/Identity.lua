@@ -165,7 +165,8 @@ local function RealmKey(value, trustedLocal)
         if byte < 0x80 and not ((byte >= 0x30 and byte <= 0x39)
             or (byte >= 0x41 and byte <= 0x5A)
             or (byte >= 0x61 and byte <= 0x7A)
-            or byte == 0x27 or byte == 0x2D or byte == 0x5F) then
+            or byte == 0x27 or byte == 0x28 or byte == 0x29
+            or byte == 0x2D or byte == 0x5F) then
             return nil
         end
     end

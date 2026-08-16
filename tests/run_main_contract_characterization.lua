@@ -274,7 +274,8 @@ H.FireEvent("CHAT_MSG_WHISPER", "WLRQ|Dev|request-9|dev", "Dev")
 assert(table.concat(routed, ",", routeBeforeEvents + 1) == table.concat({
     "Adapter.OnEvent", "DpsCapture.OnCombatStart", "DpsCapture.OnCombatEnd",
     "Sync.HandleIncoming", "Sync.HandleStatusRequest",
-}, ","), "Main event routing order changed")
+}, ","), "Main event routing order changed: "
+    .. table.concat(routed, ",", routeBeforeEvents + 1))
 assert(MutationSnapshot() == mutationBeforeEvents,
     "passive lifecycle routing submitted gameplay work")
 

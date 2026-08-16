@@ -485,6 +485,137 @@ function Evidence.OrdinaryCompleteness(row)
     return Finish("complete")
 end
 
+-- Historical protocol-v6 DPS summaries may identify a canonical ordinary
+-- loadout as "@<djb2 hash>". The alias is compatibility metadata, never the
+-- canonical identity itself. Keep its validation beside the ordinary-evidence
+-- owner so every consumer uses the same normalization and hash rules.
+function Evidence.CompatibilityHash(fingerprint)
+    if type(fingerprint) ~= "string" or fingerprint == "" then return nil end
+    local hash = 5381
+    for index = 1, #fingerprint do
+        hash = ((hash * 33) + fingerprint:byte(index)) % 2147483648
+    end
+    return string.format("%x", hash)
+end
+
+local function CanonicalOrdinaryFingerprint(row)
+    if type(row) ~= "table" then return nil, "ordinary evidence unavailable" end
+    local copy = DeepCopy(row)
+    -- The canonical evidence must be evaluated independently of a persisted
+    -- full fingerprint or legacy alias claim.
+    copy.fingerprint = nil
+    local verdict = Evidence.OrdinaryCompleteness(copy)
+    if not (type(verdict) == "table" and verdict.complete == true
+        and type(verdict.fingerprint) == "string"
+        and verdict.fingerprint ~= "") then
+        return nil, type(verdict) == "table" and verdict.reason
+            or "ordinary evidence unavailable"
+    end
+    return verdict.fingerprint
+end
+
+local function SameTypedIdentity(left, right)
+    return left ~= nil and right ~= nil and type(left) == type(right)
+        and left == right
+end
+
+local function NormalizeCompatibilityHash(value)
+    if value == nil then return nil end
+    if type(value) ~= "string" and type(value) ~= "number" then return false end
+    local normalized = tostring(value):lower()
+    if normalized == "" or #normalized > 8
+        or not normalized:match("^[0-9a-f]+$") then return false end
+    return normalized
+end
+
+-- Validate one legacy DPS alias against an exact represented build. At least
+-- the build's canonical ordinary evidence must be available; inline DPS
+-- evidence, when present, is independently canonicalized and must agree.
+-- Nothing is written back to either input table.
+function Evidence.ValidateLegacyFingerprintClaim(record, represented)
+    if type(record) ~= "table" or type(represented) ~= "table" then
+        return nil, "legacy claim requires an exact represented build"
+    end
+    local claim = type(record.fingerprint) == "string"
+        and record.fingerprint or nil
+    local alias = claim and claim:match("^@([0-9A-Fa-f]+)$") or nil
+    alias = NormalizeCompatibilityHash(alias)
+    if not alias then return nil, "legacy fingerprint alias is invalid" end
+
+    if not SameTypedIdentity(record.buildId, represented.id) then
+        return nil, "legacy claim build ID does not match exact represented build"
+    end
+    if record.resolvedBuildId ~= nil
+        and not SameTypedIdentity(record.resolvedBuildId, represented.id) then
+        return nil, "legacy resolved build ID disagrees"
+    end
+
+    local buildFingerprint, buildReason =
+        CanonicalOrdinaryFingerprint(represented)
+    if not buildFingerprint then
+        return nil, "represented build ordinary evidence is "
+            .. tostring(buildReason or "unavailable")
+    end
+    local inlineFingerprint = nil
+    if type(record.echoes) == "table" or record.evidenceKey ~= nil then
+        local inlineReason
+        inlineFingerprint, inlineReason = CanonicalOrdinaryFingerprint(record)
+        if not inlineFingerprint then
+            return nil, "legacy inline ordinary evidence is "
+                .. tostring(inlineReason or "unavailable")
+        end
+        if inlineFingerprint ~= buildFingerprint then
+            return nil, "legacy inline canonical fingerprint disagrees"
+        end
+    end
+
+    local recomputed = Evidence.CompatibilityHash(buildFingerprint)
+    if not recomputed or alias ~= recomputed then
+        return nil, "legacy alias disagrees with canonical ordinary evidence"
+    end
+
+    local function RequireHash(label, value)
+        if value == nil then return true end
+        local normalized = NormalizeCompatibilityHash(value)
+        if not normalized or normalized ~= recomputed then
+            return nil, label .. " disagrees with canonical ordinary evidence"
+        end
+        return true
+    end
+    local ok, reason = RequireHash("legacy loadoutHash", record.loadoutHash)
+    if not ok then return nil, reason end
+    ok, reason = RequireHash("legacy fingerprintHash", record.fingerprintHash)
+    if not ok then return nil, reason end
+    ok, reason = RequireHash(
+        "represented build fingerprintHash", represented.fingerprintHash)
+    if not ok then return nil, reason end
+    ok, reason = RequireHash(
+        "represented build loadoutHash", represented.loadoutHash)
+    if not ok then return nil, reason end
+
+    local representedClaim = represented.fingerprint
+    if representedClaim ~= nil then
+        if type(representedClaim) ~= "string" or representedClaim == "" then
+            return nil, "represented build fingerprint is invalid"
+        end
+        local representedAlias = representedClaim:match("^@([0-9A-Fa-f]+)$")
+        if representedAlias then
+            if NormalizeCompatibilityHash(representedAlias) ~= recomputed then
+                return nil, "represented build alias disagrees"
+            end
+        elseif representedClaim ~= buildFingerprint then
+            return nil, "represented build canonical fingerprint disagrees"
+        end
+    end
+
+    return {
+        buildId=represented.id,
+        fingerprint=buildFingerprint,
+        fingerprintHash=recomputed,
+        inlineFingerprint=inlineFingerprint,
+    }
+end
+
 function Evidence.ResolveBuildRow(row)
     if type(row) ~= "table" then return nil end
     local copy = DeepCopy(row)

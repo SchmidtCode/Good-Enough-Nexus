@@ -166,8 +166,9 @@ assert(NexusDB == current and WishlistRealizerDB == nil
     and NexusDB.nexusStoreMigrations.wishlistRealizerDB.decision == "keptCurrent",
     "current and legacy SavedVariables collision clobbered one owner or stayed pending")
 
--- Future schemas are never downgraded. Known missing defaults may still be
--- filled because that operation is additive and leaves future fields intact.
+-- Future settings/character owners are opaque. Runtime callers receive
+-- transient current defaults without any init-time or read-time writes into
+-- the newer persisted tables.
 WishlistRealizerDB = nil
 NexusDB = {
     settingsVersion=99,
@@ -175,14 +176,29 @@ NexusDB = {
     chars={Future={futureSafety="keep",tomeTogglePending={[1]=55}}},
     futureRoot="keep",
 }
+local futureSettingsBefore = Copy(NexusDB.settings)
+local futureCharsBefore = Copy(NexusDB.chars)
 Store.Init()
 assert(NexusDB.settingsVersion == 99 and NexusDB.settings.autoPick == false
-    and NexusDB.settings.autoSave == true
+    and NexusDB.settings.autoSave == nil
     and NexusDB.settings.futurePreference == "keep"
     and NexusDB.chars.Future.futureSafety == "keep"
     and NexusDB.chars.Future.tomeTogglePending[1] == 55
-    and NexusDB.futureRoot == "keep",
-    "future-version save was downgraded or destructively migrated")
+    and NexusDB.futureRoot == "keep"
+    and Equal(NexusDB.settings, futureSettingsBefore)
+    and Equal(NexusDB.chars, futureCharsBefore),
+    "future settings or character owner was mutated")
+local savedUnitName = UnitName
+UnitName = function() return "Future" end
+local futureRuntimeSettings = Store.Settings()
+local futureRuntimeState = Store.State()
+assert(futureRuntimeSettings ~= NexusDB.settings
+    and futureRuntimeSettings.autoSave == true
+    and futureRuntimeState ~= NexusDB.chars.Future
+    and Equal(NexusDB.settings, futureSettingsBefore)
+    and Equal(NexusDB.chars, futureCharsBefore),
+    "future owner was exposed or mutated by a runtime accessor")
+UnitName = savedUnitName
 local futureOnce = Copy(NexusDB)
 Store.Init()
 assert(Equal(NexusDB, futureOnce),

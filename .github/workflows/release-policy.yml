@@ -23,3 +23,29 @@ jobs:
       - name: Verify license and release policy
         shell: pwsh
         run: ./tools/Test-ReleasePolicy.ps1
+
+  lua-regression:
+    name: lua-regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the reviewed tree
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install LuaJIT
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes luajit
+
+      - name: Run normal Lua regression programs
+        shell: bash
+        run: |
+          mapfile -t tests < <(find tests -maxdepth 1 -type f -name 'run_*.lua' ! -name 'run_legacy_backup_smoke.lua' | sort)
+          test "${#tests[@]}" -eq 205
+          for test_file in "${tests[@]}"; do
+            echo "::group::${test_file}"
+            luajit "${test_file}"
+            echo "::endgroup::"
+          done

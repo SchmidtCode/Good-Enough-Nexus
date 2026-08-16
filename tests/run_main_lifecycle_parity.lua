@@ -188,7 +188,8 @@ assert(table.concat(trace,",",eventStart+1)==table.concat({
     "Adapter.OnEvent:PLAYER_LEVEL_UP","DpsCapture.OnCombatStart",
     "DpsCapture.OnCombatEnd","Sync.HandleStatusRequest:Dev:request-9",
     "Sync.ChannelName","Sync.HandleIncoming:WLNP|Peer|1.20.0:Peer",
-}, ","), "level/combat/whisper/channel routing order changed")
+}, ","), "level/combat/whisper/channel routing order changed: "
+    .. table.concat(trace, ",", eventStart + 1))
 
 assert(panelCallbacks and panelCallbacks.ToggleAuto()==true
     and panelCallbacks.RefreshDisplay()==true,

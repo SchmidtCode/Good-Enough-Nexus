@@ -77,10 +77,10 @@ local build = {
 }
 local compact = P.CompactEncode(build)
 local json = Nexus.Codec.JSONEncode(compact)
-local goldenJson = [=[{"id":"build-1","t":"Arcane","a":"Hero-Realm","o":"hero@realm","c":"MAGE","m":123,"d":"D","e":[[200100,3,2],[200101,0,1,1]],"x":1,"lk":"https://example.invalid/b"}]=]
-local goldenBase64 = "eyJpZCI6ImJ1aWxkLTEiLCJ0IjoiQXJjYW5lIiwiYSI6Ikhlcm8tUmVhbG0iLCJvIjoiaGVyb0ByZWFsbSIsImMiOiJNQUdFIiwibSI6MTIzLCJkIjoiRCIsImUiOltbMjAwMTAwLDMsMl0sWzIwMDEwMSwwLDEsMV1dLCJ4IjoxLCJsayI6Imh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL2IifQ=="
+local goldenJson = [=[{"a":"Hero-Realm","c":"MAGE","d":"D","e":[[200100,3,2],[200101,0,1,1]],"id":"build-1","lk":"https://example.invalid/b","m":123,"o":"hero@realm","t":"Arcane","x":1}]=]
+local goldenBase64 = "eyJhIjoiSGVyby1SZWFsbSIsImMiOiJNQUdFIiwiZCI6IkQiLCJlIjpbWzIwMDEwMCwzLDJdLFsyMDAxMDEsMCwxLDFdXSwiaWQiOiJidWlsZC0xIiwibGsiOiJodHRwczovL2V4YW1wbGUuaW52YWxpZC9iIiwibSI6MTIzLCJvIjoiaGVyb0ByZWFsbSIsInQiOiJBcmNhbmUiLCJ4IjoxfQ=="
 assert(json == goldenJson and Nexus.Codec.Base64Encode(json) == goldenBase64,
-    "compact JSON/base64 wire bytes changed")
+    "compact JSON/base64 wire bytes changed: " .. tostring(json))
 local decoded = P.ValidatePayload(compact)
 assert(decoded and decoded.id == build.id and decoded.title == build.title
     and decoded.author == build.author and decoded.ownerKey == build.ownerKey

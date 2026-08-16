@@ -108,8 +108,9 @@ assert(DPS.GetSyncHash() == originHash,
 -- Tie that accepted revision to the real publication budget. While the
 -- receive window is active, only the dirty marker may run. Once it closes,
 -- the visible Leaderboard publishes the newly accepted projection once.
-assert(#Nexus.Scheduler.Pending() == 1,
-    "accepted DPS revision did not coalesce one view refresh")
+assert(Nexus.Scheduler.Pending("ui.data-views.refresh")
+    and Nexus.Scheduler.Pending("data-retention.enforce"),
+    "accepted DPS revision did not coalesce view refresh and retention work")
 clock = clock + 0.05
 assert(Nexus.Scheduler.Tick(clock) == 1,
     "active receive refresh did not run its cheap dirty pass")
@@ -123,8 +124,8 @@ Nexus.Sync = {
     GetLeaderboardSyncStatus=function() return "idle",0,0,{} end,
 }
 clock = clock + 61
-assert(Nexus.Scheduler.Tick(clock) == 1,
-    "quiet receive boundary did not run its deferred refresh")
+assert(Nexus.Scheduler.Tick(clock) == 2,
+    "quiet receive boundary did not run deferred refresh and retention")
 for _ = 1, 20 do leaderboardOnUpdate(leaderboardFrame, 0.05) end
 local quietVirtual = Leaderboard.VirtualStats()
 local quietProjection = Projections.Stats().leaderboard

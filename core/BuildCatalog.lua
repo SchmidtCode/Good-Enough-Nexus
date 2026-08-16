@@ -16,7 +16,8 @@ local catalogReadOnly = false
 local lastInitSummary
 local libraryGeneration = 0
 local authorIndex, authorIndexGeneration = {}, -1
-local relatedIndex = {exact={},fingerprints={},titles={},spells={},saved={}}
+local relatedIndex = {
+    exact={},fingerprints={},titles={},spells={},saved={},ownerClasses={}}
 local relatedRows, relatedIndexGeneration = {}, -1
 local recordEpoch, exactEpoch, exactRevisionClock = 0, 0, 0
 local recordRevisions, exactRevisions = {}, {}
@@ -34,6 +35,7 @@ local debugStats = {
     exactLookups=0,exactCandidates=0,maxExactCandidates=0,
     identityResolutions=0,identityResolutionFailures=0,
     identityRawHits=0,identityFingerprintHits=0,
+    ownerClassLookups=0,ownerClassHits=0,ownerClassConflicts=0,
 }
 
 local function DeepCopy(value, seen)
@@ -170,6 +172,16 @@ local function HasStringClass(record)
     return type(record) == "table"
         and type(record.class) == "string"
         and record.class ~= ""
+end
+
+local VALID_CLASS = {
+    WARRIOR=true,PALADIN=true,HUNTER=true,ROGUE=true,PRIEST=true,
+    DEATHKNIGHT=true,SHAMAN=true,MAGE=true,WARLOCK=true,DRUID=true,
+}
+
+local function NormalizedClass(value)
+    value = type(value) == "string" and value:upper() or nil
+    return value and VALID_CLASS[value] and value or nil
 end
 
 local function OrdinaryComplete(record)
@@ -532,6 +544,38 @@ local function RemoveBucket(index, key, id)
     if bucket.count == 0 then index[key] = nil end
 end
 
+local function AddOwnerClass(record, id)
+    if type(record) ~= "table" or record.ownerVerified ~= true then return nil end
+    local key = Identity.CanonicalOwnerKey(record.ownerKey)
+    local class = NormalizedClass(record.class)
+    if not key or key:match("@unknown$") or not class
+        or not Identity.OwnerKeyMatchesAuthor(key, record.author) then
+        return nil
+    end
+    local bucket = relatedIndex.ownerClasses[key]
+    if not bucket then
+        bucket = {ids={},classes={},count=0}
+        relatedIndex.ownerClasses[key] = bucket
+    end
+    if bucket.ids[id] == nil then
+        bucket.ids[id] = class
+        bucket.classes[class] = (bucket.classes[class] or 0) + 1
+        bucket.count = bucket.count + 1
+    end
+    return key
+end
+
+local function RemoveOwnerClass(key, id)
+    local bucket = key and relatedIndex.ownerClasses[key]
+    local class = bucket and bucket.ids[id]
+    if not class then return end
+    bucket.ids[id] = nil
+    bucket.count = math.max(0, bucket.count - 1)
+    bucket.classes[class] = math.max(0, (bucket.classes[class] or 0) - 1)
+    if bucket.classes[class] == 0 then bucket.classes[class] = nil end
+    if bucket.count == 0 then relatedIndex.ownerClasses[key] = nil end
+end
+
 local function BetterExactCandidate(id, record, currentId, currentRecord)
     if not currentId or type(currentRecord) ~= "table" then return true end
     local auto = record.autoDps and true or false
@@ -576,6 +620,7 @@ local function RemoveRelatedRow(id)
     RemoveBucket(relatedIndex.fingerprints, indexed.fingerprint, id)
     RemoveBucket(relatedIndex.titles, indexed.title, id)
     RemoveBucket(relatedIndex.saved, indexed.saved, id)
+    RemoveOwnerClass(indexed.classOwner, id)
     for _, key in ipairs(indexed.spells or {}) do
         RemoveBucket(relatedIndex.spells, key, id)
     end
@@ -593,15 +638,20 @@ local function AddRelatedRow(id, record)
     end
     local _, source = SelectedRaw(id)
     ConsiderExactWinner(exactBucket, id, record, source)
+    local classOwner = AddOwnerClass(record, id)
     local author = RelatedText(record.author)
     if author == "" then
-        relatedRows[id] = {exact=exact,exactAuto=exactAuto}
+        relatedRows[id] = {
+            exact=exact,exactAuto=exactAuto,classOwner=classOwner}
         return
     end
     if record.importedSavedBuild then
         local saved = RelatedKey(author, "saved")
         AddBucket(relatedIndex.saved, saved, id)
-        relatedRows[id] = {exact=exact,exactAuto=exactAuto,saved=saved}
+        relatedRows[id] = {
+            exact=exact,exactAuto=exactAuto,saved=saved,
+            classOwner=classOwner,
+        }
         return
     end
     local fingerprint = RelatedFingerprint(record)
@@ -621,6 +671,7 @@ local function AddRelatedRow(id, record)
     relatedRows[id] = {
         exact=exact,exactAuto=exactAuto,
         fingerprint=fingerprintKey,title=titleKey,spells=spellKeys,
+        classOwner=classOwner,
     }
 end
 
@@ -637,7 +688,8 @@ local function UpdateRelatedRow(id)
 end
 
 local function RebuildRelatedIndex()
-    relatedIndex = {exact={},fingerprints={},titles={},spells={},saved={}}
+    relatedIndex = {
+        exact={},fingerprints={},titles={},spells={},saved={},ownerClasses={}}
     relatedRows = {}
     local seen = {}
     for id in pairs(baseline) do
@@ -837,6 +889,37 @@ function Catalog.FindExactFingerprint(fingerprint)
     return id, PublicRecord(record, source)
 end
 
+-- Resolve and validate a protocol-v6 @hash claim only through its exact typed
+-- raw build ID and canonical ordinary Echo evidence. Persisted hash metadata is
+-- corroborating input, never independent identity authority.
+function Catalog.ValidateLegacyFingerprintClaim(rawId, record)
+    EnsureBound()
+    if rawId == nil or (type(rawId) ~= "string" and type(rawId) ~= "number")
+        or tostring(rawId) == "" then
+        return nil, "legacy claim requires an exact typed build ID"
+    end
+    local raw, source = SelectedRaw(rawId)
+    if source == "tombstone" then
+        return nil, "historical build identity is tombstoned"
+    end
+    if type(raw) ~= "table" then
+        return nil, "exact represented build is unavailable"
+    end
+    local evidence = Nexus and Nexus.LoadoutEvidence
+    if not (evidence
+        and type(evidence.ValidateLegacyFingerprintClaim) == "function") then
+        return nil, "legacy claim validator is unavailable"
+    end
+    local claim = type(record) == "table" and record or {
+        buildId=rawId,
+    }
+    local ok, proof, reason = pcall(
+        evidence.ValidateLegacyFingerprintClaim, claim, raw)
+    if not ok then return nil, "legacy claim validation failed" end
+    if type(proof) ~= "table" then return nil, reason end
+    return proof
+end
+
 -- Resolve a display/navigation identity without rewriting the historical raw
 -- build ID. The selected raw row wins only when its exact fingerprint still
 -- agrees; otherwise the incrementally maintained exact bucket supplies the
@@ -856,6 +939,22 @@ function Catalog.ResolveFingerprintIdentity(rawId, fingerprint, options)
             or options.allowIncompleteForClass == true
     elseif type(options) == "boolean" then
         allowClassOnly = options == true
+    end
+    if fingerprint:sub(1, 1) == "@" then
+        local legacyRecord = type(options) == "table"
+            and options.legacyRecord or nil
+        if type(legacyRecord) ~= "table" then
+            legacyRecord = {buildId=rawId,fingerprint=fingerprint}
+        end
+        local proof, reason =
+            Catalog.ValidateLegacyFingerprintClaim(rawId, legacyRecord)
+        if proof then
+            debugStats.identityRawHits = debugStats.identityRawHits + 1
+            return rawId, "legacy-alias", proof.fingerprint
+        end
+        debugStats.identityResolutionFailures =
+            debugStats.identityResolutionFailures + 1
+        return nil, reason or "legacy fingerprint identity is unavailable"
     end
     if rawId ~= nil then
         local raw, rawSource = SelectedRaw(rawId)
@@ -892,6 +991,41 @@ function Catalog.ResolveFingerprintIdentity(rawId, fingerprint, options)
     debugStats.identityResolutionFailures =
         debugStats.identityResolutionFailures + 1
     return nil, "exact build identity is unavailable"
+end
+
+-- Historical DPS summaries sometimes retain a stale build identity while the
+-- catalog still contains other represented builds owned by that character.
+-- Recover display/filter class only from an exact, realm-qualified owner whose
+-- provenance was verified on both the indexed build and the requesting row.
+-- Realm-less author text is deliberately never identity authority.
+function Catalog.ResolveOwnerClass(ownerKey, ownerVerified)
+    EnsureBound()
+    debugStats.ownerClassLookups = debugStats.ownerClassLookups + 1
+    if relatedIndexGeneration ~= libraryGeneration then
+        return nil, "owner class index stale"
+    end
+    if ownerVerified ~= true then return nil, "owner identity is unverified" end
+    local key = Identity.CanonicalOwnerKey(ownerKey)
+    if not key or key:match("@unknown$") then
+        return nil, "realm-qualified owner is unavailable"
+    end
+    local bucket = relatedIndex.ownerClasses[key]
+    if not bucket then return nil, "owner class unavailable" end
+    local resolved, distinct = nil, 0
+    for value in pairs(bucket.classes) do
+        resolved = value
+        distinct = distinct + 1
+        if distinct > 1 then
+            debugStats.ownerClassConflicts =
+                debugStats.ownerClassConflicts + 1
+            return nil, "owner class evidence conflicts"
+        end
+    end
+    if distinct == 1 then
+        debugStats.ownerClassHits = debugStats.ownerClassHits + 1
+        return resolved, "owner-consensus"
+    end
+    return nil, "owner class unavailable"
 end
 
 -- Saved-loadout reconciliation reads only narrow revision-owned candidate
@@ -1255,6 +1389,34 @@ function Catalog.RemoveOverlay(id)
     return existed
 end
 
+-- Retention is a local cache operation, not a network-visible delete. Batch
+-- removals publish one library revision while keeping the per-record indexes
+-- and aggregate status counters consistent for every affected id.
+function Catalog.RemoveOverlayBatch(ids)
+    EnsureBound()
+    if catalogReadOnly then
+        return 0, "future build catalog schema is read-only"
+    end
+    if type(ids) ~= "table" then return 0, "build id list required" end
+    local overlay = Overlay()
+    local removed, changedIds = 0, {}
+    for _, id in ipairs(ids) do
+        if overlay[id] ~= nil then
+            local statusBefore = StatusState(id)
+            overlay[id] = nil
+            recordRevisions[id] = (recordRevisions[id] or 0) + 1
+            AdjustStatus(statusBefore, StatusState(id))
+            changedIds[#changedIds + 1] = id
+            removed = removed + 1
+        end
+    end
+    if removed > 0 then
+        BumpBuild("overlay retention")
+        for _, id in ipairs(changedIds) do UpdateRelatedRow(id) end
+    end
+    return removed
+end
+
 function Catalog.SetTombstone(id, tombstone)
     EnsureBound()
     if catalogReadOnly then
@@ -1286,6 +1448,38 @@ function Catalog.ClearTombstone(id)
         UpdateRelatedRow(id)
     end
     return existed
+end
+
+-- Tombstones masking immutable bundled rows are permanent: removing one would
+-- resurrect the bundled record. Retention may compact only non-baseline ids.
+function Catalog.HasBaseline(id)
+    EnsureBound()
+    return type(baseline[id]) == "table"
+end
+
+function Catalog.RemoveTombstonesBatch(ids)
+    EnsureBound()
+    if catalogReadOnly then
+        return 0, "future build catalog schema is read-only"
+    end
+    if type(ids) ~= "table" then return 0, "tombstone id list required" end
+    local source = Tombstones()
+    local removed, changedIds = 0, {}
+    for _, id in ipairs(ids) do
+        if source[id] ~= nil and type(baseline[id]) ~= "table" then
+            local statusBefore = StatusState(id)
+            source[id] = nil
+            recordRevisions[id] = (recordRevisions[id] or 0) + 1
+            AdjustStatus(statusBefore, StatusState(id))
+            changedIds[#changedIds + 1] = id
+            removed = removed + 1
+        end
+    end
+    if removed > 0 then
+        BumpBuild("tombstone retention")
+        for _, id in ipairs(changedIds) do UpdateRelatedRow(id) end
+    end
+    return removed
 end
 
 function Catalog.OverlaySnapshot()
