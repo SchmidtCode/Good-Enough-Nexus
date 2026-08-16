@@ -22,23 +22,13 @@ $repositoryRoot = if ($RepositoryRoot) {
 else {
     Split-Path -Parent $PSScriptRoot
 }
-$safeRepositoryRoot = $repositoryRoot -replace '\\', '/'
 $mapPath = if ($MapPath) { $MapPath } else { Join-Path $repositoryRoot 'tests/validation-map.json' }
 $map = Get-Content -Raw -LiteralPath $mapPath | ConvertFrom-Json
 if ($map.schema -ne 1) {
     throw "Unsupported validation-map schema: $($map.schema)"
 }
 
-function Invoke-GitLines {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][string[]] $Arguments)
-
-    $rows = & git -c "safe.directory=$safeRepositoryRoot" -C $repositoryRoot @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "git $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
-    }
-    return @($rows)
-}
+. (Join-Path $PSScriptRoot 'GitPathRecords.ps1')
 
 function ConvertTo-NormalizedChangedPath {
     [CmdletBinding()]
@@ -53,17 +43,15 @@ function ConvertTo-NormalizedChangedPath {
 
 function Add-ChangedPath {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string] $Path)
+    param(
+        [Parameter(Mandatory)][string] $Path,
+        [switch] $DeletedFlag
+    )
 
     $normalized = ConvertTo-NormalizedChangedPath $Path
     if (-not $normalized) { return }
     [void] $changed.Add($normalized)
-    $relativePlatformPath = $normalized.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
-    $fullPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot $relativePlatformPath))
-    $rootPrefix = $repositoryRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar) `
-        + [System.IO.Path]::DirectorySeparatorChar
-    if ($fullPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) `
-        -and -not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+    if ($DeletedFlag) {
         [void] $deleted.Add($normalized)
     }
 }
@@ -73,24 +61,16 @@ $deleted = New-Object 'System.Collections.Generic.HashSet[string]' ([StringCompa
 if ($Paths.Count -gt 0) {
     foreach ($candidate in $Paths) {
         if ($candidate) {
-            Add-ChangedPath $candidate
+            $normalized = ConvertTo-NormalizedChangedPath $candidate
+            $relativePlatformPath = $normalized.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+            $fullPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot $relativePlatformPath))
+            Add-ChangedPath $candidate -DeletedFlag:(-not (Test-Path -LiteralPath $fullPath -PathType Leaf))
         }
     }
 }
 else {
-    foreach ($row in Invoke-GitLines @('diff', '--name-only', '--diff-filter=ACMRD')) {
-        if ($row) { Add-ChangedPath $row }
-    }
-    foreach ($row in Invoke-GitLines @('diff', '--cached', '--name-only', '--diff-filter=ACMRD')) {
-        if ($row) { Add-ChangedPath $row }
-    }
-    foreach ($row in Invoke-GitLines @('ls-files', '--others', '--exclude-standard')) {
-        if ($row) { Add-ChangedPath $row }
-    }
-    if ($BaseRef) {
-        foreach ($row in Invoke-GitLines @('diff', '--name-only', '--diff-filter=ACMRD', "$BaseRef...HEAD")) {
-            if ($row) { Add-ChangedPath $row }
-        }
+    foreach ($record in @(Get-GitChangedPathRecords -RepositoryRoot $repositoryRoot -BaseRef $BaseRef)) {
+        Add-ChangedPath -Path $record.Path -DeletedFlag:$record.Deleted
     }
 }
 

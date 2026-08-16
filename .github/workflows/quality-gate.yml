@@ -67,13 +67,8 @@ jobs:
           } else {
             'HEAD^'
           }
-          $paths = @(git diff --name-only "${base}...HEAD")
-          if ($LASTEXITCODE -ne 0) { throw "Unable to classify changes from $base." }
-          $plan = if ($paths.Count -gt 0) {
-            ./tools/Get-ChangedTestPlan.ps1 -Paths $paths | ConvertFrom-Json
-          } else {
-            ./tools/Get-ChangedTestPlan.ps1 | ConvertFrom-Json
-          }
+          $plan = ./tools/Get-ChangedTestPlan.ps1 -BaseRef $base | ConvertFrom-Json
+          $paths = @($plan.paths)
           $forceFull = $env:EVENT_NAME -eq 'push' -or ($env:EVENT_NAME -eq 'workflow_dispatch' -and $env:DISPATCH_FULL -eq 'true')
           $fullRequired = $forceFull -or [bool] $plan.full_required
           "base_ref=$base" >> $env:GITHUB_OUTPUT

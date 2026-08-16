@@ -6,30 +6,32 @@
 
 ## Current focus
 
-- Stage: 40
-- Checkpoint: 40.1
-- Status: DONE
+- Stage: 41
+- Checkpoint: 41.1
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: `c4997a75249652b45c53e03cd92652c6a607a4a8`
+- Candidate head: checkpoint 41.1 implementation commit (resolve with `git rev-parse HEAD` after commit)
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
 ## Objective (current checkpoint)
 
-Publish the reviewed PR #10 base reconciliation to the existing draft infrastructure PR, refresh issue #12, inspect exact-head CI/reviews, and stop before merge.
+Preserve both sides of Git renames/copies and route policy documents through their actual validation owners.
 
 ## Deliverables (current checkpoint)
 
-- Final Fast and committed-range scope proof at the publishable head.
-- Non-force branch refresh with exact local/remote head equality.
-- Factual PR #13 and issue #12 updates plus exact-head CI/review inspection.
+- Shared NUL-delimited Git record parsing for local, staged, and committed discovery.
+- Rename/copy source and destination ownership union.
+- Narrow ordinary-documentation allowlist with policy/legal/security routes.
+- Hostile path and policy-routing regression fixtures.
 
 ## Acceptance (current checkpoint)
 
-- [x] Final local head contains only reviewed infrastructure plus compact Vibe receipts and passes Fast/diff validation.
-- [x] Local and remote heads match; PR #13 stays draft; issue #12 receives the exact reconciliation status.
-- [x] Exact-head CI and review/thread state are inspected with compact local/CI parity.
-- [x] Root, lag-hotfix, product, runtime, artifact, install, live, release, merge, and settings boundaries remain unchanged.
+- [x] Runtime, workflow, and policy sources renamed into docs retain their original required validation.
+- [x] Ordinary documentation renames remain documentation-only.
+- [x] Added, modified, deleted, renamed, copied, case-only, space, tab, and newline paths are parsed without line splitting.
+- [x] Policy/legal/security documents route through their actual owners.
+- [x] Focused routing tests and checkpoint-scoped Fast pass without product/runtime-test changes; current-base Fast fails only at the separately planned 41.2 artifact-policy defect.
 
 ## Evidence
 
@@ -68,6 +70,9 @@ Publish the reviewed PR #10 base reconciliation to the existing draft infrastruc
 - Replacement exact-head Quality gate run `31924436571` and Release policy run `31924436622` passed at `21db9ae`; CI/local parity is Fast `15/15`, Full 18 pass / 1 explicit manual skip, and Security 12 pass / 3 advisory-unavailable. PR #13 remains open/draft/mergeable with zero reviews or threads, and issue #12 remains open.
 - Independent publication review at exact local/remote `c4997a7` passed Fast `15/15`, current-base ancestry/diff/scope, Quality gate run `31924926793`, Release policy run `31924926788`, and zero-review/thread inspection; no checkpoint-hygiene signal was identified.
 - Completed bounded 40.1 hygiene at reviewed head `db17828`: the five-path publication/CI-repair surface has no stale/debug marker, duplicate branch, unnecessary abstraction, or attributable debt; exact-head Quality gate `31925298936` and Release policy `31925298955` passed, and Full was not repeated locally.
+- Independent PR #13 review at exact `0793f26` found eight merge-blocking infrastructure defects; dispatcher-owned Stage 41 begins with Git record and policy routing because those owners feed the later artifact and CI repairs.
+- Checkpoint 41.1 expected red reproduced broad-policy misrouting (`AGENTS.md` was documentation-only). The shared NUL-delimited Git record parser now unions rename/copy source and destination ownership across working, staged, untracked, and BaseRef discovery; focused routing/workflow tests and checkpoint-scoped Fast passed with zero product/runtime-test changes.
+- Current-base Fast passed 279 checks and failed only the existing artifact-path policy on the legitimate analyzer names `tests/run-savedvariables-analyzer.js` and `tools/analyze-savedvariables.js`; this is retained as honest evidence for checkpoint 41.2, not relabeled as a 41.1 pass.
 
 ## Workflow state
 
@@ -80,7 +85,14 @@ Publish the reviewed PR #10 base reconciliation to the existing draft infrastruc
 
 ## Active issues
 
-- None.
+- Git rename/copy discovery loses source ownership and is not NUL-safe.
+- Broad Markdown routing can treat workflow/legal/security policy as harmless docs.
+- Staged-artifact discovery can accept Git-quoted hostile paths.
+- Blocking skipped or malformed summary results can pass.
+- Package is absent from required exact-head CI aggregation.
+- PSScriptAnalyzer baseline is count-only rather than owner-exact.
+- Security bootstrap lacks archive-layout validation and Python distribution hashes.
+- Committed terminal Vibe state conflicts with fresh-checkout dispatcher truth.
 
 ## Blockers
 
@@ -103,4 +115,4 @@ Publish the reviewed PR #10 base reconciliation to the existing draft infrastruc
 
 ## Recommended next action
 
-- Push the final compact hygiene receipt normally, wait for exact-head CI, refresh PR #13 and issue #12 facts, then stop before merge.
+- Formally review checkpoint 41.1 at its exact commit, including hostile path parsing, policy ownership, workflow delegation, checkpoint-scoped Fast, and the preserved 41.2 failure boundary.

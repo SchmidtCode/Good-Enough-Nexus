@@ -62,9 +62,20 @@
       "full_required": true
     },
     {
+      "id": "policy",
+      "patterns": ["^(AGENTS|AI_POLICY|SECURITY|RELEASE_SECURITY|CONTRACTS|UPSTREAM)\\.md$", "^(LICENSE|NOTICE)(?:\\.md)?$", "^\\.vibe/"],
+      "groups": ["policy", "security", "workflow", "package"],
+      "tests": [
+        "tests/run-quality-workflow-policy.js",
+        "tests/run-package-metadata.js",
+        "tests/run-security-policy.js"
+      ],
+      "full_required": true
+    },
+    {
       "id": "documentation",
-      "patterns": ["^(docs/.*|[^/]+\\.md)$"],
-      "groups": ["documentation", "policy"],
+      "patterns": ["^(README|CHANGELOG)\\.md$", "^docs/.*\\.md$"],
+      "groups": ["documentation"],
       "tests": [],
       "full_required": false
     },

@@ -38,6 +38,22 @@ function changedPlanInRepository(repository, args = []) {
     return JSON.parse(result.stdout);
 }
 
+function parseNameStatusFixture(...tokens) {
+    const bytes = Buffer.from(`${tokens.join("\0")}\0`, "utf8");
+    const quote = (value) => `'${String(value).replace(/'/g, "''")}'`;
+    const helper = quote(path.join(root, "tools", "GitPathRecords.ps1"));
+    const encoded = bytes.toString("base64");
+    const script = `. ${helper}; $bytes = [Convert]::FromBase64String('${encoded}'); `
+        + `@(ConvertFrom-GitNameStatusBytes -Bytes $bytes) | ConvertTo-Json -Depth 3`;
+    const result = spawnSync(pwsh, ["-NoProfile", "-Command", script], {
+        cwd: root,
+        encoding: "utf8",
+    });
+    assert.strictEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    return Array.isArray(parsed) ? parsed : [parsed];
+}
+
 function runGit(repository, args) {
     const result = spawnSync("git", [
         "-c", `safe.directory=${repository.replace(/\\/g, "/")}`,
@@ -84,6 +100,16 @@ assert.deepStrictEqual(workflowPlan.paths, [".github/workflows/quality-gate.yml"
 assert(workflowPlan.groups.includes("workflow"));
 assert(workflowPlan.groups.includes("security"));
 assert(workflowPlan.tests.includes("tests/run-quality-workflow-policy.js"));
+
+for (const policyPath of ["AGENTS.md", "AI_POLICY.md", "SECURITY.md", "LICENSE.md",
+    "NOTICE", "CONTRACTS.md", "RELEASE_SECURITY.md", "UPSTREAM.md"]) {
+    const policyPlan = changedPlan([policyPath]);
+    assert.strictEqual(policyPlan.documentation_only, false,
+        `${policyPath} was treated as ordinary documentation`);
+    assert.strictEqual(policyPlan.full_required, true,
+        `${policyPath} did not require the full quality gate`);
+    assert(policyPlan.groups.includes("policy"), `${policyPath} missed policy ownership`);
+}
 
 for (const hiddenToolingPath of [".gitleaks.toml", ".luarc.json", ".luacheckrc",
     ".pre-commit-config.yaml"]) {
@@ -141,6 +167,69 @@ for (const field of ["paths", "groups", "tests", "full_required", "documentation
     assert.deepStrictEqual(rangeDeletion[field], explicitDeletion[field],
         `explicit/range routing differs for ${field}`);
 }
+
+function renamedPlan(name, sourcePath, destinationPath) {
+    const repository = path.join(scratch, name);
+    const base = initializeRepository(repository, { [sourcePath]: "fixture\n" });
+    const destination = path.join(repository, ...destinationPath.split("/"));
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    runGit(repository, ["mv", "-f", sourcePath, destinationPath]);
+    runGit(repository, ["commit", "-m", "rename fixture"]);
+    return changedPlanInRepository(repository, ["-BaseRef", base]);
+}
+
+const runtimeToDocsRename = renamedPlan("runtime-to-docs-rename",
+    "core/Renamed.lua", "docs/Renamed.md");
+assert.deepStrictEqual(runtimeToDocsRename.paths,
+    ["core/Renamed.lua", "docs/Renamed.md"]);
+assert.deepStrictEqual(runtimeToDocsRename.deleted_paths, ["core/Renamed.lua"]);
+assert(runtimeToDocsRename.groups.includes("runtime"));
+assert.strictEqual(runtimeToDocsRename.full_required, true);
+
+const workflowToDocsRename = renamedPlan("workflow-to-docs-rename",
+    ".github/workflows/renamed.yml", "docs/workflow-notes.md");
+assert(workflowToDocsRename.groups.includes("workflow"));
+assert(workflowToDocsRename.groups.includes("security"));
+assert.strictEqual(workflowToDocsRename.full_required, true);
+
+const policyToDocsRename = renamedPlan("policy-to-docs-rename",
+    "AGENTS.md", "docs/agent-notes.md");
+assert(policyToDocsRename.groups.includes("policy"));
+assert.strictEqual(policyToDocsRename.full_required, true);
+
+const docsToDocsRename = renamedPlan("docs-to-docs-rename",
+    "docs/old name.md", "docs/new name.md");
+assert.strictEqual(docsToDocsRename.documentation_only, true);
+assert.strictEqual(docsToDocsRename.full_required, false);
+
+const caseOnlyRename = renamedPlan("case-only-rename",
+    "docs/Case.md", "docs/case.md");
+assert.deepStrictEqual(caseOnlyRename.paths, ["docs/Case.md", "docs/case.md"]);
+
+const copyRepository = path.join(scratch, "copy-with-spaces");
+const copyBase = initializeRepository(copyRepository,
+    { "core/source with spaces.lua": "return true\n" });
+fs.mkdirSync(path.join(copyRepository, "docs"), { recursive: true });
+fs.copyFileSync(path.join(copyRepository, "core", "source with spaces.lua"),
+    path.join(copyRepository, "docs", "copied notes.md"));
+runGit(copyRepository, ["add", "--all"]);
+runGit(copyRepository, ["commit", "-m", "copy fixture"]);
+const copyPlan = changedPlanInRepository(copyRepository, ["-BaseRef", copyBase]);
+assert.deepStrictEqual(copyPlan.paths,
+    ["core/source with spaces.lua", "docs/copied notes.md"]);
+assert.deepStrictEqual(copyPlan.deleted_paths, []);
+assert(copyPlan.groups.includes("runtime"));
+assert.strictEqual(copyPlan.full_required, true);
+
+const unusualRecords = parseNameStatusFixture(
+    "R100", "core/old\tname.lua", "docs/new\nname.md",
+    "C100", "core/source\nname.lua", "docs/copy\tname.md");
+assert.deepStrictEqual(unusualRecords.map((record) => record.Path), [
+    "core/old\tname.lua", "docs/new\nname.md",
+    "core/source\nname.lua", "docs/copy\tname.md",
+]);
+assert.deepStrictEqual(unusualRecords.map((record) => record.Deleted),
+    [true, false, false, false]);
 
 function createDiffRepository(name, nextContents, staged = false) {
     const repository = path.join(scratch, name);

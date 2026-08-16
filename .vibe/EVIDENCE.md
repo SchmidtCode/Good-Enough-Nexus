@@ -172,3 +172,12 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Review verdict: PASS with high-confidence evidence for publication correctness, scope control, compact local/CI parity, state transition, and protected boundaries. No unresolved finding, active issue, or checkpoint-hygiene signal was identified.
 - Review-receipt exact-head CI PASS at `db178282e1ac583e63b6315215286078f969cc0d`: Quality gate run `31925298936` and Release policy run `31925298955` succeeded; the aggregate and all required jobs passed.
 - Checkpoint 40.1 hygiene: bounded scan of `.github/workflows/quality-gate.yml`, `tests/run-quality-workflow-policy.js`, and the three compact Vibe receipt files found no hot spot, quick win, debt item, best-practice gap, stale/debug marker, or scope defect. Current-base `git diff --check` and clean status passed; Full was not repeated because hygiene changed no product, test, tooling, or workflow byte.
+
+## Checkpoint 41.1 - rename/copy and policy routing
+
+- Expected red at prior head `0793f26`: `node tests/run-quality-gate-self-tests.js` failed because `AGENTS.md` was classified as ordinary documentation (`documentation_only=true`).
+- Repair: `tools/GitPathRecords.ps1` reads raw Git stdout, requires NUL-terminated valid UTF-8 tokens, parses `--name-status -z` records, and expands both sides of renames/copies. `Get-ChangedTestPlan.ps1` now shares that model for working, staged, untracked, and BaseRef discovery, while the workflow delegates BaseRef parsing directly to the planner.
+- Routing: ordinary documentation is limited to `README.md`, `CHANGELOG.md`, and Markdown under `docs/`; agent, AI, legal, security, release, upstream, contract, and `.vibe/` paths have explicit policy/security/workflow/package ownership and require Full.
+- Focused green: workflow policy and quality-gate self-tests passed. Fixtures cover add/modify/delete, runtime/workflow/policy-to-doc renames, ordinary-doc rename, copy, case-only rename, spaces, tabs, and newlines; rename sources are deleted while copy sources are retained.
+- Checkpoint-scoped Fast PASS: 14 passed, 0 failed, 0 unavailable, 0 skipped. `git diff --check` passed and the product/runtime-test changed-path list is empty.
+- Honest next-boundary evidence: current-base Fast reached 279 passes and failed only `artifact-paths` on the legitimate analyzer paths `tests/run-savedvariables-analyzer.js` and `tools/analyze-savedvariables.js`. That scanner defect remains owned by checkpoint 41.2.
