@@ -1,7 +1,6 @@
 "use strict";
 
 const assert = require("assert");
-const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
@@ -15,7 +14,7 @@ assert(!workflow.includes("pull_request_target"));
 assert.match(workflow, /permissions:\s*\n\s+contents: read/);
 assert.match(workflow, /group: better-nexus-quality-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}/);
 assert.match(workflow, /cancel-in-progress: true/);
-for (const job of ["preflight", "fast-quality", "security-quality", "full-quality",
+for (const job of ["candidate", "preflight", "fast-quality", "security-quality", "full-quality",
     "package-quality", "quality-gate"]) {
     assert.match(workflow, new RegExp(`^  ${job}:`, "m"), `missing job: ${job}`);
 }
@@ -24,6 +23,11 @@ assert(uses.length > 0);
 for (const use of uses) assert.match(use, /^[^@]+@[0-9a-f]{40}$/, `non-immutable action: ${use}`);
 assert.strictEqual((workflow.match(/persist-credentials: false/g) || []).length, 5);
 assert.strictEqual((workflow.match(/fetch-depth: 0/g) || []).length, 5);
+assert.match(workflow, /candidate_sha: \$\{\{ steps\.resolve\.outputs\.candidate_sha \}\}/);
+assert.match(workflow, /base_ref: \$\{\{ steps\.resolve\.outputs\.base_ref \}\}/);
+assert.strictEqual((workflow.match(/ref: \$\{\{ needs\.(?:candidate|preflight)\.outputs\.candidate_sha \}\}/g) || []).length, 5);
+assert.strictEqual((workflow.match(/Verify exact candidate checkout/g) || []).length, 5);
+assert.strictEqual((workflow.match(/git rev-parse HEAD/g) || []).length, 5);
 for (const mode of ["Fast", "Full", "Security", "Package"]) {
     assert.match(workflow, new RegExp(`Invoke-QualityGate\\.ps1 -Mode ${mode} -BaseRef \\$env:BASE_REF`),
         `${mode} does not inspect the committed base range`);
@@ -47,6 +51,14 @@ assert.match(packageJob, /Verify no package output was retained[\s\S]*Test-Path 
 assert.match(workflow, /failure\(\) \|\| \(github\.event_name == 'workflow_dispatch' && inputs\.upload_logs\)/);
 assert.strictEqual((workflow.match(/retention-days: 5/g) || []).length, 4);
 assert(!/^\s+paths(?:-ignore)?:/m.test(workflow));
-assert.strictEqual(crypto.createHash("sha256").update(release, "utf8").digest("hex"), "83f44f2d8835bce08fd89f4ab4b04bb93bd4323a8523388cce71713c4e2a42a8");
+for (const job of ["candidate", "release-policy", "lua-regression"]) {
+    assert.match(release, new RegExp(`^  ${job}:`, "m"), `missing release job: ${job}`);
+}
+assert.match(release, /candidate_sha: \$\{\{ steps\.resolve\.outputs\.candidate_sha \}\}/);
+assert.strictEqual((release.match(/ref: \$\{\{ needs\.candidate\.outputs\.candidate_sha \}\}/g) || []).length, 2);
+assert.strictEqual((release.match(/Verify exact candidate checkout/g) || []).length, 2);
+assert.strictEqual((release.match(/git rev-parse HEAD/g) || []).length, 2);
+assert.strictEqual((release.match(/persist-credentials: false/g) || []).length, 2);
+assert(!release.includes("pull_request_target"));
 
 console.log("quality workflow policy: triggers, permissions, pins, concurrency, jobs, skips, artifacts, release ownership -- OK");

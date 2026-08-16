@@ -69,7 +69,7 @@
   },
   "pre_commit": {
     "version": "4.6.2",
-    "requirements_file": "pre-commit-requirements.txt",
+    "requirements_file": "tools/pre-commit-requirements.txt",
     "packages": [
       "pre-commit==4.6.2",
       "cfgv==3.5.0",

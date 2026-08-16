@@ -40,13 +40,14 @@ function Test-ArtifactPathSet {
 
     foreach ($raw in @($Candidates | Sort-Object -Unique)) {
         $path = ConvertTo-NormalizedArtifactPath $raw
-        if (-not $path -or $path.StartsWith($fixturePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-            continue
-        }
+        if (-not $path) { continue }
         foreach ($pattern in $forbiddenPathPatterns) {
             if ($path -match $pattern) { $violations.Add("path:$path"); break }
         }
         if (-not $ReadContent) { continue }
+        if ($path.StartsWith($fixturePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
 
         $relativePlatformPath = $path.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
         $full = [System.IO.Path]::GetFullPath((Join-Path $rootFull $relativePlatformPath))

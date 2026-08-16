@@ -61,9 +61,38 @@ function Assert-RejectedArchive {
     throw "$Label archive was accepted."
 }
 
+function Copy-SecurityManifest {
+    param([Parameter(Mandatory)][object] $Manifest)
+    return ($Manifest | ConvertTo-Json -Depth 12 | ConvertFrom-Json)
+}
+
+function Assert-RejectedManifestMutation {
+    param([string] $Label, [object] $Manifest, [scriptblock] $Mutation)
+    $hostile = Copy-SecurityManifest -Manifest $Manifest
+    & $Mutation $hostile
+    try {
+        Resolve-SecurityBootstrapManifest -Manifest $hostile -RepositoryRoot $repositoryRoot `
+            -ToolsRoot (Join-Path $repositoryRoot '.tools/security') -Platform 'windows-x64'
+    }
+    catch { return }
+    throw "$Label manifest metadata was accepted."
+}
+
 if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 New-Item -ItemType Directory -Path $scratch -Force | Out-Null
 try {
+    $manifest = Get-Content -Raw -LiteralPath (Join-Path $repositoryRoot 'tools/security-tools.json') | ConvertFrom-Json
+    $validatedManifest = Resolve-SecurityBootstrapManifest -Manifest $manifest -RepositoryRoot $repositoryRoot `
+        -ToolsRoot (Join-Path $repositoryRoot '.tools/security') -Platform 'windows-x64'
+    if ($validatedManifest.RequirementsPath -cne (Join-Path $repositoryRoot 'tools/pre-commit-requirements.txt')) {
+        throw 'Valid manifest resolved an unexpected requirements path.'
+    }
+    Assert-RejectedManifestMutation 'traversal executable' $manifest { param($value) $value.tools.gitleaks.'windows-x64'.executable = '../outside.exe' }
+    Assert-RejectedManifestMutation 'unsafe version' $manifest { param($value) $value.tools.gitleaks.version = '../8.30.1' }
+    Assert-RejectedManifestMutation 'traversal expected executable' $manifest { param($value) $value.tools.gitleaks.'windows-x64'.expected_executable_path = '../gitleaks.exe' }
+    Assert-RejectedManifestMutation 'unsafe allowed root' $manifest { param($value) $value.tools.gitleaks.'windows-x64'.allowed_top_level = @('..') }
+    Assert-RejectedManifestMutation 'requirements escape' $manifest { param($value) $value.pre_commit.requirements_file = '../outside.txt' }
+
     $validArchive = Join-Path $scratch 'valid.zip'
     New-SecurityFixtureArchive -Path $validArchive -EntryPath @('LICENSE', 'tool.exe')
     $validRecords = @(Get-SecurityArchiveEntryRecord -ArchivePath $validArchive -ArchiveType 'zip')
@@ -135,4 +164,4 @@ finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 }
 
-Write-Output 'security bootstrap fixtures: ZIP/tar layouts, 8 hostile archives plus link rejection, checksum/hash lock, failure cleanup -- OK'
+Write-Output 'security bootstrap fixtures: manifest containment, ZIP/tar layouts, 8 hostile archives plus link rejection, checksum/hash lock, failure cleanup -- OK'

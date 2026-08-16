@@ -28,7 +28,8 @@ function ConvertTo-PSScriptAnalyzerFindingRecord {
     )
 
     $root = [System.IO.Path]::GetFullPath($RepositoryRoot)
-    $occurrences = @{}
+    $occurrences = [System.Collections.Generic.Dictionary[string, int]]::new(
+        [System.StringComparer]::Ordinal)
     $ordered = @($Finding | Sort-Object ScriptPath, RuleName, Message, Line, Column)
     foreach ($item in $ordered) {
         $fullPath = [System.IO.Path]::GetFullPath([string] $item.ScriptPath)
@@ -92,7 +93,8 @@ function Compare-PSScriptAnalyzerFindingBaseline {
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]] $BaselineRecord
     )
 
-    $currentByFingerprint = @{}
+    $currentByFingerprint = [System.Collections.Generic.Dictionary[string, object]]::new(
+        [System.StringComparer]::Ordinal)
     foreach ($record in $FindingRecord) {
         Assert-PSScriptAnalyzerBaselineRecord -Record $record -Source 'Current'
         $fingerprint = Get-PSScriptAnalyzerRecordFingerprint -Record $record
@@ -102,7 +104,8 @@ function Compare-PSScriptAnalyzerFindingBaseline {
         $currentByFingerprint[$fingerprint] = $record
     }
 
-    $baselineByFingerprint = @{}
+    $baselineByFingerprint = [System.Collections.Generic.Dictionary[string, object]]::new(
+        [System.StringComparer]::Ordinal)
     foreach ($record in $BaselineRecord) {
         Assert-PSScriptAnalyzerBaselineRecord -Record $record -Source 'Baseline'
         $fingerprint = Get-PSScriptAnalyzerRecordFingerprint -Record $record

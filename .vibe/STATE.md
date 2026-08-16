@@ -6,33 +6,33 @@
 
 ## Current focus
 
-- Stage: 43
-- Checkpoint: 43.2
-- Status: DONE
+- Stage: 44
+- Checkpoint: 44.1
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: reviewed formal code/tooling candidate `4c1002e` plus receipt-only branch `HEAD`
+- Candidate head: branch `HEAD` after the checkpoint implementation commit; repair started from `87204ab3eda4a950a4d556ad1958334fadaa06a6`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
 ## Objective (current checkpoint)
 
-Publish the reviewed repair head normally, reconcile committed terminal Vibe truth, wait for exact-head CI, and stop for independent review.
+Repair the four independent-review findings, replace synthetic-merge validation with auditable exact-head CI, and stop at one truthful final PR head.
 
 ## Deliverables (current checkpoint)
 
-- Truthful committed terminal STATE/PLAN/CONTEXT/EVIDENCE without ignored receipt dependency.
-- Normal non-force push and exact local/remote head equality.
-- PR #13 body and issue #12 repair/validation updates.
-- Replacement Quality Gate, Release Policy, artifact, mergeability, review, and thread inspection.
+- Exact immutable candidate checkout/assertion for all Quality and Release source jobs.
+- Fail-closed artifact, analyzer-baseline, and security-manifest policies with adversarial fixtures.
+- One frozen formal local candidate plus dependency-clean checkout and exact-base scope proof.
+- Normal publication, per-job exact-head CI audit, corrected PR/issue/evidence truth, and terminal stop.
 
 ## Acceptance (current checkpoint)
 
-- [x] Committed STATE identifies branch `HEAD`, exact base, checkpoint DONE, completed acceptance, and next role stop.
-- [x] Fresh checkout dispatcher preview agrees with committed terminal state.
-- [x] PR #13 remains open/draft/unmerged and exact-head required workflows pass with local/CI parity.
-- [x] Issue #12 remains open with the exact final repair/CI status.
-- [x] Review/thread counts and all independently owned worktree statuses are unchanged except authorized PR/issue updates.
-- [x] No additional Codex review request, merge, release, install, live, or settings action occurs.
+- [x] Four expected-red regressions are repaired and focused/Fast validation passes.
+- [ ] Formal Full, Package, and Security pass on one unchanged committed candidate.
+- [ ] Exact-base scope remains infrastructure-only and a dependency-clean checkout passes.
+- [ ] Every replacement Quality/Release source job proves `HEAD` equals the exact final PR head, with zero successful artifacts.
+- [ ] PR #13, issue #12, and append-only Vibe evidence explicitly correct the superseded synthetic-merge claims.
+- [ ] Fresh checkout reports checkpoint DONE, acceptance complete, `RUN_STOPPED=true`, dispatcher `stop`, and no LOOP_RESULT dependency.
 
 ## Evidence
 
@@ -41,9 +41,15 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 - Stage 42.2: ZIP/tar layout validation, exact executable selection, hash-locked Python wheels, and failure-safe cleanup pass; Security `12` blocking checks and Fast `15/15` pass.
 - Stage 43 maintenance: fresh-checkout Linux bootstrap/Fast and receipt-independent Vibe terminal probes remain the highest-impact gaps and are already acceptance-owned by 43.1/43.2.
 - Stage 43.1: candidate `4c1002e` passed Full `18/18` with one explicit manual skip, Package `10/10`, Security 12 blocking passes / 3 advisory-unavailable, focused/hooks/scope checks, and fresh-checkout bootstrap/Fast/Vibe proof.
+- Stage 44.1 expected-red: workflow lacked candidate owner, sanitized hostile paths returned 5/7 violations, case-distinct owners shared occurrence state, and manifest resolver was absent; all four failed for the intended reason.
+- Stage 44.1 focused green: workflow, artifact 7/4, case-distinct analyzer, manifest containment, combined security policy, and quality self-tests pass.
+- Stage 44.1 Fast: exact base `d0681b6`, `15/15` blocking checks passed in 37.924 seconds with zero failed/skipped/unavailable checks.
 
 ## Work log
 
+- Independent review falsified the Stage 43 terminal acceptance premise: Quality `31959113599` and Release `31959113603` checked out synthetic merge `bab79a6`, not reviewed head `87204ab`, and exposed four merge-blocking infrastructure findings.
+- The supported VibeRun resume operation cleared `RUN_STOPPED`; the dispatcher selected stage design, which bounded all four repairs and final exact-head reconciliation into checkpoint 44.1.
+- Checkpoint 44.1 implemented explicit immutable candidate/base ownership and checkout assertions, path-before-fixture artifact enforcement, ordinal analyzer maps, and pre-use manifest containment; focused and Fast gates pass and the checkpoint is ready for formal review.
 - Stage 43 maintenance test-gap scan selected fresh-checkout Linux bootstrap/Fast and ignored-receipt-independent Vibe terminal validation; both are already bounded by 43.1/43.2, so no new checkpoint was added.
 - Checkpoint 43.1 froze the formal candidate as branch `HEAD` against exact base `d0681b6`; code and tooling bytes must remain unchanged after the single local Full.
 - Checkpoint 43.1 clean bootstrap correctly rejected an incomplete PSScriptAnalyzer top-level allowlist; the exact checksum-matching package layout was reconciled and the replacement clean bootstrap passed before Full.
@@ -57,7 +63,7 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 
 ## Workflow state
 
-- [x] RUN_STOPPED
+- [ ] RUN_STOPPED
 - [ ] RUN_CONTEXT_CAPTURE
 - [x] STAGE_DESIGNED
 - [x] MAINTENANCE_CYCLE_DONE
@@ -66,7 +72,7 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 
 ## Active issues
 
-- None.
+- None; the four findings are locally repaired and await formal review plus exact-head GitHub evidence.
 
 ## Blockers
 
@@ -80,14 +86,16 @@ Publish the reviewed repair head normally, reconcile committed terminal Vibe tru
 
 ## Decisions
 
+- Treat runs `31959113599` and `31959113603` as green synthetic-merge runs, not exact-head evidence; preserve them only as corrected historical receipts.
+- Use exactly one Stage 44 repair checkpoint and one frozen candidate so terminal Vibe truth can receive CI at the same final head.
 - Keep existing PR #13 draft against the current PR #10 branch and refresh it only after exact-head validation.
 - Keep VibeRun authoritative and retain compact summaries rather than successful log dumps.
 - Stop at exact-head CI/review boundary without merge.
 
 ## Last completed loop
 
-- Checkpoint 43.2 bounded hygiene passed without code changes; the run is stopped at the independent-review boundary.
+- Stage 44.1 implementation repaired the four independent-review findings and passed focused plus Fast validation.
 
 ## Recommended next action
 
-- Stop at the independent-review boundary; do not design another stage or reopen infrastructure implementation.
+- Formally review the committed Stage 44.1 candidate, run the frozen Full/Package/Security gates, then publish for exact-head CI.

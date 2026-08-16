@@ -12,6 +12,8 @@ $binRoot = Join-Path $toolsRoot 'bin'
 $isWindowsPlatform = $env:OS -eq 'Windows_NT'
 $isLinuxPlatform = -not $isWindowsPlatform -and [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)
 $platform = if ($isWindowsPlatform) { 'windows-x64' } elseif ($isLinuxPlatform) { 'linux-x64' } else { throw 'Only Windows x64 and Linux x64 are supported.' }
+$validatedManifest = Resolve-SecurityBootstrapManifest -Manifest $manifest -RepositoryRoot $repositoryRoot `
+    -ToolsRoot $toolsRoot -Platform $platform
 
 New-Item -ItemType Directory -Path $binRoot -Force | Out-Null
 $legacyDownloadRoot = Join-Path $toolsRoot 'downloads'
@@ -91,7 +93,7 @@ Invoke-SecurityTemporaryDirectory -Path $bootstrapRoot -AllowedParent $toolsRoot
         }
     }
 
-    $requirementsPath = Join-Path $PSScriptRoot $manifest.pre_commit.requirements_file
+    $requirementsPath = $validatedManifest.RequirementsPath
     $requirements = @(Get-Content -LiteralPath $requirementsPath -ErrorAction Stop)
     Confirm-PythonHashLock -Line $requirements -ExpectedRequirement @($manifest.pre_commit.packages)
     $python = Get-Command python -ErrorAction SilentlyContinue

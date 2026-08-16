@@ -50,13 +50,13 @@ function artifactScan(repository, mode = "Staged", paths = []) {
 
 const artifact = run("tools/Test-StagedArtifacts.ps1", ["-SelfTest"]);
 assert.strictEqual(artifact.status, 0, `${artifact.stdout}\n${artifact.stderr}`);
-assert.match(artifact.stdout, /5 rejected \/ 4 allowed/);
+assert.match(artifact.stdout, /7 rejected \/ 4 allowed/);
 const pssaBaseline = run("tests/Test-PSScriptAnalyzerBaseline.ps1", []);
 assert.strictEqual(pssaBaseline.status, 0, `${pssaBaseline.stdout}\n${pssaBaseline.stderr}`);
-assert.match(pssaBaseline.stdout, /owner\/message drift, duplicates, stale and malformed entries -- OK/);
+assert.match(pssaBaseline.stdout, /owner\/message drift, case-distinct owners, duplicates, stale and malformed entries -- OK/);
 const bootstrapPolicy = run("tests/Test-SecurityBootstrapPolicy.ps1", []);
 assert.strictEqual(bootstrapPolicy.status, 0, `${bootstrapPolicy.stdout}\n${bootstrapPolicy.stderr}`);
-assert.match(bootstrapPolicy.stdout, /ZIP\/tar layouts, 8 hostile archives plus link rejection, checksum\/hash lock, failure cleanup -- OK/);
+assert.match(bootstrapPolicy.stdout, /manifest containment, ZIP\/tar layouts, 8 hostile archives plus link rejection, checksum\/hash lock, failure cleanup -- OK/);
 
 const scratch = path.join(root, "build", "staged-artifact-hostile-tests");
 fs.rmSync(scratch, { recursive: true, force: true });
@@ -67,6 +67,8 @@ try {
         ".chatgpt/session log.txt",
         "build/test.zip",
         "BUILD/test.zip",
+        "tests/fixtures/sanitized/.codex/context.txt",
+        "tests/fixtures/sanitized/build/test.zip",
     ];
     for (const [index, hostilePath] of hostilePaths.entries()) {
         const repository = path.join(scratch, `index-${index}`);
@@ -83,7 +85,7 @@ try {
             cannotRepresentOnWindows ? [hostilePath] : []);
         assert.notStrictEqual(staged.status, 0,
             `staged hostile path was accepted: ${JSON.stringify(hostilePath)}\n${staged.stdout}\n${staged.stderr}`);
-        if (!cannotRepresentOnWindows && (index === 0 || index === 2)) {
+        if (!cannotRepresentOnWindows && (index === 0 || index === 2 || index >= 5)) {
             const tracked = artifactScan(repository, "All");
             assert.notStrictEqual(tracked.status, 0,
                 `all-tracked scan accepted hostile path: ${JSON.stringify(hostilePath)}`);
@@ -106,6 +108,16 @@ try {
     runGit(safeRepository, ["add", "safe.lua"]);
     const safeScan = artifactScan(safeRepository);
     assert.strictEqual(safeScan.status, 0, `${safeScan.stdout}\n${safeScan.stderr}`);
+
+    const sanitizedRepository = path.join(scratch, "sanitized-content");
+    initializeRepository(sanitizedRepository);
+    const sanitizedPath = path.join(sanitizedRepository, "tests", "fixtures", "sanitized", "private-content-example.txt");
+    fs.mkdirSync(path.dirname(sanitizedPath), { recursive: true });
+    fs.writeFileSync(sanitizedPath, "C:\\Users\\Sanitized\\fixture.txt\n");
+    runGit(sanitizedRepository, ["add", "tests/fixtures/sanitized/private-content-example.txt"]);
+    const sanitizedScan = artifactScan(sanitizedRepository);
+    assert.strictEqual(sanitizedScan.status, 0,
+        `sanitized content fixture was rejected: ${sanitizedScan.stdout}\n${sanitizedScan.stderr}`);
 
     for (const separatorPath of ["build\\test.zip", "BUILD\\test.zip",
         ".codex\\context.txt"]) {
@@ -146,7 +158,8 @@ assert.deepStrictEqual([...manifest.psscriptanalyzer.allowed_top_level].sort(), 
 ].sort());
 assert.strictEqual(manifest.pre_commit.packages[0], `pre-commit==${manifest.pre_commit.version}`);
 assert(manifest.pre_commit.packages.every((entry) => /^[A-Za-z0-9_-]+==[^=]+$/.test(entry)), "pre-commit dependency is not exact");
-const requirementLines = fs.readFileSync(path.join(root, "tools", manifest.pre_commit.requirements_file), "utf8")
+assert.strictEqual(manifest.pre_commit.requirements_file, "tools/pre-commit-requirements.txt");
+const requirementLines = fs.readFileSync(path.join(root, manifest.pre_commit.requirements_file), "utf8")
     .split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
 assert.strictEqual(requirementLines.length, manifest.pre_commit.packages.length);
 assert(requirementLines.every((line) => /^\S+==\S+(?: --hash=sha256:[0-9a-f]{64})+$/.test(line)),
@@ -155,6 +168,9 @@ assert.deepStrictEqual(requirementLines.map((line) => line.split(/\s+/)[0].toLow
     manifest.pre_commit.packages.map((entry) => entry.toLowerCase()).sort());
 const securityBootstrap = fs.readFileSync(path.join(root, "tools", "Bootstrap-SecurityTools.ps1"), "utf8");
 assert.match(securityBootstrap, /--require-hashes --only-binary=:all: --no-deps/);
+assert(securityBootstrap.indexOf("Resolve-SecurityBootstrapManifest") >= 0);
+assert(securityBootstrap.indexOf("Resolve-SecurityBootstrapManifest") < securityBootstrap.indexOf("New-Item"),
+    "manifest metadata is not validated before filesystem mutation");
 assert(!/Get-ChildItem[^\r\n]+-Recurse[^\r\n]+-Filter[^\r\n]+Select-Object -First 1/.test(securityBootstrap));
 const advisory = JSON.parse(fs.readFileSync(path.join(root, "tests/security-advisory-baseline.json"), "utf8"));
 assert.strictEqual(advisory.schema, 2);

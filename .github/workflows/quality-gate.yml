@@ -26,11 +26,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  candidate:
+    name: candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      candidate_sha: ${{ steps.resolve.outputs.candidate_sha }}
+      base_ref: ${{ steps.resolve.outputs.base_ref }}
+    steps:
+      - name: Resolve immutable candidate and base
+        id: resolve
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          $candidate = if ($env:EVENT_NAME -eq 'pull_request') { $env:PR_HEAD_SHA } else { $env:EVENT_SHA }
+          $base = if ($env:EVENT_NAME -eq 'pull_request') {
+            $env:PR_BASE_SHA
+          } elseif ($env:EVENT_NAME -eq 'push' -and $env:EVENT_BEFORE -and $env:EVENT_BEFORE -notmatch '^0+$') {
+            $env:EVENT_BEFORE
+          } else {
+            $candidate
+          }
+          if ($candidate -notmatch '^[0-9a-f]{40}$' -or $base -notmatch '^[0-9a-f]{40}$') {
+            throw "Unable to resolve immutable candidate/base for $env:EVENT_NAME."
+          }
+          "candidate_sha=$candidate" >> $env:GITHUB_OUTPUT
+          "base_ref=$base" >> $env:GITHUB_OUTPUT
+
   preflight:
     name: preflight
+    needs: candidate
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
+      candidate_sha: ${{ needs.candidate.outputs.candidate_sha }}
       base_ref: ${{ steps.plan.outputs.base_ref }}
       full_required: ${{ steps.plan.outputs.full_required }}
       documentation_only: ${{ steps.plan.outputs.documentation_only }}
@@ -38,8 +72,18 @@ jobs:
       - name: Check out the exact reviewed tree
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ needs.candidate.outputs.candidate_sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify exact candidate checkout
+        shell: pwsh
+        env:
+          EXPECTED_CANDIDATE_SHA: ${{ needs.candidate.outputs.candidate_sha }}
+        run: |
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -cne $env:EXPECTED_CANDIDATE_SHA) { throw "Expected $env:EXPECTED_CANDIDATE_SHA, checked out $actual." }
+          "Exact candidate HEAD: $actual" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Select Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -55,18 +99,10 @@ jobs:
         id: plan
         shell: pwsh
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_BEFORE: ${{ github.event.before }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ needs.candidate.outputs.base_ref }}
           DISPATCH_FULL: ${{ inputs.full }}
         run: |
-          $base = if ($env:EVENT_NAME -eq 'pull_request') {
-            $env:PR_BASE_SHA
-          } elseif ($env:EVENT_NAME -eq 'push' -and $env:EVENT_BEFORE -and $env:EVENT_BEFORE -notmatch '^0+$') {
-            $env:EVENT_BEFORE
-          } else {
-            'HEAD^'
-          }
+          $base = $env:BASE_REF
           $plan = ./tools/Get-ChangedTestPlan.ps1 -BaseRef $base | ConvertFrom-Json
           $paths = @($plan.paths)
           $forceFull = $env:EVENT_NAME -eq 'push' -or ($env:EVENT_NAME -eq 'workflow_dispatch' -and $env:DISPATCH_FULL -eq 'true')
@@ -86,8 +122,17 @@ jobs:
       - name: Check out the exact reviewed tree
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ needs.preflight.outputs.candidate_sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify exact candidate checkout
+        shell: pwsh
+        env:
+          EXPECTED_CANDIDATE_SHA: ${{ needs.preflight.outputs.candidate_sha }}
+        run: |
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -cne $env:EXPECTED_CANDIDATE_SHA) { throw "Expected $env:EXPECTED_CANDIDATE_SHA, checked out $actual." }
+          "Exact candidate HEAD: $actual" >> $env:GITHUB_STEP_SUMMARY
       - name: Select Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -123,8 +168,17 @@ jobs:
       - name: Check out the exact reviewed tree
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ needs.preflight.outputs.candidate_sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify exact candidate checkout
+        shell: pwsh
+        env:
+          EXPECTED_CANDIDATE_SHA: ${{ needs.preflight.outputs.candidate_sha }}
+        run: |
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -cne $env:EXPECTED_CANDIDATE_SHA) { throw "Expected $env:EXPECTED_CANDIDATE_SHA, checked out $actual." }
+          "Exact candidate HEAD: $actual" >> $env:GITHUB_STEP_SUMMARY
       - name: Select Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -161,8 +215,17 @@ jobs:
       - name: Check out the exact reviewed tree
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ needs.preflight.outputs.candidate_sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify exact candidate checkout
+        shell: pwsh
+        env:
+          EXPECTED_CANDIDATE_SHA: ${{ needs.preflight.outputs.candidate_sha }}
+        run: |
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -cne $env:EXPECTED_CANDIDATE_SHA) { throw "Expected $env:EXPECTED_CANDIDATE_SHA, checked out $actual." }
+          "Exact candidate HEAD: $actual" >> $env:GITHUB_STEP_SUMMARY
       - name: Select Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -198,8 +261,17 @@ jobs:
       - name: Check out the exact reviewed tree
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ needs.preflight.outputs.candidate_sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify exact candidate checkout
+        shell: pwsh
+        env:
+          EXPECTED_CANDIDATE_SHA: ${{ needs.preflight.outputs.candidate_sha }}
+        run: |
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -cne $env:EXPECTED_CANDIDATE_SHA) { throw "Expected $env:EXPECTED_CANDIDATE_SHA, checked out $actual." }
+          "Exact candidate HEAD: $actual" >> $env:GITHUB_STEP_SUMMARY
       - name: Select Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:

@@ -74,6 +74,19 @@ $duplicateResult = Compare-PSScriptAnalyzerFindingBaseline -FindingRecord $dupli
 Assert-Count 'duplicate inherited' $duplicateResult.Inherited.Count 1
 Assert-Count 'duplicate remains new' $duplicateResult.New.Count 1
 
+$caseDistinct = @(ConvertTo-PSScriptAnalyzerFindingRecord -Finding @(
+    (New-PSScriptAnalyzerFinding -Path 'tools/A.ps1' -Rule 'RuleA' -Message 'case-distinct finding'),
+    (New-PSScriptAnalyzerFinding -Path 'tools/a.ps1' -Rule 'RuleA' -Message 'case-distinct finding')
+) -RepositoryRoot $repositoryRoot)
+Assert-Count 'case-distinct owners retained' $caseDistinct.Count 2
+if ($caseDistinct[0].occurrence -ne 1 -or $caseDistinct[1].occurrence -ne 1) {
+    throw 'Case-distinct owners shared an occurrence counter.'
+}
+$caseResult = Compare-PSScriptAnalyzerFindingBaseline -FindingRecord $caseDistinct -BaselineRecord @($caseDistinct[0])
+Assert-Count 'case-distinct inherited' $caseResult.Inherited.Count 1
+Assert-Count 'case-distinct new' $caseResult.New.Count 1
+Assert-Count 'case-distinct resolved' $caseResult.Resolved.Count 0
+
 $staleBaseline = @([pscustomobject]@{
     path = 'tools/Removed.ps1'
     rule = 'RemovedRule'
@@ -93,4 +106,4 @@ Assert-Throws 'duplicate baseline fingerprint' {
     Compare-PSScriptAnalyzerFindingBaseline -FindingRecord $baseline -BaselineRecord @($baseline[0], $baseline[0])
 }
 
-Write-Output 'PSScriptAnalyzer baseline fixtures: inheritance, improvement, owner/message drift, duplicates, stale and malformed entries -- OK'
+Write-Output 'PSScriptAnalyzer baseline fixtures: inheritance, improvement, owner/message drift, case-distinct owners, duplicates, stale and malformed entries -- OK'

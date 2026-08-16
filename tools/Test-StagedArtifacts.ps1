@@ -25,15 +25,16 @@ else {
 
 if ($SelfTest) {
     $bad = @(Test-ArtifactPathSet -RepositoryRoot $repositoryRoot `
-        -Candidates @('dist/Nexus.zip', 'Nexus.lua', '.ai/prompt.md', 'logs/runtime.log', 'node_modules/a.js'))
+        -Candidates @('dist/Nexus.zip', 'Nexus.lua', '.ai/prompt.md', 'logs/runtime.log', 'node_modules/a.js',
+            'tests/fixtures/sanitized/.codex/context.txt', 'tests/fixtures/sanitized/build/package.zip'))
     $good = @(Test-ArtifactPathSet -RepositoryRoot $repositoryRoot -Candidates @(
         'tools/Test-StagedArtifacts.ps1',
         'tests/fixtures/sanitized/example.lua',
         'tests/run-savedvariables-analyzer.js',
         'tools/analyze-savedvariables.js'
     ))
-    if ($bad.Count -ne 5 -or $good.Count -ne 0) { throw "Artifact self-test failed: bad=$($bad.Count) [$($bad -join ',')] good=$($good.Count)." }
-    Write-Output 'staged artifact policy self-test: 5 rejected / 4 allowed -- OK'
+    if ($bad.Count -ne 7 -or $good.Count -ne 0) { throw "Artifact self-test failed: bad=$($bad.Count) [$($bad -join ',')] good=$($good.Count)." }
+    Write-Output 'staged artifact policy self-test: 7 rejected / 4 allowed -- OK'
     exit 0
 }
 
