@@ -64,6 +64,7 @@ Publish the reviewed PR #10 base reconciliation to the existing draft infrastruc
 - Completed bounded 39.1 hygiene: the reconciliation-only routing, diff, workflow, label, and manual-smoke changes contain no redundant branch, stale/debug residue, or directly attributable debt; Full was not repeated after its exact committed review.
 - Dispatcher-selected Stage 40 keeps the exhausted-plan follow-up to one external publication checkpoint; live PR #13 and issue #12 remain open, and no implementation work is reopened.
 - Stage 40 expected red confirmed remote `infra/viberun-quality-gate` remains at `91c962e` while local reviewed/design head is `b48b506`; exact-head Fast passed `15/15`, current-base changed-path count is 40, and forbidden runtime/artifact count is zero.
+- Published head `1c6e3c9` matched remote and release-policy run `31924278239` passed, but Quality gate run `31924278205` failed preflight because Ubuntu PowerShell parsed `$base...HEAD` ambiguously. Braced range expansion plus a regression assertion now pass the focused 40-path expression, Security 12 pass / 3 advisory-unavailable, and Fast `15/15`.
 
 ## Workflow state
 
@@ -95,8 +96,8 @@ Publish the reviewed PR #10 base reconciliation to the existing draft infrastruc
 
 ## Last completed loop
 
-- Stage 40 pre-publication implementation is committed and ready for exact-head Fast validation, a normal push, factual PR/issue refresh, and CI inspection.
+- Stage 40 direct CI repair is validated locally and ready for one focused commit, normal push, and replacement exact-head CI inspection.
 
 ## Recommended next action
 
-- Validate the committed publication receipt, non-force push only the infrastructure branch, refresh PR #13 and issue #12, and inspect exact-head CI/reviews.
+- Commit and non-force push the direct preflight range repair, then inspect replacement exact-head Quality gate and release-policy runs.

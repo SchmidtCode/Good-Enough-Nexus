@@ -27,7 +27,8 @@ for (const mode of ["Fast", "Full", "Security"]) {
     assert.match(workflow, new RegExp(`Invoke-QualityGate\\.ps1 -Mode ${mode} -BaseRef \\$env:BASE_REF`),
         `${mode} does not inspect the committed base range`);
 }
-assert.match(workflow, /git diff --name-only \$base\.\.\.HEAD/);
+assert.match(workflow, /git diff --name-only "\$\{base\}\.\.\.HEAD"/,
+    "PowerShell must delimit the base variable before the triple-dot range");
 assert.match(workflow, /full-quality:[\s\S]*if: needs\.preflight\.outputs\.full_required == 'true'/);
 assert.match(workflow, /quality-gate:[\s\S]*if: always\(\)/);
 assert.match(workflow, /failure\(\) \|\| \(github\.event_name == 'workflow_dispatch' && inputs\.upload_logs\)/);
