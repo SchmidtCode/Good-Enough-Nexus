@@ -45,6 +45,7 @@ Add an exact-head GitHub Actions quality gate using the tracked profiles, least 
 
 - Checkpoint 38.4 review passed and auto-advanced to 38.5; all exact security pins, baselines, and honest advisory status are preserved.
 - The installed dispatcher DAG marks 38.1–38.4 done and 38.5 ready.
+- Completed bounded 38.4 hygiene with no floating version, unsafe download path, debug marker, redundant policy runner, or directly attributable debt.
 
 ## Workflow state
 
@@ -80,4 +81,4 @@ Add an exact-head GitHub Actions quality gate using the tracked profiles, least 
 
 ## Recommended next action
 
-- Run mandatory bounded 38.4 hygiene, then implement the deterministic quality-gate workflow.
+- Implement the deterministic quality-gate workflow.

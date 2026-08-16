@@ -64,3 +64,9 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Implementation validation: Fast `12/12`, strict Vibe validation, and `git diff --check` passed.
 - Formal review PASS at exact `b792c82b75c176151ded62568f82788cb18f654f`: Full passed `16/16` in 248.900 seconds; Security passed 10 checks with the three Lua advisory tools explicitly unavailable; zero failures/skips occurred.
 - Adversarial review: quality-gate multiple-failure/unavailable propagation and staged-artifact 5-reject/2-allow probes passed. Exact-head pre-commit passed all applicable hooks with the illegal-Windows-name no-files skip visible. No checkpoint-hygiene signal was identified.
+
+## Checkpoint 38.4 hygiene
+
+- Bounded scope: security bootstrap, local policy wrappers, static/editor configs, pre-commit config, baselines, and their self-tests only.
+- Hot spots, quick wins, and debt items: none. Direct per-tool wrappers keep unavailable/blocking/advisory semantics inspectable and do not justify another abstraction.
+- Validation: floating-version/unsafe-command/debug marker scan and `git diff --check` passed. No product or test byte changed, so Full was not repeated.
