@@ -92,9 +92,9 @@ depends_on: [38.6]
 - Base transition: `36f187824b8a24f6fb51562e6ec1101c300308ef` -> `d0681b6a885db447c94a75f40df7e81f60b74c55`.
 - Decision: use one normal merge commit because PR #13 is already published; rebase and force-push remain prohibited.
 
-### 39.1 — Merge current base and refresh exact-head review
+### (DONE) 39.1 — Merge current base and refresh exact-head review
 
-- Status: `IN_REVIEW`
+- Status: `DONE`
 - Objective:
   - Merge the current remote PR #10 base into the infrastructure branch while preserving PR #11 exactly and retaining the 38-path infrastructure-only PR surface.
 - Deliverables:

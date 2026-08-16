@@ -8,9 +8,9 @@
 
 - Stage: 39
 - Checkpoint: 39.1
-- Status: IN_REVIEW
+- Status: DONE
 - Branch: `infra/viberun-quality-gate`
-- Candidate head: `4c3bcd83af13bac95efb8166621302bd6e048a51`
+- Candidate head: `9708c5879c46dd6cfb13cbc9457c925192bf6116`
 - Worktree: `.infra-viberun-quality-gate-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
 
@@ -29,10 +29,10 @@ Reconcile the published infrastructure branch with PR #10's advanced base using 
 - [x] The exact current PR #10 base is merged normally without rebase or force-push, preserving all PR #11 bytes.
 - [x] The current-base-to-head diff remains infrastructure-only and every reconciliation-only difference is reported.
 - [x] Leading-dot/deleted routing, committed-range whitespace checks, and runtime-label byte parity have focused red-to-green regression coverage.
-- [ ] Clean bootstrap plus Fast, Full, Package, Security, release-policy, pre-commit, and diff validation are factual at one exact head.
+- [x] Clean bootstrap plus Fast, Full, Package, Security, release-policy, pre-commit, and diff validation are factual at one exact head.
 - [ ] Local and remote heads match; PR #13 stays draft; issue #12 receives the exact reconciliation status.
 - [ ] Exact-head CI and review/thread state are inspected with compact local/CI parity.
-- [ ] Root, lag-hotfix, product, runtime, artifact, install, live, release, merge, and settings boundaries remain unchanged.
+- [x] Root, lag-hotfix, product, runtime, artifact, install, live, release, merge, and settings boundaries remain unchanged.
 
 ## Evidence
 
@@ -63,6 +63,7 @@ Reconcile the published infrastructure branch with PR #10's advanced base using 
 - Review expected red at `791a635`: Full failed `205/206` because the Stage 38 Node suite ran PR #11's explicitly manual `run_legacy_backup_smoke.lua` without its required, separately authorized SavedVariables path; the PR #11 release workflow correctly excludes that test from normal regression.
 - Focused review repairs at `1bb764a` and `4c3bcd8` passed routing/deletion/diff-range/byte-parity/workflow/security/toolchain self-tests, Lua 5.1 parse `278/278`, integration, PSScriptAnalyzer 0 blocking / 6 inherited advisory / 0 new, and Fast `15/15` against current base `d0681b6`.
 - Current-base scope is 40 authorized paths versus the prior 38: only `tests/run-package-metadata.js` and `tools/Test-GitDiffCheck.ps1` were added; no path was removed and the runtime/TOC/runtime-test diff remains empty.
+- Formal replacement review at exact `9708c58` passed Full `18/18` with `205/205` automatic Lua programs and the authorization-dependent legacy-backup smoke test explicitly skipped, Package `10/10`, Security `12/12` with three advisory analyzers unavailable, Fast `15/15`, release policy, pre-commit, and clean bootstrap.
 
 ## Workflow state
 
@@ -94,8 +95,8 @@ Reconcile the published infrastructure branch with PR #10's advanced base using 
 
 ## Last completed loop
 
-- Checkpoint 39.1 focused review repairs are committed and pass Fast plus targeted red-to-green tests; the exact candidate is ready for one replacement formal review.
+- Checkpoint 39.1 replacement formal review passed at exact `9708c58`; the candidate is ready for one bounded hygiene loop before the authorized non-force publication refresh.
 
 ## Recommended next action
 
-- Review candidate `4c3bcd8` with one Full run, Package, Security, release policy, pre-commit, clean checkout, immutable-runtime proof, and current-base range checks.
+- Run one bounded checkpoint-hygiene loop without repeating Full, then non-force push and refresh draft PR #13, issue #12, and exact-head CI evidence.
