@@ -72,7 +72,7 @@ for (const misleadingAnchor of [
         "non-line package identity anchor was accepted");
 }
 const crlfGenerated = injectRuntimeBuildLabel(
-    release.replace(/\n/g, "\r\n"), privateLabel);
+    release.replace(/\r?\n/g, "\r\n"), privateLabel);
 assert(crlfGenerated.includes('\r\n    buildLabel = "test.13-abcdef0",\r\n'),
     "CRLF package identity injection did not preserve line structure");
 

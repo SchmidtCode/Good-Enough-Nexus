@@ -11,7 +11,7 @@ local Identity = assert(Nexus.Identity,
 local Retention = {}
 Nexus.DataRetention = Retention
 
-local SCHEMA_VERSION = 3
+local SCHEMA_VERSION = 4
 local DEFAULT_LIMITS = {
     topPerCategory = 100,
     minPerClassPerCategory = 15,
@@ -57,11 +57,10 @@ end
 local function ResolveLimits(database)
     local limits = Copy(DEFAULT_LIMITS)
     local settings = type(database) == "table" and database.settings or nil
-    -- Missing preserves the bounded behavior for legacy/focused callers that
-    -- do not load DefaultProfile. Store.Init fills the shipped false default
-    -- for real players, making ranked pruning explicitly opt-in.
-    local enabled = not (type(settings) == "table"
-        and settings.communityRetentionEnabled == false)
+    -- Ranked content pruning is opt-in. Future-owned settings are deliberately
+    -- not filled by Store, so absence must remain the shipped unlimited mode.
+    local enabled = type(settings) == "table"
+        and settings.communityRetentionEnabled == true
     for name, spec in pairs(CONFIGURED_LIMITS) do
         local value = type(settings) == "table" and tonumber(settings[spec.key]) or nil
         if value and value == value and value < math.huge and value > -math.huge then
@@ -129,24 +128,28 @@ local function IsLocalBuild(build)
         and Identity.CanonicalOwnerKey(build.ownerKey) == owner
 end
 
+local function ValidBuildId(value)
+    return (type(value) == "string" or type(value) == "number")
+        and tostring(value) ~= ""
+end
+
 local function IsLocalDpsRow(row)
     if type(row) ~= "table" then return false end
     local store = Nexus and Nexus.Store
-    if store and type(store.IsAccountOwnerKey) == "function"
+    if row.ownerVerified == true
+        and store and type(store.IsAccountOwnerKey) == "function"
         and type(row.ownerKey) == "string" then
         local ok, value = pcall(store.IsAccountOwnerKey, row.ownerKey)
         if ok and value then return true end
     end
     local overlay = NexusDB and NexusDB.communityBuilds
-    if type(overlay) == "table" and type(row.buildId) == "string"
+    if row.ownerVerified == true and type(overlay) == "table"
+        and ValidBuildId(row.buildId)
         and IsLocalBuild(overlay[row.buildId]) then return true end
     local owner = CurrentOwnerKey()
-    if owner ~= nil and CharacterKey(row) == owner then return true end
-    -- Realm-less legacy rows retain the historical same-name fallback. New
-    -- rows carrying owner/realm metadata must match the full identity.
-    local me = UnitName and PlayerKey(UnitName("player")) or ""
-    return me ~= "" and row.ownerKey == nil and row.realm == nil
-        and PlayerKey(row.player) == me
+    if row.ownerVerified == true and owner ~= nil
+        and CharacterKey(row) == owner then return true end
+    return false
 end
 
 local function RowStamp(row)
@@ -199,7 +202,7 @@ end
 
 local function RowClass(row, overlay)
     if type(row) ~= "table" then return "UNKNOWN" end
-    local build = type(overlay) == "table" and type(row.buildId) == "string"
+    local build = type(overlay) == "table" and ValidBuildId(row.buildId)
         and overlay[row.buildId] or nil
     return ClassKey(row.class or (type(build) == "table" and build.class))
 end
@@ -304,7 +307,7 @@ local function SelectCharacterBest(dps, limits, overlay)
                 categoryCounts[category] = categoryCounts[category] + 1
                 local row = entry.row
                 if type(row.fingerprint) == "string" then fingerprints[row.fingerprint] = true end
-                if type(row.buildId) == "string" and row.buildId ~= "" then buildIds[row.buildId] = true end
+                if ValidBuildId(row.buildId) then buildIds[row.buildId] = true end
             end
         end
     end
@@ -354,7 +357,7 @@ local function CollectBuildReferences(dps, seed)
     local function Scan(value)
         if type(value) ~= "table" or seen[value] then return end
         seen[value] = true
-        if type(value.buildId) == "string" and value.buildId ~= "" then
+        if ValidBuildId(value.buildId) then
             referenced[value.buildId] = true
         end
         for _, child in pairs(value) do
@@ -394,7 +397,9 @@ end
 
 local function RemoveOverlayIds(database, ids)
     if #ids == 0 then return 0 end
-    table.sort(ids, function(left, right) return tostring(left) < tostring(right) end)
+    table.sort(ids, function(left, right)
+        return TypedIdentity(left) < TypedIdentity(right)
+    end)
     local catalog = Nexus and Nexus.BuildCatalog
     if catalog and type(catalog.RemoveOverlayBatch) == "function" then
         local ok, removed = pcall(catalog.RemoveOverlayBatch, ids)
@@ -415,10 +420,19 @@ local function MarkEvictions(database, overlay, ids)
         type(database.communityRetentionEvictions) == "table"
         and database.communityRetentionEvictions or {}
     local markers, changed = database.communityRetentionEvictions, 0
+    local recordedAt = math.max(1, EpochNow())
     for _, id in ipairs(ids) do
-        local stamp = math.max(1, BuildStamp(overlay[id]))
-        local prior = tonumber(markers[id]) or 0
-        if stamp > prior then markers[id] = stamp; changed = changed + 1 end
+        local revision = math.max(1, BuildStamp(overlay[id]))
+        local prior = markers[id]
+        local priorRevision = type(prior) == "table"
+            and tonumber(prior.revision or prior.stamp) or tonumber(prior) or 0
+        if revision > priorRevision or type(prior) ~= "table" then
+            markers[id] = {
+                revision=math.max(revision, priorRevision),
+                recordedAt=recordedAt,
+            }
+            changed = changed + 1
+        end
     end
     return changed
 end
@@ -514,15 +528,26 @@ local function PruneEvictionMarkers(database, now)
         and now - DEFAULT_LIMITS.evictionMarkerAge or 0
     local rows = {}
     for id, value in pairs(source) do
-        local stamp = tonumber(value) or 0
+        local revision = type(value) == "table"
+            and tonumber(value.revision or value.stamp) or tonumber(value) or 0
+        local recordedAt = type(value) == "table"
+            and tonumber(value.recordedAt or value.evictedAt) or nil
+        -- Numeric v3 markers mixed the remote revision with marker age. Start
+        -- their age clock now instead of expiring suppression evidence early.
+        if not recordedAt or recordedAt <= 0 then
+            recordedAt = math.max(1, now)
+            source[id] = {revision=revision,recordedAt=recordedAt}
+        end
         rows[#rows + 1] = {
-            id=id, stamp=stamp,
-            expired=cutoff > 0 and stamp > 0 and stamp <= cutoff,
+            id=id, revision=revision, recordedAt=recordedAt,
+            expired=cutoff > 0 and recordedAt <= cutoff,
         }
     end
     table.sort(rows, function(left, right)
-        if left.stamp ~= right.stamp then return left.stamp < right.stamp end
-        return tostring(left.id) < tostring(right.id)
+        if left.recordedAt ~= right.recordedAt then
+            return left.recordedAt < right.recordedAt
+        end
+        return TypedIdentity(left.id) < TypedIdentity(right.id)
     end)
     local removed, remaining = 0, before
     for _, row in ipairs(rows) do
@@ -678,6 +703,17 @@ function Retention.Enforce(database, reason)
     local limits = ResolveLimits(database)
     local dps = type(database.dpsCapture) == "table" and database.dpsCapture or nil
     if not limits.enabled then
+        local now = EpochNow()
+        local prior = database.dataRetention.last
+        local nextMaintenanceAt = tonumber(
+            database.dataRetention.nextMaintenanceAt) or 0
+        if type(prior) == "table" and prior.contentUnlimited == true
+            and now > 0 and nextMaintenanceAt > now then
+            local summary = Copy(prior)
+            summary.reason = tostring(reason or "maintenance"):sub(1,80)
+            summary.fastPath = true
+            return summary
+        end
         local character = type(dps) == "table" and dps.characterBest or nil
         local dummyCount = Count(type(character) == "table"
             and character.dummy or nil)
@@ -687,7 +723,6 @@ function Retention.Enforce(database, reason)
         local overlayCount = Count(database.communityBuilds)
         local evictionCount = Count(database.communityRetentionEvictions)
         local tombstoneCount = Count(database.syncTombstones)
-        local now = EpochNow()
         local evictions = PruneEvictionMarkers(database, now)
         local tombstones = PruneTombstones(database, now)
         local evidenceRemoved, evidenceBlocked = 0, false
@@ -724,6 +759,7 @@ function Retention.Enforce(database, reason)
             database.dataRetention.lastRun = now
             database.dataRetention.last = Copy(summary)
         end
+        database.dataRetention.nextMaintenanceAt = now > 0 and now + 300 or 0
         return summary
     end
     local selected, fingerprints, selectedBuildIds, categoryCounts =
@@ -808,12 +844,14 @@ function Retention.AllowsRemoteRevision(_, stamp, database, buildId)
     database = type(database) == "table" and database or NexusDB
     local marker = type(database) == "table"
         and type(database.communityRetentionEvictions) == "table"
-        and tonumber(database.communityRetentionEvictions[buildId]) or 0
-    return (tonumber(stamp) or 0) > (marker or 0)
+        and database.communityRetentionEvictions[buildId] or nil
+    local revision = type(marker) == "table"
+        and tonumber(marker.revision or marker.stamp) or tonumber(marker) or 0
+    return (tonumber(stamp) or 0) > (revision or 0)
 end
 
 function Retention.ReleaseSupersededAutoBuild(buildId, database)
-    if type(buildId) ~= "string" or buildId == "" then return false end
+    if not ValidBuildId(buildId) then return false end
     database = type(database) == "table" and database or NexusDB
     if type(database) ~= "table" then return false end
     local overlay = type(database.communityBuilds) == "table"

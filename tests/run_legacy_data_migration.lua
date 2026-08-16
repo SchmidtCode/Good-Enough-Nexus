@@ -5,6 +5,8 @@ dofile("data/DefaultProfile.lua")
 dofile("core/Store.lua")
 dofile("core/DpsCapture.lua")
 
+local RealRetention = Nexus.DataRetention
+
 UnitName = function() return "Localhero" end
 GetNormalizedRealmName = function() return "Ebonhold" end
 GetRealmName = GetNormalizedRealmName
@@ -31,12 +33,21 @@ local localDummy = Row("Localhero", 100, "local-fp",
     "localhero@ebonhold", "ebonhold", 100)
 local localLegacyHigh = Row("Localhero", 125, nil,
     "localhero@ebonhold", "ebonhold", 90)
+localLegacyHigh.ownerVerified = true
 local peerA = Row("Same", 200, "peer-a", "same@alpha", "alpha", 80)
 local peerB = Row("Same", 300, "peer-b", "same@beta", "beta", 70)
 local peerLegacy = Row("Peer", 250, nil, nil, nil, 60)
+peerLegacy.class = nil
 
 NexusDB = {
-    settingsVersion=5,settings={},chars={},communityBuilds={},
+    settingsVersion=5,settings={},chars={},communityBuilds={
+        ["legacy-peer-page"]={id="legacy-peer-page",author="Peer",
+            class="PRIEST"},
+        ["legacy-conflict-a"]={id="legacy-conflict-a",author="Conflict",
+            class="MAGE"},
+        ["legacy-conflict-b"]={id="legacy-conflict-b",author="Conflict",
+            class="ROGUE"},
+    },
     accountCharacters={
         ["localhero@unknown"]={name="Localhero",realm="unknown",lastSeen=1},
         ["same@alpha"]={name="Same",realm="alpha",lastSeen=2},
@@ -52,6 +63,8 @@ NexusDB = {
         leaderboard={
             ["local-fp"]={dummy={Localhero=localLegacyHigh}},
             ["legacy-peer"]={lk={Peer=peerLegacy}},
+            ["legacy-conflict"]={lk={Conflict={player="Conflict",
+                dps=240,duration=65,ts=61}}},
         },
         buildBest={
             ["build-peer"]={dummy=Row("Buildpeer", 350, nil,
@@ -102,7 +115,7 @@ end
 
 local migration = NexusDB.legacyDataMigration
 local dps = NexusDB.dpsCapture
-assert(migration.state == "complete" and migration.version == 1
+assert(migration.state == "complete" and migration.version == 2
     and migration.staging == nil and dps.leaderboard == nil,
     "migration did not commit and retire staging/legacy ownership")
 assert(NexusDB.accountCharacters["localhero@ebonhold"]
@@ -117,12 +130,22 @@ assert(dps.characterBest.dummy["same@alpha"] == peerA
 assert(dps.characterBest.dummy["same@beta"].dps == 300,
     "second same-name realm collided with the first")
 assert(dps.characterBest.lk.peer.dps == 250
+    and dps.characterBest.lk.peer.class == "PRIEST"
+    and dps.characterBest.lk.peer.legacyClassInferred == true
+    and dps.characterBest.lk.peer.legacyClassSource
+        == "migration-author-consensus"
     and dps.characterBest.lk["late@delta"].dps == 400
     and dps.characterBest.dummy["buildpeer@gamma"].dps == 350,
     "legacy, concurrent, or build-best rows were not promoted")
 assert(dps.personalBest["local-fp"].dummy.dps == 125
     and dps.personalBest["local-fp"].futureCategory.keep,
     "local legacy best or unknown personal category was lost")
+assert(dps.characterBest.lk.peer.ownerKey == nil
+        and dps.characterBest.lk.peer.ownerVerified ~= true,
+    "migration-only class evidence granted durable owner authority")
+assert(dps.characterBest.lk.conflict.class == nil
+        and dps.characterBest.lk.conflict.legacyClassInferred ~= true,
+    "conflicting legacy author evidence manufactured a class")
 assert(dps.futureDpsField.keep and compactions == 1
     and retentions == 1 and repairs == 1,
     string.format("post-commit owners did not resume exactly once (%d/%d/%d)",
@@ -135,6 +158,47 @@ local complete = Nexus.LegacyDataMigration.Init(NexusDB)
 assert(complete.complete and not complete.pending
     and Nexus.Codec.JSONEncode(NexusDB) == encoded,
     "completed conversion was not byte-stable and idempotent")
+
+-- Version-5 settings are future-owned by Store but known to this converter.
+-- An absent opt-in flag must remain unlimited after the real retention owner
+-- runs; conversion cannot silently prune any content collection.
+local versionFive = {
+    settingsVersion=5,settings={},chars={},accountCharacters={},
+    communityBuilds={},syncTombstones={},
+    dpsCapture={personalBest={},buildBest={},characterBest={dummy={},lk={}}},
+}
+for index = 1, 140 do
+    local id = "v5-build-" .. tostring(index)
+    versionFive.communityBuilds[id] = {id=id,author="Peer"..index,
+        class="MAGE",autoDps=true,lastModified=index}
+    versionFive.dpsCapture.characterBest.dummy[id] = {
+        player="Peer"..index,class="MAGE",buildId=id,
+        fingerprint="v5-fp-"..index,dps=1000+index,ts=index,
+    }
+    versionFive.dpsCapture.personalBest[id] = {dummy={dps=index}}
+    versionFive.dpsCapture.buildBest[id] = {dummy={dps=index}}
+end
+NexusDB = versionFive
+assert(Nexus.LegacyDataMigration.Init(versionFive).pending,
+    "version-5 absent-retention fixture did not enter migration")
+while not Nexus.LegacyDataMigration.Pump(32) do end
+local v5Summary = assert(RealRetention.Enforce(
+    versionFive, "integrated v5 absent opt-in"))
+local function TableCount(source)
+    local total = 0
+    for _ in pairs(source or {}) do total = total + 1 end
+    return total
+end
+assert(v5Summary.contentUnlimited == true
+        and v5Summary.characterBestRemoved == 0
+        and v5Summary.personalRemoved == 0
+        and v5Summary.buildBestRemoved == 0
+        and v5Summary.overlayRemoved == 0
+        and TableCount(versionFive.communityBuilds) == 140
+        and TableCount(versionFive.dpsCapture.characterBest.dummy) == 140
+        and TableCount(versionFive.dpsCapture.personalBest) == 140
+        and TableCount(versionFive.dpsCapture.buildBest) == 140,
+    "missing v5 retention flag enabled destructive content pruning")
 
 -- Unknown future settings and future migration metadata are both preserved.
 local futureSettings = {settingsVersion=6,dpsCapture={future=true}}

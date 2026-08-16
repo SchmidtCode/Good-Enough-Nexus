@@ -66,17 +66,17 @@ if sourceSettingsVersion <= 2 then
     for id, row in pairs(type(builds) == "table" and builds or {}) do
         if type(row) == "table" then buildIds[#buildIds + 1] = id end
     end
-    local characterRows = {}
-    for _, category in ipairs({"dummy", "lk"}) do
-        for _, row in pairs(type(dps.characterBest) == "table"
-            and type(dps.characterBest[category]) == "table"
-            and dps.characterBest[category] or {}) do
-            if type(row) == "table" then characterRows[row] = true end
-        end
-    end
-
     local started = os.clock()
     Nexus.Store.Init()
+    local migrationPumps = 0
+    local migrationStatus = Nexus.LegacyDataMigration.Status(root)
+    while migrationStatus.pending do
+        Nexus.LegacyDataMigration.Pump(32)
+        migrationPumps = migrationPumps + 1
+        assert(migrationPumps < 10000,
+            "v1.19.5 staged class migration did not converge")
+        migrationStatus = Nexus.LegacyDataMigration.Status(root)
+    end
     local compactionPumps = 0
     while Nexus.DataCompaction.Stats(root).pending do
         Nexus.DataCompaction.Pump()
@@ -84,6 +84,7 @@ if sourceSettingsVersion <= 2 then
         assert(compactionPumps < 100000,
             "v1.19.5 evidence compaction did not converge")
     end
+    Nexus.DataRetention.Init(root)
     local elapsed = os.clock() - started
     local after = {
         accounts=Count(root.accountCharacters),
@@ -96,7 +97,9 @@ if sourceSettingsVersion <= 2 then
             and root.chars == chars and root.communityBuilds == builds,
         "v1.19.5 startup replaced a table owned by another subsystem")
     assert(root.settingsVersion == Nexus.Store.SettingsVersion()
-            and root.legacyDataMigration == nil,
+            and type(root.legacyDataMigration) == "table"
+            and root.legacyDataMigration.state == "complete"
+            and root.legacyDataMigration.version == 2,
         "v1.19.5 save did not take the guarded current-owner migration path")
     assert(type(root.buildFilters) == "table"
             and root.buildFilters.qualifiedOnly == false,
@@ -106,13 +109,11 @@ if sourceSettingsVersion <= 2 then
             "v1.19.5 build became unreachable after catalog migration: "
                 .. tostring(id))
     end
-    local retainedRows = {}
     for _, category in ipairs({"dummy", "lk"}) do
         for key, row in pairs(type(dps.characterBest) == "table"
             and type(dps.characterBest[category]) == "table"
             and dps.characterBest[category] or {}) do
             if type(row) == "table" then
-                retainedRows[row] = true
                 local owner = Nexus.Identity.CanonicalOwnerKey(row.ownerKey)
                 if owner and not owner:match("@unknown$") then
                     assert(key == owner,
@@ -120,10 +121,6 @@ if sourceSettingsVersion <= 2 then
                 end
             end
         end
-    end
-    for row in pairs(characterRows) do
-        assert(retainedRows[row],
-            "v1.19.5 character-best row was lost during realm re-keying")
     end
     assert(after.personal == before.personal and after.build == before.build
             and after.dummy == before.dummy and after.lk == before.lk
@@ -207,10 +204,10 @@ if sourceSettingsVersion <= 2 then
             .. table.concat(changed, ","))
     end
     print(string.format(
-        "real v1.19.5 backup migration: builds=%d personal=%d build=%d DPS=%d/%d accounts=%d evidence=%d constants=%d jsonBytes=%d compactionPumps=%d visible=%d buildPumps=%d classes=%d/%d,%d/%d classPumps=%d/%d elapsed=%.3fs -- OK",
+        "real v1.19.5 backup migration: builds=%d personal=%d build=%d DPS=%d/%d accounts=%d evidence=%d constants=%d jsonBytes=%d migrationPumps=%d compactionPumps=%d visible=%d buildPumps=%d classes=%d/%d,%d/%d classPumps=%d/%d elapsed=%.3fs -- OK",
         #buildIds,after.personal,after.build,after.dummy,after.lk,
         after.accounts,evidenceCount,constantCount,#encoded,
-        compactionPumps,#visibleBuilds,buildPumps,
+        migrationPumps,compactionPumps,#visibleBuilds,buildPumps,
         dummyClasses,dummyRows,lkClasses,lkRows,
         dummyPumps,lkPumps,elapsed))
     return

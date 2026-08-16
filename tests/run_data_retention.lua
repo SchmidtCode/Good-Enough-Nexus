@@ -181,11 +181,15 @@ assert(overlay["remote-char-001"] ~= nil,
     "Average selection did not preserve its lower raw-category contributor")
 assert(summary.orphanAutoBuildsRemoved >= 45,
     "superseded automatic DPS pages were not reclaimed")
-local evictedStamp = NexusDB.communityRetentionEvictions
+local evictedMarker = NexusDB.communityRetentionEvictions
     and NexusDB.communityRetentionEvictions["retained-marker-build"]
-assert(evictedStamp
+local evictedRevision = type(evictedMarker) == "table"
+    and evictedMarker.revision or evictedMarker
+assert(type(evictedMarker) == "table" and evictedRevision
     and not Nexus.DataRetention.AllowsRemoteRevision(
-        "MarkerPeer", evictedStamp, NexusDB, "retained-marker-build")
+        "MarkerPeer", evictedRevision, NexusDB, "retained-marker-build")
+    and Nexus.DataRetention.AllowsRemoteRevision(
+        "MarkerPeer", evictedRevision + 1, NexusDB, "retained-marker-build")
     and Nexus.DataRetention.AllowsRemoteRevision(
         "OtherPeer", 1, NexusDB, "unrelated-older-build")
     and NexusDB.communityBuildRetentionFloor == nil,
@@ -255,6 +259,32 @@ assert(Nexus.DataRetention.ReleaseSupersededAutoBuild("superseded", NexusDB)
     and overlay.superseded == nil,
     "direct superseded-page cleanup did not remove an unreferenced remote page")
 
+local markerAge = 30 * 24 * 60 * 60
+overlay["old-evicted-today"] = {
+    id="old-evicted-today",title="Old revision evicted today",author="Remote",
+    autoDps=true,lastModified=now - 90 * 24 * 60 * 60,
+}
+local oldRevision = overlay["old-evicted-today"].lastModified
+assert(Nexus.DataRetention.ReleaseSupersededAutoBuild(
+        "old-evicted-today", NexusDB),
+    "old remote build was not evicted")
+local freshMarker = NexusDB.communityRetentionEvictions["old-evicted-today"]
+assert(type(freshMarker) == "table" and freshMarker.revision == oldRevision
+        and freshMarker.recordedAt == now,
+    "eviction marker did not separate revision from creation time")
+Nexus.DataRetention.Enforce(NexusDB, "same-pass marker aging")
+assert(NexusDB.communityRetentionEvictions["old-evicted-today"] ~= nil,
+    "new marker for an old revision expired in its creation pass")
+now = now + markerAge - 1
+Nexus.DataRetention.Enforce(NexusDB, "marker before expiry")
+assert(NexusDB.communityRetentionEvictions["old-evicted-today"] ~= nil,
+    "marker expired before its creation-time lifetime")
+now = now + 2
+Nexus.DataRetention.Enforce(NexusDB, "marker after expiry")
+assert(NexusDB.communityRetentionEvictions["old-evicted-today"] == nil,
+    "marker did not expire according to creation time")
+now = 2000000000
+
 local again = Nexus.DataRetention.Enforce(NexusDB, "idempotence")
 assert(again.overlayRemoved == 0 and again.characterBestRemoved == 0
     and again.personalRemoved == 0 and again.buildBestRemoved == 0
@@ -262,7 +292,8 @@ assert(again.overlayRemoved == 0 and again.characterBestRemoved == 0
     "retention was not idempotent")
 
 local crossRealm = {
-    settings={communityRetentionTopPerCategory=25,
+    settings={communityRetentionEnabled=true,
+        communityRetentionTopPerCategory=25,
         communityRetentionMinPerClassPerCategory=1,
         communityRetentionTopAverage=10,
         communityRetentionMinAveragePerClass=1,
@@ -279,6 +310,40 @@ local crossRealm = {
 local crossSummary = Nexus.DataRetention.Enforce(crossRealm, "realm identity")
 assert(crossSummary.selectedAverage == 0,
     "same-name players from different realms were cross-paired for Average")
+
+local function TypedReferenceFixture(referenceId)
+    local database = {
+        settings={communityRetentionEnabled=true,
+            communityRetentionTopPerCategory=25,
+            communityRetentionMinPerClassPerCategory=1,
+            communityRetentionTopAverage=10,
+            communityRetentionMinAveragePerClass=1,
+            communityRetentionOtherRemoteBuilds=0,
+            communityRetentionMaxPerAuthor=1},
+        communityBuilds={
+            [1]={id=1,author="Numeric",class="MAGE",autoDps=true,
+                lastModified=10},
+            ["1"]={id="1",author="String",class="ROGUE",autoDps=true,
+                lastModified=11},
+        },syncTombstones={},
+        dpsCapture={personalBest={},buildBest={},characterBest={
+            dummy={one={player="Typed",buildId=referenceId,
+                fingerprint="typed",class="MAGE",dps=100,ts=10}},lk={}}},
+    }
+    NexusDB = database
+    Nexus.BuildCatalog.Init(database, {schemaVersion=1,
+        catalogVersion="typed",sourceVersion="test",builds={}})
+    Nexus.DataRetention.Enforce(database, "typed ID reference")
+    return database
+end
+local numericReference = TypedReferenceFixture(1)
+assert(numericReference.communityBuilds[1] ~= nil
+        and numericReference.communityBuilds["1"] == nil,
+    "numeric build reference did not protect only numeric ID 1")
+local stringReference = TypedReferenceFixture("1")
+assert(stringReference.communityBuilds["1"] ~= nil
+        and stringReference.communityBuilds[1] == nil,
+    "string build reference did not protect only string ID 1")
 
 local future = {
     dataRetention={schemaVersion=99},

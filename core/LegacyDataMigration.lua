@@ -12,13 +12,14 @@ local Migration = {}
 Nexus.LegacyDataMigration = Migration
 
 local SCHEMA_VERSION = 1
-local STORAGE_VERSION = 1
+local STORAGE_VERSION = 2
 local LAST_KNOWN_LEGACY_SETTINGS_VERSION = 5
 local SCHEDULER_KEY = "legacy-data-migration"
 local BATCH_SIZE = 32
 local QUARANTINE_LIMIT = 64
 local PHASES = {
-    "accounts", "personal", "character", "leaderboard", "buildBest", "commit",
+    "classHints", "accounts", "personal", "character", "leaderboard",
+    "buildBest", "commit",
 }
 local VALID_PHASE = {}
 for _, phase in ipairs(PHASES) do VALID_PHASE[phase] = true end
@@ -49,6 +50,16 @@ local function ShallowCopy(source)
         out[key] = value
     end
     return out
+end
+
+local VALID_CLASS = {
+    WARRIOR=true,PALADIN=true,HUNTER=true,ROGUE=true,PRIEST=true,
+    DEATHKNIGHT=true,SHAMAN=true,MAGE=true,WARLOCK=true,DRUID=true,
+}
+
+local function NormalizedClass(value)
+    value = type(value) == "string" and value:upper() or nil
+    return value and VALID_CLASS[value] and value or nil
 end
 
 local function DeepCopy(value, seen)
@@ -187,6 +198,18 @@ local function NormalizeDpsRow(meta, row, fingerprint, sourceKey, kind)
     end
     local out = ShallowCopy(row)
     out.player = player
+    if not NormalizedClass(out.class) then
+        local hint = type(meta.staging) == "table"
+            and type(meta.staging.classHints) == "table"
+            and meta.staging.classHints[Identity.PlayerKey(player)] or nil
+        if type(hint) == "table" and hint.conflict ~= true
+            and NormalizedClass(hint.class) then
+            out.class = NormalizedClass(hint.class)
+            out.legacyClassInferred = true
+            out.legacyClassSource = "migration-author-consensus"
+            AddStat(meta, "legacyClassesInferred", 1)
+        end
+    end
     if type(out.fingerprint) ~= "string" or out.fingerprint == "" then
         out.fingerprint = type(fingerprint) == "string" and fingerprint ~= ""
             and fingerprint or nil
@@ -227,12 +250,8 @@ local function IsLocalRow(row)
     local current = CurrentOwnerKey()
     local owner = type(row) == "table"
         and Identity.CanonicalOwnerKey(row.ownerKey) or nil
-    if current and owner then return current == owner end
-    if owner then return false end
-    local currentPlayer = current and current:match("^([^@]+)@")
-        or Identity.PlayerKey(UnitName and UnitName("player") or nil)
-    return currentPlayer ~= nil and type(row) == "table"
-        and currentPlayer == Identity.PlayerKey(row.player)
+    return current ~= nil and owner ~= nil
+        and row.ownerVerified == true and current == owner
 end
 
 local function MergeAccount(target, incoming)
@@ -286,18 +305,26 @@ local function NeedsMigration(database)
     local dps = DpsStore(database)
     if type(dps) == "table" and type(dps.leaderboard) == "table"
         and next(dps.leaderboard) ~= nil then return true end
-    -- Test17's eager DPS owner already performs the small name-key repair for
-    -- current schema-2 saves. The durable transaction is reserved for the
-    -- known v3-v5 cross-branch layout or an actual retired leaderboard table;
-    -- otherwise ordinary fixture/current data would unnecessarily defer all
-    -- independent startup maintenance.
+    -- Main v1.19.5 is stamped to settings schema 2 before this owner runs. Its
+    -- public rows commonly lack class/realm evidence, so route only databases
+    -- with actual classless legacy rows through the one-time staged converter.
+    local character = type(dps) == "table" and dps.characterBest or nil
+    for _, category in ipairs({"dummy", "lk"}) do
+        for _, row in pairs(type(character) == "table"
+            and type(character[category]) == "table"
+            and character[category] or {}) do
+            if type(row) == "table" and not NormalizedClass(row.class) then
+                return true
+            end
+        end
+    end
     return false
 end
 
 local function NewStaging()
     return {
         accountCharacters={}, personalBest={}, buildBest={},
-        characterBest={dummy={},lk={}},
+        characterBest={dummy={},lk={}}, classHints={},
     }
 end
 
@@ -309,6 +336,7 @@ local function ValidStaging(staging)
         and type(staging.characterBest) == "table"
         and type(staging.characterBest.dummy) == "table"
         and type(staging.characterBest.lk) == "table"
+        and type(staging.classHints) == "table"
 end
 
 local function Begin(database, meta, reason, restarting)
@@ -323,7 +351,7 @@ local function Begin(database, meta, reason, restarting)
         -- current phase is safe because every staging write is a max/merge.
     else
         meta.staging = NewStaging()
-        meta.phase = "accounts"
+        meta.phase = "classHints"
         meta.stats = {}
         meta.quarantine = nil
     end
@@ -341,6 +369,9 @@ local function Begin(database, meta, reason, restarting)
         items=nil,index=1,dpsRevision=CurrentDpsRevision(),
         source={
             accountCharacters=database.accountCharacters,
+            communityBuilds=database.communityBuilds,
+            bundledBuilds=type(Nexus.BundledBuilds) == "table"
+                and Nexus.BundledBuilds.builds or nil,
             personalBest=dps.personalBest,
             characterBest=dps.characterBest,
             leaderboard=dps.leaderboard,
@@ -367,6 +398,26 @@ local function SnapshotMap(source)
     for key, row in pairs(type(source) == "table" and source or {}) do
         out[#out + 1] = {key=key,row=row}
     end
+    table.sort(out, function(left, right)
+        return type(left.key) .. ":" .. tostring(left.key)
+            < type(right.key) .. ":" .. tostring(right.key)
+    end)
+    return out
+end
+
+local function SnapshotClassHints(job)
+    local selected = {}
+    local function Merge(source)
+        for _, item in ipairs(SnapshotMap(source)) do
+            selected[type(item.key) .. ":" .. tostring(item.key)] = item
+        end
+    end
+    -- Match BuildCatalog precedence: an exact typed overlay ID replaces its
+    -- immutable bundled predecessor instead of becoming conflicting evidence.
+    Merge(job.source.bundledBuilds)
+    Merge(job.source.communityBuilds)
+    local out = {}
+    for _, item in pairs(selected) do out[#out + 1] = item end
     table.sort(out, function(left, right)
         return type(left.key) .. ":" .. tostring(left.key)
             < type(right.key) .. ":" .. tostring(right.key)
@@ -421,12 +472,30 @@ local function SnapshotLeaderboard(job)
 end
 
 local function ItemsFor(job)
+    if job.phase == "classHints" then return SnapshotClassHints(job) end
     if job.phase == "accounts" then return SnapshotAccounts(job) end
     if job.phase == "personal" then return SnapshotMap(job.source.personalBest) end
     if job.phase == "character" then return SnapshotCharacter(job) end
     if job.phase == "leaderboard" then return SnapshotLeaderboard(job) end
     if job.phase == "buildBest" then return SnapshotMap(job.source.buildBest) end
     return {}
+end
+
+local function ProcessClassHint(job, item)
+    local build = item.row
+    local author = type(build) == "table"
+        and Identity.PlayerKey(build.author) or nil
+    local class = type(build) == "table"
+        and NormalizedClass(build.class) or nil
+    if not author or not class then return end
+    local hints = job.meta.staging.classHints
+    local hint = hints[author]
+    if not hint then
+        hints[author] = {class=class}
+    elseif hint.class ~= class then
+        hint.class = nil
+        hint.conflict = true
+    end
 end
 
 local function AdvancePhase(job)
@@ -489,7 +558,9 @@ local function ProcessBuildBest(job, item)
 end
 
 local function Process(job, item)
-    if job.phase == "accounts" then
+    if job.phase == "classHints" then
+        ProcessClassHint(job, item)
+    elseif job.phase == "accounts" then
         local key, row = NormalizeAccount(job.meta, item.key, item.row)
         if key then
             local staging = job.meta.staging.accountCharacters
@@ -506,6 +577,7 @@ local function SourceChanged(job)
     if job.dpsRevision ~= CurrentDpsRevision() then return true end
     local dps = DpsStore(job.database)
     return dps ~= job.dps
+        or job.source.communityBuilds ~= job.database.communityBuilds
         or job.source.personalBest ~= dps.personalBest
         or job.source.characterBest ~= dps.characterBest
         or job.source.leaderboard ~= dps.leaderboard

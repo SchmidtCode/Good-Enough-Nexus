@@ -299,10 +299,10 @@ local function SameLocalCharacter(row, localName)
     if type(row) ~= "table" then return false end
     localName = localName or ((UnitName and UnitName("player")) or "?")
     local localKey = CurrentCharacterKey(localName)
-    local rowKey = CharacterKey(row.player, row.ownerKey, row.realm)
-    if localKey ~= "invalid" and rowKey == localKey then return true end
-    return row.ownerKey == nil and row.realm == nil
-        and PlayerKey(row.player) == PlayerKey(localName)
+    local rowKey = Identity.CanonicalOwnerKey(row.ownerKey)
+    return row.ownerVerified == true and localKey ~= "invalid"
+        and rowKey ~= nil and not rowKey:match("@unknown$")
+        and rowKey == localKey
 end
 
 -- Repair legacy class metadata only for the exact character currently logged
@@ -326,18 +326,15 @@ local function RepairCurrentCharacterClass()
         for _, row in pairs(character[category] or {}) do
             local rowOwner = row
                 and Identity.CanonicalOwnerKey(row.ownerKey) or nil
-            local derivedOwner = row and OwnerKey(row.player,
-                row.realm and row.realm ~= "" and row.realm or realm)
-            if row and (rowOwner == localOwner or derivedOwner == localOwner) then
+            if row and row.ownerVerified == true and rowOwner == localOwner then
                 if row.class ~= class then row.class = class; changed = true end
                 local prow = row.fingerprint and personal[row.fingerprint]
                     and personal[row.fingerprint][category]
-                if prow then
+                local personalOwner = prow
+                    and Identity.CanonicalOwnerKey(prow.ownerKey) or nil
+                if prow and prow.ownerVerified == true
+                    and personalOwner == localOwner then
                     if prow.class ~= class then prow.class = class; changed = true end
-                    if not prow.ownerKey then
-                        prow.ownerKey = localOwner
-                        changed = true
-                    end
                     if not prow.realm then
                         prow.realm = realm
                         changed = true
@@ -347,9 +344,8 @@ local function RepairCurrentCharacterClass()
                 local build = row.buildId and builds[row.buildId]
                 if build and build.autoDps then
                     local buildOwner = Identity.CanonicalOwnerKey(build.ownerKey)
-                    local legacyOwned = not buildOwner
-                        and Identity.SamePlayer(build.author, me)
-                    if buildOwner == localOwner or legacyOwned then
+                    if build.ownerVerified == true
+                        and buildOwner == localOwner then
                         local buildChanged = false
                         if build.class ~= class then build.class = class; buildChanged = true end
                         local title = tostring(build.title or "")
@@ -357,7 +353,6 @@ local function RepairCurrentCharacterClass()
                             local corrected = (CLASS_LABEL[class] or class) .. " Record Loadout"
                             if title ~= corrected then build.title = corrected; buildChanged = true end
                         end
-                        if not build.ownerKey then build.ownerKey = localOwner; buildChanged = true end
                         if buildChanged then
                             local now = (time and time()) or 0
                             local old = tonumber(build.lastModified or build.postedAt) or 0
@@ -1729,13 +1724,13 @@ end
 
 local function OnDpsRevision(_, revision, detail)
     dpsHashCache.observedRevision = revision
-    if type(detail) == "table" and detail.scope == "record"
+    if type(detail) == "table"
+        and (detail.scope == "record" or detail.scope == "metadata")
         and detail.category and detail.player then
         UpdateDpsHashRecord(detail.category, detail.player,
             detail.ownerKey, detail.realm, detail.characterKey,
             detail.previousCharacterKey)
-    elseif type(detail) ~= "table"
-        or (detail.scope ~= "local" and detail.scope ~= "metadata") then
+    elseif type(detail) ~= "table" or detail.scope ~= "local" then
         InvalidateAllDpsHashes()
     end
 end
@@ -2891,12 +2886,13 @@ local function ReceiveRecord(record, transportSender, relayed)
             end
             if enriched then
                 BumpDps(rekeyed and "public record identity enriched"
-                    or "public record enriched", rekeyed and {
-                        scope="record",category=category,player=player,
+                    or "public record enriched", {
+                        scope=rekeyed and "record" or "metadata",
+                        category=category,player=player,
                         ownerKey=existing.ownerKey,realm=existing.realm,
                         characterKey=characterKey,
-                        previousCharacterKey=existingKey,
-                    } or {scope="metadata"})
+                        previousCharacterKey=rekeyed and existingKey or nil,
+                    })
                 return true
             end
         end
