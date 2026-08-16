@@ -56,7 +56,7 @@ assert.strictEqual(pssaBaseline.status, 0, `${pssaBaseline.stdout}\n${pssaBaseli
 assert.match(pssaBaseline.stdout, /owner\/message drift, duplicates, stale and malformed entries -- OK/);
 const bootstrapPolicy = run("tests/Test-SecurityBootstrapPolicy.ps1", []);
 assert.strictEqual(bootstrapPolicy.status, 0, `${bootstrapPolicy.stdout}\n${bootstrapPolicy.stderr}`);
-assert.match(bootstrapPolicy.stdout, /ZIP\/tar layouts, 8 hostile archives, checksum\/hash lock, failure cleanup -- OK/);
+assert.match(bootstrapPolicy.stdout, /ZIP\/tar layouts, 8 hostile archives plus link rejection, checksum\/hash lock, failure cleanup -- OK/);
 
 const scratch = path.join(root, "build", "staged-artifact-hostile-tests");
 fs.rmSync(scratch, { recursive: true, force: true });

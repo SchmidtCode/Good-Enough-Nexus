@@ -85,6 +85,14 @@ try {
     Assert-RejectedArchive -Label 'case-conflict' -EntryPath @('tool.exe', 'TOOL.EXE') -AllowedTopLevel @('tool.exe', 'TOOL.EXE')
     Assert-RejectedArchive -Label 'recursive-decoy' -EntryPath @('decoy/tool.exe', 'tool.exe') -AllowedTopLevel @('decoy', 'tool.exe')
     Assert-RejectedArchive -Label 'missing-executable' -EntryPath @('LICENSE') -AllowedTopLevel @('LICENSE')
+    $linkRejected = $false
+    try {
+        Resolve-SecurityArchiveExecutable -EntryRecord @(
+            [pscustomobject]@{ Path = 'tool.exe'; Kind = 'link' }
+        ) -ExpectedExecutablePath 'tool.exe' -AllowedTopLevel @('tool.exe')
+    }
+    catch { $linkRejected = $true }
+    if (-not $linkRejected) { throw 'Archive executable link was accepted.' }
 
     $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $validArchive).Hash.ToLowerInvariant()
     Confirm-SecurityFileHash -Path $validArchive -ExpectedHash $actualHash -Label 'valid fixture'
@@ -127,4 +135,4 @@ finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 }
 
-Write-Output 'security bootstrap fixtures: ZIP/tar layouts, 8 hostile archives, checksum/hash lock, failure cleanup -- OK'
+Write-Output 'security bootstrap fixtures: ZIP/tar layouts, 8 hostile archives plus link rejection, checksum/hash lock, failure cleanup -- OK'
