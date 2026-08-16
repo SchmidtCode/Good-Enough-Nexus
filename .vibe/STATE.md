@@ -8,7 +8,7 @@
 
 - Stage: 40
 - Checkpoint: 40.1
-- Status: NOT_STARTED
+- Status: IN_REVIEW
 - Branch: `infra/viberun-quality-gate`
 - Candidate head: `63a8c9954be4345f245e81cd3b5e676c58c52b99`
 - Worktree: `.infra-viberun-quality-gate-worktree`
@@ -63,6 +63,7 @@ Publish the reviewed PR #10 base reconciliation to the existing draft infrastruc
 - Formal replacement review at exact `9708c58` passed Full `18/18` with `205/205` automatic Lua programs and the authorization-dependent legacy-backup smoke test explicitly skipped, Package `10/10`, Security `12/12` with three advisory analyzers unavailable, Fast `15/15`, release policy, pre-commit, and clean bootstrap.
 - Completed bounded 39.1 hygiene: the reconciliation-only routing, diff, workflow, label, and manual-smoke changes contain no redundant branch, stale/debug residue, or directly attributable debt; Full was not repeated after its exact committed review.
 - Dispatcher-selected Stage 40 keeps the exhausted-plan follow-up to one external publication checkpoint; live PR #13 and issue #12 remain open, and no implementation work is reopened.
+- Stage 40 expected red confirmed remote `infra/viberun-quality-gate` remains at `91c962e` while local reviewed/design head is `b48b506`; exact-head Fast passed `15/15`, current-base changed-path count is 40, and forbidden runtime/artifact count is zero.
 
 ## Workflow state
 
@@ -94,8 +95,8 @@ Publish the reviewed PR #10 base reconciliation to the existing draft infrastruc
 
 ## Last completed loop
 
-- Stage 40 design preserves the reviewed Stage 39 candidate and isolates only the remaining authorized external publication/CI boundary.
+- Stage 40 pre-publication implementation is committed and ready for exact-head Fast validation, a normal push, factual PR/issue refresh, and CI inspection.
 
 ## Recommended next action
 
-- Run exact-head Fast/diff checks, non-force push only the infrastructure branch, refresh PR #13 and issue #12, and stop after exact-head CI/review inspection.
+- Validate the committed publication receipt, non-force push only the infrastructure branch, refresh PR #13 and issue #12, and inspect exact-head CI/reviews.

@@ -157,3 +157,10 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Focused repair validation PASS: all-files artifact policy, Security 10 pass / 3 advisory-unavailable, and Fast `13/13` passed.
 - Formal dotfile-repair review PASS at exact `a3a574a6b43288e85eb769393306ab7470d0b6ca`: Full passed `16/16` in 261.112 seconds; Security passed 10 blocking checks with three advisory-unavailable checks; strict Vibe validation and `git diff --check` passed.
 - Dotfile-repair hygiene: the single `-Force` flag is the direct cross-platform PowerShell fix, preserves the blocking content scan, and introduces no suppression, helper, stale marker, or debt. Full was not repeated.
+
+## Checkpoint 40.1 - reconciled draft publication boundary
+
+- Expected red: remote `infra/viberun-quality-gate` remains at the previously published `91c962e99e75df430b6eded256f27e5657a74a80`, while the clean local branch reached reviewed Stage 39 plus compact Stage 40 design head `b48b506828294aa9d68f25ccbf000d6e4711679d`.
+- Pre-publication validation at `b48b506`: Fast passed `15/15`; current-base `git diff --check` passed; all 40 changed paths remain authorized infrastructure/workflow/tooling/configuration/documentation paths; forbidden production Lua, `Nexus.toc`, runtime-test Lua, bundled-data, test.17, ZIP, build, and dist path count is zero.
+- Ownership boundary: root remains at `2ec508f`, lag-hotfix at `97cc6af` with its independently owned status, product remains clean at `7aee1d9`, and the infrastructure worktree alone is being published.
+- Dispatcher discrepancy: the authoritative Stage 40.1 STATE pointer and implementation prompt are current, while the auxiliary ready list still names historical 38.7. Per `AGENTS.md`, the returned implementation route is followed without moving the product pointer backward or manufacturing a reset.
