@@ -1,50 +1,50 @@
 # CONTEXT
 
-## Current Git and coordination truth
+## Architecture
 
-- Repository: `Viscerals/Better-Nexus`.
-- Infrastructure worktree: `.infra-viberun-quality-gate-worktree` on `infra/viberun-quality-gate`.
-- Integration base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`, merged normally into the infrastructure branch at `5a66cde`.
-- Draft refactor PR #10 is open and authoritative; draft infrastructure PR #13 and GitHub issue #12 own the current coordination boundary.
-- The repository-root coordination worktree and `.lag-hotfix-worktree` are independently owned and read-only for this work.
-- Branch-local Vibe state is compact by design; completed product Stage 37.1 remains authoritative in the root and is not copied here.
+- Repository `Viscerals/Better-Nexus`; isolated infrastructure worktree `.infra-viberun-quality-gate-worktree` on `infra/viberun-quality-gate`.
+- Integration base is `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`; draft PR #13 targets draft PR #10's branch.
+- Runtime addon identity is `Nexus`, WoW target is 3.3.5a, and sources/tests parse as Lua 5.1.
+- `Invoke-QualityGate.ps1` owns Fast, Full, Package, and Security; successful summaries are compact and detailed logs remain ignored.
+- Production Lua, runtime-test Lua, `Nexus.toc`, schemas, wire/gameplay/UI behavior, bundled data, version/protocol/author, and test.17 are immutable in this infrastructure workflow.
 
-## Architecture invariants
+## Key Decisions (2026-08-16)
 
-- Runtime folder/addon identity is `Nexus`; target is WoW 3.3.5a and Lua 5.1.
-- Public version remains `1.20.0-beta.1`, protocol remains 7, and `Author: Valentine` remains unchanged.
-- `NexusDB` and `WishlistRealizerDB` schemas/behavior, Sync wire behavior, gameplay/UI behavior, and bundled build data are outside Stage 38.
-- Production Lua, `Nexus.toc`, runtime tests, historical artifacts, and test.17 are immutable in this infrastructure stage.
-- Development bootstrap may use the network; the addon never does so for tooling or updates.
+- Git change discovery uses one raw NUL-delimited record model; rename/copy source and destination ownership are unioned.
+- Fast and staged/all-tracked scans share one fail-closed artifact path/content policy.
+- Only blocking `pass` succeeds; Package is a required exact-base, non-publishing CI job with failure-log-only evidence.
+- Stage 42 repairs the exact PSScriptAnalyzer baseline before editing bootstrap code, then validates archive layout/executable identity and Python distribution hashes together.
+- Stage 43 runs Full once on the unchanged formal candidate, proves a fresh checkout, then refreshes PR #13/issue #12 and stops without merge.
 
-## Workflow invariants
+## Gotchas
 
-- Installed VibeRun package `0.1.0+codex.20260812081901`, state schema 1.0, and prompt catalog 1.1.0 are authoritative.
-- VibeRun dispatches roles; `Invoke-QualityGate.ps1` supplies Fast, Full, Package, and Security workers.
-- Expected red is a missing capability or focused failing check, not a fabricated product failure.
-- Successful summaries stay compact. Detailed logs remain ignored under `build/verify/logs/` and are opened only for failures or suspicious results.
-- Evidence is append-only and bounded on read; history is non-authoritative and read only for reconciliation.
+- Windows Git cannot represent tab/newline index names; use raw-byte parser fixtures locally and real disposable index fixtures on supporting platforms.
+- LuaLS, Luacheck, and StyLua may remain advisory-unavailable; never report unavailable checks as passing.
+- Use the exact PR #10 BaseRef for full-branch gates and the checkpoint parent for bounded checkpoint review.
+- Vibe flags and routing are dispatcher-owned; maintenance scans must not move the product checkpoint pointer.
+- Schema-valid state can still be semantically stale; verify status beneath the exact checkpoint heading and confirm fresh-checkout dispatcher truth at Stage 43.
 
-## Hot files and commands
+## Hot Files
 
-- Workflow policy: `AGENTS.md`, `.vibe/STATE.md`, active `.vibe/PLAN.md` checkpoint, `.vibe/CONTEXT.md`.
-- Gate entry point: `tools/Invoke-QualityGate.ps1`.
-- Changed-path routing: `tools/Get-ChangedTestPlan.ps1`, `tests/validation-map.json`.
-- Compact output: `tools/Write-ValidationSummary.js`, `build/verify/summary.json`.
-- Bootstrap: `tools/Bootstrap-QualityTools.ps1` using tracked `package-lock.json` and `npm ci`.
-- Release policy remains owned by `.github/workflows/release-policy.yml` and `tools/Test-ReleasePolicy.ps1`.
+- Current checkpoint 42.1: `tools/Test-SecurityPolicy.ps1`, `tests/security-advisory-baseline.json`, `tests/run-security-policy.js`.
+- Next checkpoint 42.2: `tools/Bootstrap-SecurityTools.ps1`, `tools/security-tools.json`, and the focused non-executing hostile fixtures.
+- Workflow/gate: `.github/workflows/quality-gate.yml`, `tools/Invoke-QualityGate.ps1`, `tools/Write-ValidationSummary.js`.
+- Path policy: `tools/GitPathRecords.ps1`, `tools/ArtifactPathPolicy.ps1`, `tools/Get-ChangedTestPlan.ps1`, `tools/Test-StagedArtifacts.ps1`.
+- Vibe authority: `AGENTS.md`, `.vibe/STATE.md`, active `.vibe/PLAN.md`, this file, and append-only `.vibe/EVIDENCE.md`.
 
-## Offline and native limits
+## Agent Notes
 
-- Offline Lua parsing, Fengari tests, packaging parity, static analysis, and GitHub Actions do not prove native WoW behavior.
-- Native test.17 evidence remains owned by the completed product checkpoint. Stage 38 neither creates test.18 nor resolves native follow-up questions.
-- Addon installation, WoW launch, live SavedVariables access, artifact publication, merging, tagging, and release are outside authorization.
+- Root, `.lag-hotfix-worktree`, and authoritative product worktree are independently owned and read-only for this task; preserve their existing status.
+- PR #13 and issue #12 remain open; do not submit another `@codex review` because the prior request hit the account usage limit.
+- Expected red must demonstrate the actual missing capability; use disposable repositories/archives and never place hostile fixtures in the real worktree.
+- No addon install, WoW launch, live SavedVariables access, package retention/upload, rebase, force-push, merge, tag, release, publication, deployment, or settings change is authorized.
+- Final offline/CI evidence does not prove native WoW behavior; stop at the refreshed independent-review boundary.
 
 ## Stage Retrospective Notes
 
-- Stage 41 used 10 delivery loops (design plus implement/review/hygiene for 41.1–41.3), with no repeated review cycle, split, skip, BLOCKER, or DECISION_REQUIRED issue; keep this three-checkpoint dependency shape when one parser/policy foundation feeds later gates.
-- In 41.1, checkpoint-range Fast passed while current-base Fast exposed the separate 41.2 artifact defect; validate bounded work against its checkpoint parent and preserve base-wide failures as explicit next-checkpoint red evidence instead of weakening either boundary.
-- In 41.2, Windows Git could not represent tab/newline index names; pair raw-byte parser fixtures with real disposable index fixtures on platforms that support them and use exact explicit-path fallback locally, never create hostile names in the authoritative worktree.
-- In 41.2, Fast and the staged scanner initially had drifting artifact patterns; when two gates enforce the same security rule, create one policy owner before changing callers so false positives and bypasses are repaired together.
-- In 41.3, fail-closed behavior spanned both local summary normalization and GitHub job aggregation; future gate changes should add a local status matrix and a workflow dependency/condition assertion in the same checkpoint.
-- Stage 41 consolidation found 41.1 still labeled `IN_REVIEW` in PLAN despite passed receipts; after each transition, verify the status beneath the exact checkpoint heading rather than relying only on schema validation or a broad text replacement.
+- Stage 41 took 10 delivery loops: design plus implement/review/hygiene for three checkpoints, with no repeat review, split, skip, blocker, or decision-required issue.
+- Keep checkpoint-range and current-base Fast evidence separate; preserve a base-wide failure as the next checkpoint's red boundary when ownership is explicit.
+- Pair raw-byte path fixtures with real disposable Git index fixtures where the platform supports hostile names.
+- Centralize a shared security policy before updating callers so false positives and bypasses cannot drift.
+- Test local summary semantics and GitHub aggregate conditions in the same fail-closed checkpoint.
+- After each Vibe transition, verify the status beneath the exact checkpoint heading rather than relying only on schema validation.

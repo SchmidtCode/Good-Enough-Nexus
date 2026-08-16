@@ -55,7 +55,7 @@ Preserve only exact inherited PSScriptAnalyzer findings while detecting ownershi
 ## Workflow state
 
 - [ ] RUN_STOPPED
-- [x] RUN_CONTEXT_CAPTURE
+- [ ] RUN_CONTEXT_CAPTURE
 - [x] STAGE_DESIGNED
 - [x] MAINTENANCE_CYCLE_DONE
 - [x] RETROSPECTIVE_DONE
