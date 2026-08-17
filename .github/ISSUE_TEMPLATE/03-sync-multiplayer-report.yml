@@ -1,6 +1,9 @@
 name: Sync / Multiplayer Report
 description: Report a two-player Better Nexus public prerelease synchronization, recovery, or convergence problem with evidence from both clients.
 title: "[Sync]: "
+labels:
+  - sync
+  - prerelease
 body:
   - type: markdown
     attributes:
