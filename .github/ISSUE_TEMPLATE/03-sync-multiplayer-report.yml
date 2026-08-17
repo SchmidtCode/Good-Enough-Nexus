@@ -1,0 +1,124 @@
+name: Sync / Multiplayer Report
+description: Report a two-player Better Nexus public prerelease synchronization, recovery, or convergence problem with evidence from both clients.
+title: "[Sync]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Sync reports are most useful when both players run the same exact build and provide Peer Test / Sync diagnostics from both clients.
+
+  - type: input
+    id: player-a-build
+    attributes:
+      label: Player A exact Nexus build
+      description: Copy Player A's exact build from `/nexus status`. Do not enter only "latest."
+      placeholder: "Example: test.18-d9b48c5"
+    validations:
+      required: true
+
+  - type: input
+    id: player-b-build
+    attributes:
+      label: Player B exact Nexus build
+      description: Copy Player B's exact build from `/nexus status`. If unavailable, state why and provide every known version detail.
+      placeholder: "Example: test.18-d9b48c5"
+    validations:
+      required: true
+
+  - type: textarea
+    id: player-a-steps
+    attributes:
+      label: Player A steps
+      description: Describe Player A's actions in order, including requests, shares, UI actions, reloads, relogs, zoning, and timing.
+      placeholder: |
+        1. Player A ...
+        2. Player A ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: player-b-steps
+    attributes:
+      label: Player B steps
+      description: Describe Player B's actions in order and how they corresponded to Player A's actions.
+      placeholder: |
+        1. Player B ...
+        2. Player B ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: failed-to-sync
+    attributes:
+      label: What failed to synchronize
+      description: Identify the exact build, loadout, deletion, DPS record, request, status count, or recovery state that did not converge.
+    validations:
+      required: true
+
+  - type: textarea
+    id: peer-sync-diagnostics
+    attributes:
+      label: Peer Test / Sync diagnostics from both players
+      description: Paste the complete Peer Test and Sync diagnostics from Player A and Player B. If one side is unavailable, explain why and identify which side is missing.
+      placeholder: |
+        Player A:
+        ...
+
+        Player B:
+        ...
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transition-context
+    attributes:
+      label: Reload, zoning, or Sync Now context
+      description: Select every transition or manual action involved. Choose "None of these" only when none occurred.
+      multiple: true
+      options:
+        - /reload
+        - Zoning or loading screen
+        - Sync Now
+        - Relog or reconnect
+        - None of these
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: Describe the state both players should have reached.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual behavior
+      description: Describe each player's final state, including counts, visible rows, errors, or repeated no-progress results.
+    validations:
+      required: true
+
+  - type: textarea
+    id: relevant-addons
+    attributes:
+      label: Other relevant addons
+      description: List addons enabled on either client that affect networking, builds, loadouts, UI, or diagnostics. Enter "None" if none appear relevant.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Reporting acknowledgements
+      options:
+        - label: I understand that I am testing an unfinished Better Nexus prerelease.
+          required: true
+        - label: I searched existing issues and did not find a duplicate report.
+          required: true
+        - label: I provided exact build information for both clients or explained why one side is unavailable.
+          required: true
+        - label: I included Peer Test / Sync diagnostics from both players where possible.
+          required: true
