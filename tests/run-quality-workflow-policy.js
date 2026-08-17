@@ -8,6 +8,8 @@ const root = path.resolve(__dirname, "..");
 const workflow = fs.readFileSync(path.join(root, ".github/workflows/quality-gate.yml"), "utf8");
 const release = fs.readFileSync(path.join(root, ".github/workflows/release-policy.yml"), "utf8")
     .replace(/\r\n?/g, "\n");
+const normalLuaRunnerFiles = fs.readdirSync(path.join(root, "tests"))
+    .filter((name) => /^run_.*\.lua$/.test(name) && name !== "run_legacy_backup_smoke.lua");
 
 assert.match(workflow, /\non:\s*\n\s+pull_request:\s*\n\s+push:[\s\S]*branches:[\s\S]*- main[\s\S]*workflow_dispatch:/);
 assert(!workflow.includes("pull_request_target"));
@@ -57,6 +59,13 @@ assert(!/^\s+paths(?:-ignore)?:/m.test(workflow));
 for (const job of ["candidate", "release-policy", "lua-regression"]) {
     assert.match(release, new RegExp(`^  ${job}:`, "m"), `missing release job: ${job}`);
 }
+const releaseRunnerCount = release.match(/test "\$\{#tests\[@\]\}" -eq (\d+)/);
+assert(releaseRunnerCount, "release Lua runner-count guard is missing");
+assert.strictEqual(
+    Number(releaseRunnerCount[1]),
+    normalLuaRunnerFiles.length,
+    "release Lua runner-count guard does not match the enumerated normal runner inventory"
+);
 assert.match(release, /candidate_sha: \$\{\{ steps\.resolve\.outputs\.candidate_sha \}\}/);
 assert.strictEqual((release.match(/ref: \$\{\{ needs\.candidate\.outputs\.candidate_sha \}\}/g) || []).length, 2);
 assert.strictEqual((release.match(/Verify exact candidate checkout/g) || []).length, 2);
