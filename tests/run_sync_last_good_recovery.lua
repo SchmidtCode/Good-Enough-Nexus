@@ -234,6 +234,22 @@ assert(DeliverSummary("Owner", Summary("restart", 20, echoesB)))
 assert(DeliverBuild("Owner", Full("restart", 20, echoesB)))
 AssertPublic("restart", 20, echoesB, "restart recovery did not resume")
 
+-- A current scalar summary explicitly carries no link hash when the newer
+-- build removed its link. The matching full payload must be able to promote
+-- and must not resurrect A's stale local link.
+Reset()
+local linkedA = CompleteRecord("link-removed", 10, echoesA)
+linkedA.link = "https://example.invalid/old"
+linkedA.linkHash = HashText(linkedA.link)
+assert(Catalog.Put(linkedA))
+assert(DeliverSummary("Owner", Summary("link-removed", 20, echoesB)))
+assert(DeliverBuild("Owner", Full("link-removed", 20, echoesB)),
+    "no-link replacement could not promote over linked A")
+AssertPublic("link-removed", 20, echoesB,
+    "no-link replacement did not publish")
+assert(Catalog.Get("link-removed").link == nil,
+    "no-link replacement resurrected A's stale link")
+
 -- New summaries remain internally retained but publicly incomplete until the
 -- matching full payload arrives.
 Reset()

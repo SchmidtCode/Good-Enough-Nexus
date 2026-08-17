@@ -1372,7 +1372,9 @@ local function StoreSummary(data, transportSender, context)
         end
         if stamp == pendingStamp then
             local same = tostring(pending.author) == tostring(data.a)
-                and tostring(pending.ownerKey or "") == tostring(data.o or "")
+                and tostring(pending.ownerKey or "") == tostring(
+                    type(data.o) == "string"
+                        and Identity.CanonicalOwnerKey(data.o) or "")
                 and tostring(pending.fingerprintHash) == tostring(data.h):lower()
                 and tostring(pending.linkHash or "") == tostring(data.lh or "")
                 and tonumber(pending.echoCount or 0) == tonumber(data.n or 0)
@@ -1423,8 +1425,9 @@ local function StoreSummary(data, transportSender, context)
         end
         return true, false
     end
-    local newHash = tostring(data.h)
-    local newLinkHash = type(data.lh) == "string" and data.lh or nil
+    local newHash = tostring(data.h):lower()
+    local newLinkHash = type(data.lh) == "string"
+        and data.lh:lower() or nil
     local oldLinkHash = old and (old.linkHash or HashText(old.link)) or nil
     local linkChanged = old ~= nil and newLinkHash ~= oldLinkHash
     local keepEchoes = old and old.fingerprintHash == newHash and old.echoes or nil
@@ -2214,11 +2217,16 @@ local function ShouldStore(id, lastMod, author)
     return false, "duplicate"
 end
 
-local function StoreReceivedBuild(payload, ownerVerified, relaySender)
+local function StoreReceivedBuild(payload, ownerVerified, relaySender,
+        matchedReplacement)
     local existing = CatalogGet(payload.id)
     local mine = (existing and existing.isMine) or false
-    -- Preserve an existing local link if the incoming payload has no link
-    local link = payload.link or (existing and existing.link) or nil
+    -- A matching current summary makes an absent link authoritative. Legacy
+    -- unsolicited full payloads retain the established local-link fallback.
+    local link = payload.link
+    if not matchedReplacement and link == nil then
+        link = existing and existing.link or nil
+    end
     local fingerprint = BuildFingerprint(payload)
     local record = {
         id=payload.id, title=payload.title, description=payload.description,
@@ -2255,6 +2263,7 @@ local function CommitReceivedBuild(payload, transportSender, context)
     local replacingUnverified = existing and existing.ownerVerified == false
         and directOwner and SamePeer(existing.author, payload.author)
     local pending = Session.PendingReplacement(payload.id)
+    local matchedReplacement = false
     if pending then
         local pendingStamp = tonumber(pending.lastModified) or 0
         local payloadStamp = tonumber(payload.lastModified) or 0
@@ -2272,7 +2281,7 @@ local function CommitReceivedBuild(payload, transportSender, context)
             for _, echo in ipairs(payload.echoes or {}) do
                 total = total + (tonumber(echo.stacks or echo.count) or 1)
             end
-            local link = payload.link or (existing and existing.link) or nil
+            local link = payload.link
             local recordComplete = OrdinaryComplete({
                 echoes=payload.echoes,fingerprint=fingerprint,
             })
@@ -2299,6 +2308,7 @@ local function CommitReceivedBuild(payload, transportSender, context)
                     tostring(payload.title))
                 return false
             end
+            matchedReplacement = true
         end
     end
     local allowed, why
@@ -2357,7 +2367,7 @@ local function CommitReceivedBuild(payload, transportSender, context)
         return false
     end
     local stored, storedWhy = StoreReceivedBuild(
-        payload, directOwner, transportSender)
+        payload, directOwner, transportSender, matchedReplacement)
     if not stored then
         stats.storageRejected = (stats.storageRejected or 0) + 1
         Responder.NoteContextOutcome(context, "rejected", "storage")
