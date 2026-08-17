@@ -1,0 +1,13 @@
+# Viscerals is the human authority for policy and release-critical files.
+* @Viscerals
+
+# Keep policy and release-controlled surfaces under the same human review.
+/.github/ @Viscerals
+/LICENSE.md @Viscerals
+/AI_POLICY.md @Viscerals
+/RELEASE_SECURITY.md @Viscerals
+/SECURITY.md @Viscerals
+/UPSTREAM.md @Viscerals
+/Nexus.toc @Viscerals
+/data/Release.lua @Viscerals
+/ui/Changelog.lua @Viscerals
