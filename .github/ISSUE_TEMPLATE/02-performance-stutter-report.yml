@@ -1,5 +1,5 @@
 name: Performance / Stutter Report
-description: Report Nexus Test 18 frame cost, hitches, stuttering, or long-session performance with required diagnostics.
+description: Report Better Nexus public prerelease frame cost, hitches, stuttering, or long-session performance with required diagnostics.
 title: "[Performance]: "
 body:
   - type: markdown
@@ -12,7 +12,7 @@ body:
     attributes:
       label: Exact Nexus build
       description: Copy the exact build shown by `/nexus status` or the release filename. Do not enter only "latest."
-      placeholder: "Example: test.18-d9b48c5 / v1.20.0-beta.1-test.18"
+      placeholder: "Example: test.18-d9b48c5"
     validations:
       required: true
 
@@ -116,7 +116,7 @@ body:
     attributes:
       label: Reporting acknowledgements
       options:
-        - label: I understand that Test 18 is an unfinished prerelease build.
+        - label: I understand that I am testing an unfinished Better Nexus prerelease.
           required: true
         - label: I searched existing issues and did not find a duplicate report.
           required: true

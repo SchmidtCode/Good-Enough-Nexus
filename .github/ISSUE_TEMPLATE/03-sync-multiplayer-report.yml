@@ -1,5 +1,5 @@
 name: Sync / Multiplayer Report
-description: Report a two-player Nexus Test 18 synchronization, recovery, or convergence problem with evidence from both clients.
+description: Report a two-player Better Nexus public prerelease synchronization, recovery, or convergence problem with evidence from both clients.
 title: "[Sync]: "
 body:
   - type: markdown
@@ -12,7 +12,7 @@ body:
     attributes:
       label: Player A exact Nexus build
       description: Copy Player A's exact build from `/nexus status`. Do not enter only "latest."
-      placeholder: "Example: test.18-d9b48c5 / v1.20.0-beta.1-test.18"
+      placeholder: "Example: test.18-d9b48c5"
     validations:
       required: true
 
@@ -21,7 +21,7 @@ body:
     attributes:
       label: Player B exact Nexus build
       description: Copy Player B's exact build from `/nexus status`. If unavailable, state why and provide every known version detail.
-      placeholder: "Example: test.18-d9b48c5 / v1.20.0-beta.1-test.18"
+      placeholder: "Example: test.18-d9b48c5"
     validations:
       required: true
 
@@ -114,7 +114,7 @@ body:
     attributes:
       label: Reporting acknowledgements
       options:
-        - label: I understand that Test 18 is an unfinished prerelease build.
+        - label: I understand that I am testing an unfinished Better Nexus prerelease.
           required: true
         - label: I searched existing issues and did not find a duplicate report.
           required: true
