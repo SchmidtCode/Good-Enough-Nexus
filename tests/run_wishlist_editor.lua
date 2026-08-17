@@ -129,4 +129,39 @@ assert(freshDraft.scrollOffset == 0 and freshDraft.pickOffset == 0
     and freshDraft.pendingLoadoutOpen == nil,
     "unassociated active loadout did not reset complete editor draft state")
 
-print("wishlist editor: lifecycle + clean unassociated loadout open OK (checks=13)")
+-- A rejected associated Wishlist must leave the server journal and editor UI
+-- untouched. In particular, no renderer preparation may run before the
+-- controller accepts the transition.
+local serverJournal = CreateFrame("Frame", "ProjectEbonholdEchoJournal", UIParent)
+serverJournal:Show()
+frame:Hide()
+local hideCalls, attachCalls, styleCalls, closeCalls = 0, 0, 0, 0
+HideUIPanel = function(target)
+    hideCalls = hideCalls + 1
+    target:Hide()
+end
+Nexus.Panel = {
+    AttachMenuFrame = function() attachCalls = attachCalls + 1 end,
+    CloseOtherWindows = function() closeCalls = closeCalls + 1 end,
+}
+Nexus.Theme = {
+    StyleWindow = function() styleCalls = styleCalls + 1 end,
+    StyleTree = function() end,
+}
+local oversized = {}
+for i = 1, 80 do
+    oversized[i] = { spellId = 320000 + i, quality = 3, stacks = 1 }
+end
+Adapter.GetLoadoutWishlist = function()
+    return {slot=1, name="Rejected", key="rejected", echoes=oversized}
+end
+local accepted, rejectedMode = EW.Show()
+assert(serverJournal:IsShown() and hideCalls == 0,
+    "rejected Show hid the server Echo UI")
+assert(not frame:IsShown(), "rejected Show displayed the Wishlist Editor")
+assert(attachCalls == 0 and styleCalls == 0 and closeCalls == 0,
+    "rejected Show prepared or suppressed UI before controller acceptance")
+assert(accepted == false and rejectedMode == "wishlist",
+    "rejected Show did not return the controller result")
+
+print("wishlist editor: lifecycle + fail-closed Show OK (checks=17)")

@@ -334,18 +334,15 @@ function M.NewWishlist()
 end
 
 function M.Show()
-    HideServerEchoUI()
-    local renderer = RendererInstance()
-    renderer.Prepare({attach=true, style=true, close=true})
-
     local ok, mode, clearName = wishlistController.BeginShow()
-    if not ok then return end
+    if not ok then return ok, mode, clearName end
     SyncFulfilledDraftTargets()
+
+    local renderer = RendererInstance()
+    renderer.Prepare({attach=true, style=true})
     if clearName then renderer.SetNameText("") end
-    if mode == "wishlist" then
-        HideServerEchoUI()
-        renderer.Prepare({close=true})
-    end
+    HideServerEchoUI()
+    renderer.Prepare({close=true})
     renderer.ShowFrame()
     M.Refresh()
 end
