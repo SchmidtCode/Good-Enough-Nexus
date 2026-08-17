@@ -1,6 +1,9 @@
 name: Performance / Stutter Report
 description: Report Better Nexus public prerelease frame cost, hitches, stuttering, or long-session performance with required diagnostics.
 title: "[Performance]: "
+labels:
+  - performance
+  - prerelease
 body:
   - type: markdown
     attributes:

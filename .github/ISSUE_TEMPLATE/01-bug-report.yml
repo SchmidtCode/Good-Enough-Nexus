@@ -1,6 +1,9 @@
 name: Bug Report
 description: Report a reproducible Better Nexus public prerelease bug that is not primarily performance or multiplayer Sync related.
 title: "[Bug]: "
+labels:
+  - bug
+  - prerelease
 body:
   - type: markdown
     attributes:
