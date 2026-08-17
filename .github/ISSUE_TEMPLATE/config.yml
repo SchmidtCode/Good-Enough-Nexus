@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Check existing reports first
+    url: https://github.com/Viscerals/Better-Nexus/issues?q=is%3Aissue
+    about: Search for an existing Bug, Performance, or Sync report before opening a duplicate.
+  - name: Test 18 download and notes
+    url: https://github.com/Viscerals/Better-Nexus/releases/tag/v1.20.0-beta.1-test.18
+    about: Confirm that you are testing the current public Test 18 prerelease.
