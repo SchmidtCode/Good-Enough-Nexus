@@ -76,4 +76,33 @@ const crlfGenerated = injectRuntimeBuildLabel(
 assert(crlfGenerated.includes('\r\n    buildLabel = "test.13-abcdef0",\r\n'),
     "CRLF package identity injection did not preserve line structure");
 
+function assertOnlyLabelBytesChanged(source, label) {
+    const anchor = '    buildLabel = "source",';
+    const occurrence = source.indexOf(anchor);
+    assert.notStrictEqual(occurrence, -1, "fixture omitted active anchor");
+    assert.strictEqual(source.indexOf(anchor, occurrence + 1), -1,
+        "fixture has multiple active anchors");
+    const expected = source.slice(0, occurrence)
+        + `    buildLabel = "${label}",`
+        + source.slice(occurrence + anchor.length);
+    assert.strictEqual(injectRuntimeBuildLabel(source, label), expected,
+        "runtime label injection changed bytes outside the label value");
+}
+
+for (const fixture of [
+    'return {\n    buildLabel = "source",\n}\n',
+    'return {\r\n    buildLabel = "source",\r\n}\r\n',
+    'return {\r\n    buildLabel = "source",\n}\r\n',
+    'return {\r\r\n    buildLabel = "source",\r\r\n}\r\r\n',
+]) {
+    assertOnlyLabelBytesChanged(fixture, privateLabel);
+}
+for (const lookalike of [
+    '--    buildLabel = "source",\nreturn true\n',
+    'local text = \'    buildLabel = "source",\'\nreturn text\n',
+]) {
+    assert.throws(() => injectRuntimeBuildLabel(lookalike, privateLabel),
+        /expected exactly one runtime build label anchor; found 0/);
+}
+
 console.log("package metadata: Author=Valentine; source/private runtime identity is one controlled Release.lua line; upstream Boganic attribution preserved");

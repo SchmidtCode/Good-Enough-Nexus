@@ -18,13 +18,13 @@ function injectRuntimeBuildLabel(source, value) {
         throw new Error("Release.lua source must be text");
     }
     const label = validateRuntimeBuildLabel(value);
-    const anchorPattern = /(^|\r?\n)    buildLabel = "source",(?=\r?\n|$)/g;
-    const occurrences = (source.match(anchorPattern) || []).length;
+    const anchorPattern = /(^|\n)(    buildLabel = ")source(",(?=\r*\n|$))/g;
+    const occurrences = [...source.matchAll(anchorPattern)].length;
     if (occurrences !== 1) {
         throw new Error(`expected exactly one runtime build label anchor; found ${occurrences}`);
     }
-    return source.replace(anchorPattern, (match, prefix) =>
-        `${prefix}    buildLabel = "${label}",`);
+    return source.replace(anchorPattern, (match, lineStart, before, after) =>
+        `${lineStart}${before}${label}${after}`);
 }
 
 if (require.main === module) {

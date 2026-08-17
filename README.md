@@ -84,16 +84,62 @@ and writes deterministic catalog metadata plus an exclusion report.
 parser in read-only mode and prints aggregate compaction metrics without
 evaluating Lua, exposing record contents, or writing the input.
 
-For the repository's local offline gate, run these commands from PowerShell:
+Bootstrap the repository's pinned development-only validation dependencies from
+tracked files, then run the local offline gate from PowerShell:
 
 ```powershell
-node .tools/fengari/parse-lua51.js . --tests
+./tools/Bootstrap-QualityTools.ps1
+node tools/parse-lua51.js . --tests
 node tools/check-lua51-upvalues.js . --toc Nexus.toc
-Get-ChildItem -LiteralPath tests -Filter 'run_*.lua' | Sort-Object Name | ForEach-Object { node .tools/fengari/run-lua.js $_.FullName; if ($LASTEXITCODE -ne 0) { throw "failed: $($_.Name)" } }
+Get-ChildItem -LiteralPath tests -Filter 'run_*.lua' | Sort-Object Name | ForEach-Object { node tools/run-lua.js $_.FullName; if ($LASTEXITCODE -ne 0) { throw "failed: $($_.Name)" } }
 node tests/run-bundled-build-export.js
 node tests/run-savedvariables-analyzer.js
 git diff --check
 ```
+
+The bootstrap requires Node.js 20 or newer with npm and runs `npm ci` against
+the exact tracked lockfile. It then downloads the exact Gitleaks, actionlint,
+zizmor, and PSScriptAnalyzer assets in `tools/security-tools.json`, verifies
+their SHA-256 values before extraction, and installs the pinned pre-commit
+runner under ignored `.tools` state. `node_modules`, downloaded tools, and hook
+environments remain ignored development state.
+
+After bootstrap, use one quality-gate entry point:
+
+```powershell
+./tools/Invoke-QualityGate.ps1 -Mode Fast
+./tools/Invoke-QualityGate.ps1 -Mode Full
+./tools/Invoke-QualityGate.ps1 -Mode Package
+./tools/Invoke-QualityGate.ps1 -Mode Security
+```
+
+`Fast` maps changed paths through `tests/validation-map.json`; `Full` runs the
+complete offline matrix; `Package` verifies a temporary logical `Nexus` package
+manifest without retaining an archive; and `Security` owns artifact, secret,
+workflow, Lua, and PowerShell policy. Results are written under ignored
+`build/verify/`: compact `summary.json` and `summary.md` files plus detailed
+per-check logs. Successful logs are not copied into the summary.
+
+The Security profile blocks staged/local artifacts, secrets, private keys,
+workflow syntax errors, high-severity workflow security findings, PowerShell
+parse/security findings, and warnings beyond the explicit initial advisory
+baseline. LuaLS and Luacheck target Lua 5.1, while StyLua is check-only; those
+three are advisory and are reported as unavailable when not installed rather
+than being counted as passes. Pre-commit runs artifact, secret, filename,
+conflict, whitespace, and check-only line-ending checks at commit time, with
+Fast reserved for pre-push or explicit use. Three inherited mixed-ending files
+are recorded narrowly in `tests/security-advisory-baseline.json` and are not
+rewritten by this infrastructure stage.
+
+VibeRun remains the project workflow owner. Its implementation role runs
+expected-red and focused checks followed by `Fast`, then stops after one clean
+commit. Its independent review role runs `Full` once at the committed candidate,
+reads the compact summary, and opens detailed logs only for a failure or a
+suspicious result. A hygiene pass does not repeat `Full` when no product or test
+byte changed. Consolidation archives receipts without changing product bytes or
+inventing a new stage. Normal sessions read `AGENTS.md`, current `STATE`, only
+the active `PLAN` checkpoint, and `CONTEXT`; evidence and history reads stay
+bounded to the receipt needed for the current decision.
 
 The adjacent upvalue command audits every TOC-loaded function against the WoW 3.3.5a hard limit of 60. It reports a production advisory above 48 to retain a practical 12-upvalue maintenance margin where feasible; the regression fixture keeps every reviewed exception explicit.
 
