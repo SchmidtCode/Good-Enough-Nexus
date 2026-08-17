@@ -35,22 +35,22 @@ H.FireEvent("SPELLS_CHANGED"); H.FireEvent("PLAYER_ENTERING_WORLD"); H.Advance(2
 local CB = Nexus.CommunityBuilds
 CB.Init(Nexus.GameAdapter, Nexus.Model)
 NexusDB.communityBuilds = {
-    z1={id="z1",title="Rogue Build",class="ROGUE",fingerprint="fp-z1",
+    z1={id="z1",title="Rogue Build",class="ROGUE",fingerprint="1x1",
         echoes={{spellId=1,quality=3,stacks=1}},postedAt=100,lastModified=100,
         isMine=true,author="Alice",ownerKey="alice@unknown",description=""},
-    z2={id="z2",title="Mage Build",class="MAGE",fingerprint="fp-z2",
+    z2={id="z2",title="Mage Build",class="MAGE",fingerprint="2x1",
         echoes={{spellId=2,quality=3,stacks=1}},postedAt=200,lastModified=200,
         author="Bob",ownerKey="bob@unknown",description=""},
-    z3={id="z3",title="Warrior Build",class="WARRIOR",fingerprint="fp-z3",
+    z3={id="z3",title="Warrior Build",class="WARRIOR",fingerprint="3x1",
         echoes={{spellId=3,quality=3,stacks=1}},postedAt=300,lastModified=300,
         author="Carol",ownerKey="carol@unknown",description=""},
 }
 Nexus.DpsCapture = Nexus.DpsCapture or {}
 Nexus.DpsCapture.GetCommunityEligibility = function()
     return {
-        ["fp-z1"]={dummy=100,lk=200,best=200,average=150,count=2},
-        ["fp-z2"]={dummy=300,lk=400,best=400,average=350,count=2},
-        ["fp-z3"]={dummy=500,lk=600,best=600,average=550,count=2},
+        ["1x1"]={dummy=100,lk=200,best=200,average=150,count=2},
+        ["2x1"]={dummy=300,lk=400,best=400,average=350,count=2},
+        ["3x1"]={dummy=500,lk=600,best=600,average=550,count=2},
     }
 end
 

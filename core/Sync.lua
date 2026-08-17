@@ -2218,7 +2218,7 @@ local function ShouldStore(id, lastMod, author)
 end
 
 local function StoreReceivedBuild(payload, ownerVerified, relaySender,
-        matchedReplacement)
+        matchedReplacement, canonicalFingerprint)
     local existing = CatalogGet(payload.id)
     local mine = (existing and existing.isMine) or false
     -- A matching current summary makes an absent link authoritative. Legacy
@@ -2227,7 +2227,10 @@ local function StoreReceivedBuild(payload, ownerVerified, relaySender,
     if not matchedReplacement and link == nil then
         link = existing and existing.link or nil
     end
-    local fingerprint = BuildFingerprint(payload)
+    local fingerprint = canonicalFingerprint
+    if type(fingerprint) ~= "string" or fingerprint == "" then
+        return false, "canonical fingerprint unavailable"
+    end
     local record = {
         id=payload.id, title=payload.title, description=payload.description,
         author=payload.author,
@@ -2264,6 +2267,7 @@ local function CommitReceivedBuild(payload, transportSender, context)
         and directOwner and SamePeer(existing.author, payload.author)
     local pending = Session.PendingReplacement(payload.id)
     local matchedReplacement = false
+    local replacementFingerprint = BuildFingerprint(payload)
     if pending then
         local pendingStamp = tonumber(pending.lastModified) or 0
         local payloadStamp = tonumber(payload.lastModified) or 0
@@ -2275,7 +2279,7 @@ local function CommitReceivedBuild(payload, transportSender, context)
             return true
         end
         if payloadStamp == pendingStamp then
-            local fingerprint = BuildFingerprint(payload)
+            local fingerprint = replacementFingerprint
             local fingerprintHash = HashText(fingerprint)
             local total = 0
             for _, echo in ipairs(payload.echoes or {}) do
@@ -2367,7 +2371,8 @@ local function CommitReceivedBuild(payload, transportSender, context)
         return false
     end
     local stored, storedWhy = StoreReceivedBuild(
-        payload, directOwner, transportSender, matchedReplacement)
+        payload, directOwner, transportSender, matchedReplacement,
+        replacementFingerprint)
     if not stored then
         stats.storageRejected = (stats.storageRejected or 0) + 1
         Responder.NoteContextOutcome(context, "rejected", "storage")

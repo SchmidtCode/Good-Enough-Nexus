@@ -33,13 +33,16 @@ NexusDB = {
 }
 for index = 1, 1000 do
     local id = string.format("layout-budget-%04d",index)
-    local fingerprint = "layout-budget-fingerprint-"..index
     local echoes = {}
+    local fingerprintParts = {}
     for echoIndex = 1, 6 do
+        local spellId = 790000+index*10+echoIndex
         echoes[echoIndex] = {
-            spellId=790000+index*10+echoIndex,quality=3,stacks=1,
+            spellId=spellId,quality=3,stacks=1,
         }
+        fingerprintParts[echoIndex] = tostring(spellId).."x1"
     end
+    local fingerprint = table.concat(fingerprintParts, ",")
     NexusDB.communityBuilds[id] = {
         id=id,title=string.format("Layout Budget Build %04d",index),
         author="Peer",ownerKey="peer@ebonhold",class="MAGE",

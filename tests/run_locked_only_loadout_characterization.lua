@@ -175,10 +175,11 @@ local communityRows, communitySummary = Nexus.ViewProjections.Builds({
     scope="all",classFilter="MAGE",currentClassOnly=false,
     qualifiedOnly=false,search="",sortMode="recent",page=1,
 })
-Check(type(communityRows) == "table" and communitySummary.total == 8,
-    "real Community projection did not read the catalog fixture")
+Check(type(communityRows) == "table" and communitySummary.total == 2,
+    "real Community projection did not publish only complete catalog rows")
 Check(communitySummary.ready == 2 and communitySummary.pending == 6,
-    "Community did not quarantine all six incomplete overlay rows")
+    string.format("Community counted incomplete overlay rows as public or pending: ready=%s pending=%s",
+        tostring(communitySummary.ready),tostring(communitySummary.pending)))
 
 local delta = Nexus.BuildCatalog.DeltaSnapshot()
 local broadcastable = 0
@@ -249,14 +250,17 @@ dofile("ui/Leaderboard.lua")
 Nexus.ViewProjections.Reset()
 Nexus.Leaderboard.Init(nil)
 Nexus.Leaderboard.Show("dummy")
-Check(Nexus.Leaderboard.SelectKey("fixture|string:fingerprint-cross"),
-    "real Leaderboard locked-only row was not selectable")
-local detail = assert(NexusLeaderboardFrame._leaderboardDetail)
-Check(not detail.copy:IsEnabled() and not detail.open:IsEnabled(),
-    "Leaderboard enabled Copy/Open for incomplete ordinary evidence")
+for _ = 1, 20 do
+    Nexus.Leaderboard.RefreshData()
+    NexusLeaderboardFrame:GetScript("OnUpdate")(
+        NexusLeaderboardFrame, 0.05)
+end
+Check(not Nexus.Leaderboard.SelectKey("fixture|string:fingerprint-cross")
+        and Nexus.Leaderboard.VirtualStats().publishedRows == 0,
+    "real Leaderboard published a locked-only row")
 Check(openedCandidate == nil and openedBuild == nil,
-    "disabled Leaderboard actions reached editor or Community")
-Check(loadoutRequests >= 1 and loadoutRequests <= 2,
+    "filtered Leaderboard row reached editor or Community")
+Check(loadoutRequests <= 2,
     "Leaderboard escaped its bounded recovery-request path: "
         .. tostring(loadoutRequests))
 

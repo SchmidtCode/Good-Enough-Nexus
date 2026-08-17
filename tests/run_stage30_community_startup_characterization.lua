@@ -24,7 +24,7 @@ NexusDB = {
 
 for index = 1, 45 do
     local id = string.format("stage30-public-%02d", index)
-    local fingerprint = "stage30-fingerprint-" .. index
+    local fingerprint = tostring(760000+index) .. "x1"
     NexusDB.communityBuilds[id] = {
         id=id,title=string.format("%02d Persisted Mage", index),
         description="persisted before Sync",author="Peer" .. index,
@@ -37,7 +37,7 @@ end
 
 for index = 1, 4 do
     local id = string.format("stage30-public-%02d", index)
-    local fingerprint = "stage30-fingerprint-" .. index
+    local fingerprint = tostring(760000+index) .. "x1"
     for _, category in ipairs({"dummy", "lk"}) do
         local player = string.format("PersistedMage%02d", index)
         NexusDB.dpsCapture.characterBest[category][player:lower()] = {

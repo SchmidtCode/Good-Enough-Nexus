@@ -12,7 +12,7 @@ NexusDB = {
 }
 for index = 1, 1000 do
     local id = string.format("budget-%04d", index)
-    local fingerprint = "budget-fingerprint-" .. index
+    local fingerprint = tostring(720000+index) .. "x1"
     NexusDB.communityBuilds[id] = {
         id=id,title=string.format("Build %04d", index),author="Peer",
         ownerKey="peer@ebonhold",class="MAGE",

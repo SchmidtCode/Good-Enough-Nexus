@@ -26,7 +26,7 @@ for index = 1, 25 do
         title=index == 25 and ("Caf\195\169 \230\157\177\228\186\172 "
             .. string.rep("Long Build Title ",20)) or ("Build "..index),
         description="responsive fixture",postedAt=index,lastModified=index,
-        fingerprint="layout-fingerprint-"..index,
+        fingerprint=tostring(780000+index).."x1",
         echoes={{spellId=780000+index,quality=3,stacks=1}},
     }
 end

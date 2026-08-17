@@ -170,9 +170,8 @@ local changed
 for _,row in ipairs(afterChange) do
     if row.player=="Recovered080" then changed=row; break end
 end
-assert(changed and changed.buildId=="raw-collision-080"
-        and changed.resolvedBuildId==nil,
-    "stale fingerprint identity remained navigable after revision")
+assert(changed==nil,
+    "stale fingerprint identity remained public after revision")
 
 local missing,missingReason=Nexus.BuildCatalog.ResolveFingerprintIdentity(
     "missing-raw","missing-fingerprint")

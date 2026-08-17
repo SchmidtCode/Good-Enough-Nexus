@@ -166,24 +166,29 @@ local QUESTION = "Interface\\Icons\\INV_Misc_QuestionMark"
 local NEUTRAL = "Interface\\Icons\\INV_Misc_Note_01"
 local classRows = {
     {player="Protocolmage",class="MAGE",dps=900,ts=1,duration=60,
-        fingerprint="protocol-class",buildId="protocol-class"},
-    {player="Exactwarrior",dps=800,ts=2,duration=60,
+        fingerprint="410001x1",echoes={{spellId=410001,stacks=1}},
+        buildId="protocol-class"},
+    {player="Exactwarrior",dps=800,ts=2,duration=60,ordinaryComplete=true,
         fingerprint=CURRENT_FINGERPRINT,buildId="collision-current",
         build=Copy(navigationBundle.builds["collision-current"])},
     {player="Currentplayer",class="DRUID",dps=700,ts=3,duration=60,
-        fingerprint="current-player-repair",buildId="current-player-repair"},
-    {player="Recoveredpaladin",dps=600,ts=4,duration=60,
+        fingerprint="410003x1",echoes={{spellId=410003,stacks=1}},
+        buildId="current-player-repair"},
+    {player="Recoveredpaladin",dps=600,ts=4,duration=60,ordinaryComplete=true,
         fingerprint=RECOVERED_FINGERPRINT,buildId="missing-legacy-id"},
     {player="Unknownlegacy",dps=500,ts=5,duration=60,
-        fingerprint="unknown-class",buildId="unknown-class"},
+        fingerprint="410005x1",echoes={{spellId=410005,stacks=1}},
+        buildId="unknown-class"},
     {player="Invalidlegacy",class="NOT_A_CLASS",dps=400,ts=6,duration=60,
-        fingerprint="invalid-class",buildId="invalid-class"},
+        fingerprint="410006x1",echoes={{spellId=410006,stacks=1}},
+        buildId="invalid-class"},
     {player="Mismatchedrow",dps=300,ts=7,duration=60,
         fingerprint="mismatch-fingerprint",buildId="mismatch-id",
         buildIdentityMismatch=true,
         build={id="other",fingerprint="other",class="WARLOCK"}},
     {player="Laterrogue",dps=200,ts=8,duration=60,
-        fingerprint="later-class",buildId="later-class"},
+        fingerprint="410008x1",echoes={{spellId=410008,stacks=1}},
+        buildId="later-class"},
 }
 Nexus.DpsCapture={GetDpsBoard=function(category)
     return category=="dummy" and classRows or {}
@@ -232,9 +237,8 @@ local lastBound=BoundRows()
 Check(lastBound.Invalidlegacy.icon:GetTexture()==NEUTRAL
         and lastBound.Invalidlegacy.classLabel=="Class unavailable",
     "invalid class did not use the neutral unavailable presentation")
-Check(lastBound.Mismatchedrow.icon:GetTexture()==NEUTRAL
-        and lastBound.Mismatchedrow.classLabel=="Class unavailable",
-    "mismatched build metadata supplied class authority")
+Check(lastBound.Mismatchedrow==nil,
+    "mismatched build metadata remained public")
 Check(QUESTION~=NEUTRAL,
     "neutral class-unavailable fixture aliases the broken question mark")
 

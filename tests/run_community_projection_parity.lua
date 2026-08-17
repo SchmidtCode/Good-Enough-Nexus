@@ -3,6 +3,8 @@
 Nexus = {}
 dofile("core/Revisions.lua")
 dofile("core/Identity.lua")
+dofile("core/LoadoutEvidence.lua")
+Nexus.LoadoutEvidence.Init({})
 dofile("core/CandidateEvidence.lua")
 dofile("core/ViewProjections.lua")
 dofile("core/CommunityProjection.lua")
@@ -48,7 +50,8 @@ for index = 1, 1000 do
         class=index % 2 == 0 and "MAGE" or "WARRIOR",
         postedAt=index,lastModified=index,
         importedSavedBuild=index <= 10 and true or nil,
-        fingerprint="fp-"..index,fingerprintHash="hash-"..index,
+        fingerprint=tostring(spellId).."x1,"..tostring(spellId+10000).."x1",
+        fingerprintHash="hash-"..index,ordinaryComplete=true,
         echoCount=2,loadoutAvailable=true,
     }
     exact[id] = Copy(builds[id])
@@ -185,7 +188,8 @@ local context = {
     isAdmin=false,detailsAvailable=true,
     ownedBySpell={[800200]=1,[810200]=0},
 }
-local detail = assert(projection.Detail(selected, context))
+local detail = assert(projection.Detail(selected, context),
+    "selected complete detail was filtered")
 assert(detail.build.id == selected and detail.mine and not detail.admin
     and detail.hasLink and detail.showLink and detail.canSaveLink
     and detail.showEdit and detail.showDelete
@@ -241,10 +245,9 @@ exact[incompleteId] = {
     ownerKey="peer@ebonhold",class="MAGE",echoes={},
 }
 R.Advance(R.BUILD_LIBRARY_CHANGED, {scope="incomplete"})
-local incomplete = assert(projection.Detail(incompleteId, context))
-assert(not incomplete.hasLoadout and incomplete.needsLoadout
-    and incomplete.actionText == "Request Loadout",
-    "incomplete exact-loadout request projection changed")
+local incomplete = projection.Detail(incompleteId, context)
+assert(incomplete == nil,
+    "incomplete exact loadout remained public")
 
 local mirrorId, publishedId = "community-mirror", "community-published"
 exact[mirrorId] = {

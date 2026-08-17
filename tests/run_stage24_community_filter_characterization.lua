@@ -17,6 +17,7 @@ local function Add(id, class, state, mine, imported)
         description="generated fixture",author=mine and "FixtureOwner" or "Peer",
         ownerKey=mine and "fixtureowner@fixturerealm" or "peer@fixturerealm",
         class=class,fingerprint=fingerprint,fingerprintHash="h-" .. id,
+        ordinaryComplete=true,
         echoCount=1,loadoutAvailable=true,postedAt=index,lastModified=index,
         isMine=mine and true or false,importedSavedBuild=imported and true or nil,
     }

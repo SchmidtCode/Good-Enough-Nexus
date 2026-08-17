@@ -17,7 +17,7 @@ for index = 1, 1000 do
         id=id, title=string.format("Build %04d", index), author="Peer",
         ownerKey="peer@ebonhold", class="MAGE",
         postedAt=index, lastModified=index,
-        fingerprint="renderer-fingerprint-"..index,
+        fingerprint=tostring(720000+index).."x1",
         echoes={{spellId=720000 + index, quality=3, stacks=1}},
     }
 end

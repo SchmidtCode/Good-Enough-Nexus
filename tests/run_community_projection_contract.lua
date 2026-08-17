@@ -45,6 +45,7 @@ local function AddBuild(index, class, options)
         isMine=options.isMine,
         fingerprint=fingerprint,
         fingerprintHash=options.fingerprintHash or ("short-" .. index),
+        ordinaryComplete=true,
         echoCount=2,loadoutAvailable=true,
     }
     return builds[id]
