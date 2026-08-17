@@ -361,8 +361,8 @@ local legacyAmbiguous = allByPlayer.Legacyambiguous
 local targetResolvedByPlayer = FindByPlayerBuild(targetPlayerRows, targetPlayer, rawId)
 local targetByResolvedMap = targetResolvedByPlayer or target
 
-Control(#allRows == 17 and allSummary.filtered == 17,
-    "All Classes did not retain every accepted row")
+Control(#allRows == 9 and allSummary.filtered == 9,
+    "All Classes did not retain exactly the complete accepted rows")
 Control(targetByResolvedMap and targetByResolvedMap.buildId == rawId
         and targetByResolvedMap.resolvedBuildId == resolvedId
         and targetByResolvedMap.buildIdentityMismatch == true,
@@ -379,22 +379,16 @@ Control(lookalike and lookalike.resolvedClass == nil,
     "ASCII lookalike gained accented current-player class authority")
 Control(invalid and invalid.resolvedClass == nil
         and ambiguous and ambiguous.resolvedClass == nil
-        and mismatched and mismatched.resolvedClass == nil,
-    "invalid, ambiguous, or mismatched evidence gained class authority")
+        and mismatched == nil,
+    "invalid or ambiguous class evidence gained authority, or mismatched ordinary evidence became public")
 Control(classless and classless.resolvedClass == nil,
     "no evidence classless row gained class authority")
-Control(incompleteRecovered and incompleteRecovered.ordinaryComplete == false,
-    "pending/incomplete recovered row was treated as ordinary-complete")
-Desired(incompleteRecovered and incompleteRecovered.classSource == "exact-build"
-    and incompleteRecovered.buildId == incompleteId
-    and incompleteRecovered.ordinaryEvidenceSource == "raw",
-    "incomplete recovered identity did not retain expected evidence provenance")
+Control(incompleteRecovered == nil,
+    "pending/incomplete recovered row reached the public Leaderboard")
 Desired(targetByResolvedMap and targetByResolvedMap.resolvedClass == "PALADIN",
     "inline recovered exact class was not hydrated before return")
 Desired(targetByResolvedMap and targetByResolvedMap.classSource == "exact-build",
     "inline recovered class did not retain exact-build provenance")
-Desired(incompleteRecovered and incompleteRecovered.classSource == "exact-build",
-    "same-player row with recovered incomplete identity did not use exact-build class source")
 Desired(legacyHashRow and legacyHashRow.resolvedClass == "PRIEST"
         and legacyHashRow.classSource == "exact-build",
     "legacy @hash with inline evidence did not recover its exact build class")
@@ -406,8 +400,8 @@ for label, row in pairs({
     loadoutHash=legacyLoadoutHashMismatch,inline=legacyInlineMismatch,
     buildId=legacyIdMismatch,ambiguous=legacyAmbiguous,
 }) do
-    Control(row and row.resolvedClass == nil and row.classUnavailable == true,
-        "hostile legacy "..label.." claim gained catalog class authority")
+    Control(row == nil,
+        "hostile legacy "..label.." claim reached the public Leaderboard")
 end
 
 local currentToken = select(2, UnitClass("player"))
@@ -428,8 +422,8 @@ local druidRows = Project("dummy", "DRUID")
 local druidByPlayerRows = ByPlayerRows(druidRows)
 local druidByTarget = FindByPlayerBuild(
     druidByPlayerRows.Incompletetest or {}, "Incompletetest", incompleteId)
-Desired(druidByTarget ~= nil,
-    "class filter excluded the inline recovered DRUID")
+Control(druidByTarget == nil,
+    "class filter exposed the recovered-but-incomplete DRUID")
 liveClass = "MAGE"
 
 local priestRows = Project("dummy", "PRIEST")
@@ -497,9 +491,8 @@ Desired(targetPaladinBound
         and targetPaladinBound.icon:GetTexture() == PALADIN_ICON
         and targetPaladinBound.classLabel == "Paladin",
     "inline recovered class did not bind the PALADIN icon and label")
-Desired(targetDruidBound ~= nil
-    and targetDruidBound.classLabel == "Druid",
-    "incomplete recovered row did not bind class label from catalog identity")
+Control(targetDruidBound == nil,
+    "incomplete recovered row bound a public class label")
 Control(currentBound
         and currentBound.icon:GetTexture() == MAGE_ICON
         and lookalikeBound

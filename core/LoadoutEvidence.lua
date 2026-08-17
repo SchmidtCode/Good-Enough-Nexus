@@ -485,6 +485,31 @@ function Evidence.OrdinaryCompleteness(row)
     return Finish("complete")
 end
 
+-- Public Community/Leaderboard consumers share one additional identity gate.
+-- A stale raw build ID may remain usable only after exact recovery has supplied
+-- a represented replacement identity; unresolved or record-level conflicts
+-- never gain count, selection, Copy, or Open authority.
+function Evidence.HasPublicOrdinaryConflict(row)
+    return type(row) ~= "table"
+        or row.recordIdentityMismatch == true
+        or row.resolvedIdentityMismatch == true
+        or (row.buildIdentityMismatch == true
+            and row.resolvedBuildId == nil)
+end
+
+function Evidence.PublicOrdinaryCompleteness(row)
+    if Evidence.HasPublicOrdinaryConflict(row) then
+        return {
+            complete=false,reason="identity-conflict",echoes=nil,
+            evidenceKey=nil,fingerprint=nil,echoCount=0,
+            lockedOnly=type(row) == "table"
+                and (row.lockedEchoes ~= nil
+                    or row.lockedEvidenceKey ~= nil) or false,
+        }
+    end
+    return Evidence.OrdinaryCompleteness(row)
+end
+
 -- Historical protocol-v6 DPS summaries may identify a canonical ordinary
 -- loadout as "@<djb2 hash>". The alias is compatibility metadata, never the
 -- canonical identity itself. Keep its validation beside the ordinary-evidence

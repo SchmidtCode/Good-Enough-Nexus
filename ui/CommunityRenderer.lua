@@ -1120,8 +1120,14 @@ local function EnsureDetailPanel(parent)
     p.lockBtn:SetText("Copy into Editor")
     p.lockBtn:SetScript("OnClick", function()
         local selected = SelectedId()
-        local b = selected and LoadBuild(selected)
-        if not b then return end
+        local projection = EnsureCommunityProjection()
+        local detail = selected and projection
+            and projection.Detail(selected, ProjectionContext()) or nil
+        local b = detail and detail.build or nil
+        if not b then
+            print("|cffff6060Nexus:|r Copy unavailable: ordinary Echo evidence is still syncing.")
+            return
+        end
         if b.importedSavedBuild then
             local ok, err = PublishImportedBuild(selected)
             if ok then

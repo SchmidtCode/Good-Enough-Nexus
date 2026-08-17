@@ -13,7 +13,7 @@ local boards={dummy={},lk={}}
 for index=1,250 do
     local player=string.format("BudgetPlayer%03d",index)
     local buildId=string.format("ranked-%03d",index)
-    local fingerprint=string.format("budget-fp-%03d",index)
+    local fingerprint=tostring(720000 + index) .. "x1"
     local build={id=buildId,title="Ranked "..index,author=player,class="MAGE"}
     boards.dummy[index]={player=player,dps=30000000-index,duration=60,
         level=80,ts=index,category="dummy",class="MAGE",fingerprint=fingerprint,

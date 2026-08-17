@@ -192,7 +192,10 @@ local function OrdinaryComplete(record)
     if not (evidence and type(evidence.OrdinaryCompleteness) == "function") then
         return false, nil
     end
-    local ok, verdict = pcall(evidence.OrdinaryCompleteness, record)
+    local resolver = type(evidence.PublicOrdinaryCompleteness) == "function"
+        and evidence.PublicOrdinaryCompleteness
+        or evidence.OrdinaryCompleteness
+    local ok, verdict = pcall(resolver, record)
     local complete = ok and type(verdict) == "table"
         and verdict.complete == true
     if complete then

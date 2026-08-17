@@ -205,8 +205,10 @@ collisionBoards.dummy[1].build.id = "1"
 Revisions.Advance(Revisions.DPS_CHANGED, {scope="all"})
 assert(#P.Leaderboard("combined", {classFilter="ALL"}) == 0,
     "build ID alone paired leaderboard records across categories")
-collisionBoards.dummy[1].fingerprint = "exact-record"
-collisionBoards.lk[1].fingerprint = "exact-record"
+collisionBoards.dummy[1].fingerprint = "700002x1"
+collisionBoards.lk[1].fingerprint = "700002x1"
+collisionBoards.dummy[1].echoes = {{spellId=700002,count=1}}
+collisionBoards.lk[1].echoes = {{spellId=700002,count=1}}
 Revisions.Advance(Revisions.DPS_CHANGED, {scope="all"})
 local exactCombined = P.Leaderboard("combined", {classFilter="ALL"})
 assert(#exactCombined == 1 and not exactCombined[1].lockedEvidenceMismatch,

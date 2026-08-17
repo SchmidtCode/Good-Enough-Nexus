@@ -159,7 +159,7 @@ end
 P.Reset()
 local all = assert(P.Leaderboard("dummy",{classFilter="ALL"}))
 local byPlayer = ByPlayer(all)
-assert(#all==200 and byPlayer.Protocolmage.resolvedClass=="MAGE"
+assert(#all==196 and byPlayer.Protocolmage.resolvedClass=="MAGE"
     and byPlayer.Protocolmage.classSource=="record",
     "valid DPS row class did not remain authoritative")
 assert(byPlayer.Exactwarrior.resolvedClass=="WARRIOR"
@@ -175,9 +175,13 @@ assert(byPlayer.Owneronly.resolvedClass=="HUNTER"
     and byPlayer["Sameperson-RealmA"].resolvedClass=="MAGE"
     and byPlayer["Sameperson-RealmB"].resolvedClass=="ROGUE",
     "verified realm-qualified owner class was not recovered")
-for _, player in ipairs({"Unknownlegacy","Invalidlegacy","Mismatchedrow",
-        "Laterrogue","Tombstonedpriest","Ambiguousshaman","Stalehunter",
-        "Categoryconflict","Ownerconflict","Sameperson",
+for _, player in ipairs({"Mismatchedrow","Tombstonedpriest",
+        "Ambiguousshaman","Stalehunter"}) do
+    assert(byPlayer[player] == nil,
+        player.." reached the public Leaderboard without complete ordinary evidence")
+end
+for _, player in ipairs({"Unknownlegacy","Invalidlegacy",
+        "Laterrogue","Categoryconflict","Ownerconflict","Sameperson",
         "Sameperson-RealmC","Unverified","Currenthero-OtherRealm"}) do
     assert(byPlayer[player].resolvedClass==nil
         and byPlayer[player].classUnavailable==true,
@@ -190,7 +194,7 @@ local coldStats = P.WorkStats()
 local coldReads = boardReads
 local warm = assert(P.Leaderboard("dummy",{classFilter="ALL"}))
 local warmStats = P.WorkStats()
-assert(#warm==200 and boardReads==coldReads
+assert(#warm==196 and boardReads==coldReads
     and warmStats.sourceRows==coldStats.sourceRows
     and warmStats.copies==coldStats.copies
     and warmStats.classFromRecord==coldStats.classFromRecord
@@ -258,14 +262,13 @@ bound = {}
 for _, frame in ipairs(madeFrames) do
     if type(frame.data)=="table" and frame.icon then bound[frame.data.player]=frame end
 end
-assert(bound.Mismatchedrow and bound.Mismatchedrow.icon:GetTexture()==NEUTRAL
-    and bound.Mismatchedrow.classLabel=="Class unavailable",
-    "mismatched class did not bind the neutral unavailable presentation")
+assert(not bound.Mismatchedrow or not bound.Mismatchedrow:IsShown(),
+    "mismatched ordinary evidence retained a visible Leaderboard row")
 NexusLeaderboardSearch:SetText("")
 Nexus.Leaderboard.RefreshData()
 local beforeReopen = Nexus.Leaderboard.VirtualStats().dataRefreshes
 Nexus.Leaderboard.Hide(); Nexus.Leaderboard.Show("dummy")
-assert(Nexus.Leaderboard.VirtualStats().results==200
+assert(Nexus.Leaderboard.VirtualStats().results==196
     and Nexus.Leaderboard.VirtualStats().dataRefreshes==beforeReopen,
     "close/reopen rebuilt or lost the class projection")
 

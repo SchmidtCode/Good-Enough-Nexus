@@ -21,7 +21,7 @@ NexusDB = {
 
 for index = 1, 1000 do
     local id = string.format("live-budget-%04d", index)
-    local fingerprint = "live-budget-fingerprint-" .. index
+    local fingerprint = tostring(720000 + index) .. "x1"
     NexusDB.communityBuilds[id] = {
         id=id,title=string.format("Live Build %04d", 1001-index),
         description=index % 11 == 0 and "needle" or "",
@@ -437,10 +437,21 @@ assert(communityStatus.bundledCount == 0
         tostring(communityStatus.resultCount),
         tostring(communityStatus.displayedCount),
         tostring(communityStatus.searchActive)))
-local finalLeaderboard, finalSummary = projections.RequestLeaderboard("combined", {
+local finalLeaderboard, finalSummary, finalReason = projections.RequestLeaderboard("combined", {
     classFilter="ALL",search="",
 })
-assert(type(finalLeaderboard) == "table" and type(finalSummary) == "table")
+local finalPumps = 0
+while type(finalLeaderboard) ~= "table" and finalPumps < 600 do
+    finalPumps = finalPumps + 1
+    local _, pumpError = projections.PumpLeaderboard()
+    assert(pumpError == nil, "final combined pump failed: " .. tostring(pumpError))
+    finalLeaderboard, finalSummary, finalReason =
+        projections.RequestLeaderboard("combined", {
+            classFilter="ALL",search="",
+        })
+end
+assert(type(finalLeaderboard) == "table" and type(finalSummary) == "table",
+    "final combined cache unavailable: " .. tostring(finalReason))
 assert(#finalLeaderboard == 600,
     "uncapped combined Leaderboard lost qualifying rows")
 local repeatedLeaderboard, repeatedSummary = projections.RequestLeaderboard(

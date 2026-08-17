@@ -203,12 +203,17 @@ end
 
 local function IsLoaded(build)
     if type(build) ~= "table" then return false end
-    if build.ordinaryComplete ~= nil then return build.ordinaryComplete == true end
     local evidence = Nexus and Nexus.LoadoutEvidence
+    if evidence and type(evidence.HasPublicOrdinaryConflict) == "function"
+        and evidence.HasPublicOrdinaryConflict(build) then return false end
+    if build.ordinaryComplete ~= nil then return build.ordinaryComplete == true end
     if not (evidence and type(evidence.OrdinaryCompleteness) == "function") then
         return false
     end
-    local ok, verdict = pcall(evidence.OrdinaryCompleteness, build)
+    local resolver = type(evidence.PublicOrdinaryCompleteness) == "function"
+        and evidence.PublicOrdinaryCompleteness
+        or evidence.OrdinaryCompleteness
+    local ok, verdict = pcall(resolver, build)
     return ok and type(verdict) == "table" and verdict.complete == true
 end
 
@@ -223,12 +228,11 @@ local function BuildPage(rows, baseSummary, filters)
     local first = filteredTotal > 0 and ((page - 1) * pageSize + 1) or 0
     local last = filteredTotal > 0
         and math.min(filteredTotal, first + pageSize - 1) or 0
-    local pageRows, ready, pending = {}, 0, 0
+    local pageRows = {}
     if filteredTotal > 0 then
         for index = first, last do
             local row = rows[index]
             pageRows[#pageRows + 1] = row
-            if IsLoaded(row) then ready = ready + 1 else pending = pending + 1 end
         end
     end
     local summary = {}
@@ -239,7 +243,8 @@ local function BuildPage(rows, baseSummary, filters)
     summary.displayedCount = #pageRows
     summary.searchActive = type(filters.search) == "string"
         and filters.search ~= "" or false
-    summary.ready, summary.pending = ready, pending
+    summary.ready = math.max(0, tonumber(baseSummary.ready) or filteredTotal)
+    summary.pending = math.max(0, tonumber(baseSummary.pending) or 0)
     summary.page, summary.pageSize, summary.pageCount = page, pageSize, pageCount
     summary.first, summary.last = first, last
     return pageRows, summary
@@ -303,8 +308,9 @@ local function BuildProjection(filters)
     local eligibility = CommunityEligibility()
     local out = {}
     for _, build in pairs(all) do
-        if type(build) == "table" then
+        if type(build) == "table" and IsLoaded(build) then
             summary.total = summary.total + 1
+            summary.ready = summary.ready + 1
             local own = IsOwnBuild(build, filters)
             if own then summary.mine = summary.mine + 1 end
             if build.importedSavedBuild then
@@ -352,6 +358,8 @@ local function BuildProjection(filters)
                 copy._nexusBestDps = copy._nexusDps.best
                 out[#out + 1] = copy
             end
+        elseif type(build) == "table" then
+            summary.pending = summary.pending + 1
         end
     end
     counters.builds.sorts = counters.builds.sorts + 1
@@ -373,9 +381,7 @@ local function BuildProjection(filters)
     summary.filtered = #out
     summary.qualifyingCount = summary.qualifying
     summary.resultCount = #out
-    if summary.availableCount == 0 and summary.total > 0 then
-        summary.availableCount = summary.total
-    end
+    summary.availableCount = summary.total
     return out, summary
 end
 
@@ -530,7 +536,10 @@ local function LeaderboardProjection(filters)
     local out = {}
     for _, row in ipairs(source) do
         local copied = PrepareLeaderboardRow(row, filters)
-        if LeaderboardRowMatches(copied, filters) then out[#out + 1] = copied end
+        if copied.ordinaryComplete == true
+            and LeaderboardRowMatches(copied, filters) then
+            out[#out + 1] = copied
+        end
     end
     -- GetDpsBoard and CombinedRows already establish rank order. Count this as
     -- a projection order operation without re-sorting category boards.
@@ -677,12 +686,6 @@ local function PumpBuildJob(job, unit)
                 catalog.SummaryCursorNext(job.catalogCursor)
             sourceRows = sourceRows + 1
             if err then return nil, err end
-            if fromBaseline then
-                job.summary.bundledCount = job.summary.bundledCount + 1
-            end
-            if fromOverlay then
-                job.summary.overlayCount = job.summary.overlayCount + 1
-            end
             if done then
                 job.summary.filtered = #job.rows
                 job.summary.qualifyingCount = job.summary.qualifying
@@ -695,10 +698,17 @@ local function PumpBuildJob(job, unit)
                 job.sortSource, job.sortTarget, job.merge = job.rows, {}, nil
                 break
             end
-            if type(build) == "table" then
+            if type(build) == "table" and IsLoaded(build) then
                 local filters, summary = job.filters, job.summary
+                if fromBaseline then
+                    summary.bundledCount = summary.bundledCount + 1
+                end
+                if fromOverlay then
+                    summary.overlayCount = summary.overlayCount + 1
+                end
                 summary.total = summary.total + 1
                 summary.availableCount = summary.availableCount + 1
+                summary.ready = summary.ready + 1
                 local own = IsOwnBuild(build, filters)
                 if own then summary.mine = summary.mine + 1 end
                 if build.importedSavedBuild then
@@ -742,6 +752,8 @@ local function PumpBuildJob(job, unit)
                     workStats.copies = workStats.copies + 1
                     unit.copies = (unit.copies or 0) + 1
                 end
+            elseif type(build) == "table" then
+                job.summary.pending = job.summary.pending + 1
             end
         end
     elseif job.state == "sort" then
@@ -908,7 +920,10 @@ local function ResolveLeaderboardOrdinary(row)
     if not (evidence and type(evidence.OrdinaryCompleteness) == "function") then
         return nil, nil, "ordinary evidence owner unavailable"
     end
-    local ok, verdict = pcall(evidence.OrdinaryCompleteness, row)
+    local resolver = type(evidence.PublicOrdinaryCompleteness) == "function"
+        and evidence.PublicOrdinaryCompleteness
+        or evidence.OrdinaryCompleteness
+    local ok, verdict = pcall(resolver, row)
     if ok and type(verdict) == "table" and verdict.complete == true then
         local completeBuildId = type(row.resolvedBuildId) == "string"
             and row.resolvedBuildId
@@ -916,6 +931,9 @@ local function ResolveLeaderboardOrdinary(row)
             or row.buildId
         local recoveredInlineClass = RecoveredInlineClass(row, completeBuildId, true)
         return verdict, nil, "record", nil, recoveredInlineClass
+    end
+    if type(verdict) == "table" and verdict.reason == "identity-conflict" then
+        return nil, nil, verdict.reason
     end
 
     local catalog = Nexus and Nexus.BuildCatalog
@@ -1154,7 +1172,8 @@ local function PumpLeaderboardJob(job, unit)
                 local copied = PrepareLeaderboardRow(row, job.filters)
                 workStats.copies = workStats.copies + 1
                 unit.copies = (unit.copies or 0) + 1
-                if LeaderboardRowMatches(copied, job.filters) then
+                if copied.ordinaryComplete == true
+                    and LeaderboardRowMatches(copied, job.filters) then
                     job.rows[#job.rows + 1] = copied
                     job.rowByKey[RecordKey(copied)] = copied
                 end

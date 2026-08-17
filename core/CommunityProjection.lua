@@ -75,6 +75,18 @@ local function IsOwnBuild(build, context)
         and tostring(build.author or ""):lower() == player
 end
 
+local function PublicOrdinaryComplete(build)
+    local evidence = Nexus and Nexus.LoadoutEvidence
+    if not (evidence and type(evidence.OrdinaryCompleteness) == "function") then
+        return false
+    end
+    local resolver = type(evidence.PublicOrdinaryCompleteness) == "function"
+        and evidence.PublicOrdinaryCompleteness
+        or evidence.OrdinaryCompleteness
+    local ok, verdict = pcall(resolver, build)
+    return ok and type(verdict) == "table" and verdict.complete == true
+end
+
 local function RecordBuildId(build)
     return build and (build.recordBuildId
         or build.publishedBuildId or build.id) or nil
@@ -378,7 +390,7 @@ function Projection.New(options)
             stats.detail.failures = stats.detail.failures + 1
             return nil, tostring(build)
         end
-        if type(build) ~= "table" then return nil end
+        if not PublicOrdinaryComplete(build) then return nil end
         key = DetailKey(id, revisions, context, build)
         if detailCache and detailCache.id == id and detailCache.key == key then
             stats.detail.hits = stats.detail.hits + 1
