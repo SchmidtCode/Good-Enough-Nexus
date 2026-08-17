@@ -1,6 +1,6 @@
 # Better Nexus
 
-Better Nexus is a private, community-maintained continuation of the deprecated
+Better Nexus is a public, community-maintained continuation of the deprecated
 Nexus addon for Project Ebonhold.
 
 The repository begins from the installed Nexus 1.19.3 player build. The in-game
@@ -9,8 +9,10 @@ compatibility with existing installations and user data.
 
 ## Project status
 
-- Repository visibility: private during development.
-- Current release: Nexus 1.19.5.
+- Stable production release: Nexus 1.19.5.
+- Experimental public prereleases are available through
+  [GitHub Releases](https://github.com/Viscerals/Better-Nexus/releases). These
+  builds are for testing and are not stable releases.
 - Client target: World of Warcraft 3.3.5a / Project Ebonhold.
 - Language target: Lua 5.1.
 - Upstream author attribution is preserved in `Nexus.toc` and
@@ -35,6 +37,17 @@ DPS records, and Snapshot convergence for Project Ebonhold.
 
 Do not rename the installed addon folder to `Better-Nexus`; the repository name
 is different from the runtime addon identity by design.
+
+Back up `NexusDB` and `WishlistRealizerDB` before testing a prerelease. Better
+Nexus preserves compatibility with these SavedVariables because existing user
+data must survive upgrades and rollback testing.
+
+## Reporting problems
+
+Use the [structured issue
+forms](https://github.com/Viscerals/Better-Nexus/issues/new/choose) to report a
+bug, performance or stutter problem, or multiplayer Sync problem. Include the
+exact prerelease build and the diagnostics requested by the selected form.
 
 ## Commands
 
