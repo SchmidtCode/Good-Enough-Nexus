@@ -171,6 +171,7 @@ function Diagnostics.New(options)
             control=control,
             outbound=sending + control,
             recovery=recovery,
+            pendingReplacements=Number(session.pendingReplacements),
             pendingResponses=Number(reconciliation.responses),
             pendingLoadouts=Number(reconciliation.loadouts),
             pendingDeletes=Number(input.pendingDeletes),

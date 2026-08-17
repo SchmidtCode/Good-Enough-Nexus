@@ -189,6 +189,16 @@ local function CatalogClearTombstone(id)
         and catalog.ClearTombstone(id) or false
 end
 
+local function OrdinaryComplete(record)
+    local evidence = Nexus and Nexus.LoadoutEvidence
+    if evidence and type(evidence.OrdinaryCompleteness) == "function" then
+        local verdict = evidence.OrdinaryCompleteness(record)
+        return type(verdict) == "table" and verdict.complete == true, verdict
+    end
+    return type(record) == "table" and type(record.echoes) == "table"
+        and #record.echoes > 0, nil
+end
+
 local function RequestRetention(reason)
     local retention = Nexus and Nexus.DataRetention
     if retention and type(retention.Request) == "function" then
@@ -1353,6 +1363,25 @@ local function StoreSummary(data, transportSender, context)
         return false, false
     end
     local stamp = tonumber(data.m) or 0
+    local pending = Session.PendingReplacement(id)
+    if pending then
+        local pendingStamp = tonumber(pending.lastModified) or 0
+        if stamp < pendingStamp then
+            Responder.NoteContextOutcome(context, "duplicate", "stale")
+            return true, false
+        end
+        if stamp == pendingStamp then
+            local same = tostring(pending.author) == tostring(data.a)
+                and tostring(pending.ownerKey or "") == tostring(data.o or "")
+                and tostring(pending.fingerprintHash) == tostring(data.h):lower()
+                and tostring(pending.linkHash or "") == tostring(data.lh or "")
+                and tonumber(pending.echoCount or 0) == tonumber(data.n or 0)
+            Responder.NoteContextOutcome(context,
+                same and "duplicate" or "rejected",
+                same and "duplicate" or "integrity")
+            return same, false
+        end
+    end
     if not AllowsRemoteRevision(data.a, stamp, id) then
         LogEvent("RX", "skip summary '%s': older than retention floor",
             tostring(data.t))
@@ -1399,6 +1428,31 @@ local function StoreSummary(data, transportSender, context)
     local oldLinkHash = old and (old.linkHash or HashText(old.link)) or nil
     local linkChanged = old ~= nil and newLinkHash ~= oldLinkHash
     local keepEchoes = old and old.fingerprintHash == newHash and old.echoes or nil
+    local replacement = {
+        buildId=id,title=tostring(data.t),author=tostring(data.a),
+        ownerKey=type(data.o)=="string"
+            and Identity.CanonicalOwnerKey(data.o) or nil,
+        class=data.c,lastModified=stamp,fingerprintHash=newHash:lower(),
+        linkHash=newLinkHash,echoCount=tonumber(data.n) or 0,
+        autoDps=data.x==1,
+    }
+    local oldComplete = OrdinaryComplete(old)
+    if old and oldComplete then
+        local queued = Session.QueueReplacement(
+            id, replacement, recoveryRequestId)
+        if not queued then
+            Responder.NoteContextOutcome(context, "rejected", "queue")
+            LogEvent("RX", "REJECT summary '%s': recovery queue full",
+                tostring(data.t))
+            return false, false, "queue"
+        end
+        stats.received = stats.received + 1
+        stats.updated = (stats.updated or 0) + 1
+        Session.NoteReceived(Responder.ContextRequestId(context), "updated")
+        LogEvent("RX", "PENDING summary '%s' by %s (last-good retained)",
+            tostring(data.t), tostring(data.a or "Unknown"))
+        return true, true
+    end
     local record = {
         id=id, title=tostring(data.t):sub(1,120), author=tostring(data.a or "Unknown"):sub(1,80),
         ownerKey=type(data.o)=="string"
@@ -1446,7 +1500,7 @@ local function StoreSummary(data, transportSender, context)
             tostring(data.t), tostring(data.a or "Unknown"), tonumber(data.n) or 0)
     end
     if not keepEchoes or linkChanged then
-        Session.QueueLegacyRecovery(id, recoveryRequestId)
+        Session.QueueReplacement(id, replacement, recoveryRequestId)
     end
     RequestRetention("build summary received")
     return true, true
@@ -2188,7 +2242,7 @@ local function StoreReceivedBuild(payload, ownerVerified, relaySender)
         stats.baselineSkipped = (stats.baselineSkipped or 0) + 1
     end
     seenRemoteIds[payload.id] = payload.lastModified
-    Session.ClearRequestedLoadout(payload.id)
+    Session.ClearRequestedLoadout(payload.id, payload.lastModified)
     stats.received = stats.received + 1
     RequestRetention("full build received")
     return true, storedAs
@@ -2200,6 +2254,53 @@ local function CommitReceivedBuild(payload, transportSender, context)
     local previousRemoteStamp = seenRemoteIds[payload.id]
     local replacingUnverified = existing and existing.ownerVerified == false
         and directOwner and SamePeer(existing.author, payload.author)
+    local pending = Session.PendingReplacement(payload.id)
+    if pending then
+        local pendingStamp = tonumber(pending.lastModified) or 0
+        local payloadStamp = tonumber(payload.lastModified) or 0
+        if payloadStamp < pendingStamp then
+            stats.duplicatesSkipped = stats.duplicatesSkipped + 1
+            Responder.NoteContextOutcome(context, "duplicate", "stale")
+            PeerObserve("receiver_commit", {id=payload.id,peer=transportSender,
+                outcome="duplicate",reason="superseded replacement"})
+            return true
+        end
+        if payloadStamp == pendingStamp then
+            local fingerprint = BuildFingerprint(payload)
+            local fingerprintHash = HashText(fingerprint)
+            local total = 0
+            for _, echo in ipairs(payload.echoes or {}) do
+                total = total + (tonumber(echo.stacks or echo.count) or 1)
+            end
+            local link = payload.link or (existing and existing.link) or nil
+            local recordComplete = OrdinaryComplete({
+                echoes=payload.echoes,fingerprint=fingerprint,
+            })
+            local matches = directOwner and recordComplete
+                and SamePeer(pending.author, payload.author)
+                and tostring(pending.title) == tostring(payload.title)
+                and tostring(pending.ownerKey or "")
+                    == tostring(payload.ownerKey or "")
+                and tostring(pending.class or "")
+                    == tostring(payload.class or "")
+                and tostring(pending.fingerprintHash)
+                    == tostring(fingerprintHash or ""):lower()
+                and tostring(pending.linkHash or "")
+                    == tostring(HashText(link) or "")
+                and tonumber(pending.echoCount or 0) == total
+                and (pending.autoDps and true or false)
+                    == (payload.autoDps and true or false)
+            if not matches then
+                Responder.NoteContextOutcome(context, "rejected", "integrity")
+                PeerObserve("receiver_commit", {id=payload.id,
+                    peer=transportSender,outcome="rejected",
+                    reason="replacement identity"})
+                LogEvent("RX", "REJECT '%s': pending replacement mismatch",
+                    tostring(payload.title))
+                return false
+            end
+        end
+    end
     local allowed, why
     if replacingUnverified then
         allowed, why = true, "owner-verified"
@@ -2399,6 +2500,7 @@ local function HandleDelete(sender, buildId, stamp, originAuthor, context)
     end
     tombstones[buildId] = tomb
     seenRemoteIds[buildId] = nil
+    Session.ClearRequestedLoadout(buildId)
     LogEvent("RX","DELETED '%s' from origin %s (relay %s)",
         tostring(existing.title), author, tostring(sender))
     Sync.RequestDataViewRefresh()
