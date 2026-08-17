@@ -16,7 +16,7 @@ local EXACT = {
     ["log errors"]="errors", errors="errors",
     perf="performance", performance="performance",
     log="log", logs="log", err="err", undemote="undemote",
-    overlay="overlay", logclear="log",
+    overlay="overlay", logclear="logclear",
 }
 
 function Commands.New(options)

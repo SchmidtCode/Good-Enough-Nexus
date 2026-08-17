@@ -7,7 +7,8 @@ dofile("core/Store.lua"); dofile("core/GameAdapter.lua")
 dofile("ui/Readout.lua"); dofile("ui/Panel.lua")
 
 local calls={panel=0,panelAuto=0,editor=0,syncdebug=0,probe=0,sync=0,
-    builds=0,leaderboard=0,errors=0,performance=0,log=0,overlay=0,restore=0}
+    builds=0,leaderboard=0,errors=0,performance=0,log=0,logclear=0,
+    overlay=0,restore=0}
 Nexus.LogViewer={Init=function() end,Show=function(key)
     local counter=(key=="sync" and "syncdebug") or (key=="perf" and "performance") or key
     calls[counter]=calls[counter]+1
@@ -30,6 +31,10 @@ Nexus.DpsCapture={
     GetCurrentEchoKey=function() return "current-key" end,
 }
 Nexus.Errors={Latest=function() return {message="retained error"} end}
+Nexus.DiagnosticLogs.ClearAll=function()
+    calls.logclear=calls.logclear+1
+    return true
+end
 
 dofile("core/AutomationRuntime.lua")
 dofile("core/MainLifecycle.lua")
@@ -155,12 +160,36 @@ for _, command in ipairs({"panel","editor","syncdebug","builds","leaderboard",
     local _,output=Run(command); assert(output=="","unexpected output for "..command)
 end
 local logcount = calls.log
-Expect("logclear","")
-assert(calls.log==logcount+1,"logclear did not reach log callback")
+local durableSentinels={
+    settings=NexusDB.settings,chars=NexusDB.chars,
+    communityBuilds={keep="community"},bundledBaseline={keep="baseline"},
+    tombstones={keep="tombstones"},wishlists={keep="wishlists"},
+    associations={keep="associations"},automationState={keep="automation"},
+    activeSavedBuild={keep="saved-build"},projectEbonhold={keep="ebonhold"},
+}
+for key,value in pairs(durableSentinels) do NexusDB[key]=value end
+Expect("logclear","diagnostic history cleared")
+assert(calls.log==logcount and calls.logclear==1,
+    "logclear toggled LogViewer or missed the diagnostic clear owner")
+for key,value in pairs(durableSentinels) do
+    assert(NexusDB[key]==value,
+        "logclear replaced durable product state: "..tostring(key))
+end
+Nexus.DiagnosticLogs.ClearAll=function()
+    calls.logclear=calls.logclear+1
+    return false,"fixture refusal"
+end
+Expect("logclear","could not clear diagnostic history")
+assert(calls.log==logcount and calls.logclear==2,
+    "failed logclear escaped reporting or toggled LogViewer")
+Nexus.DiagnosticLogs.ClearAll=function()
+    calls.logclear=calls.logclear+1
+    return true
+end
 Run("probe Peer")
 assert(calls.panel==1 and calls.editor==1 and calls.syncdebug==1
     and calls.builds==1 and calls.leaderboard==1 and calls.errors==1
-    and calls.performance==1 and calls.log==2 and calls.overlay==1
+    and calls.performance==1 and calls.log==1 and calls.overlay==1
     and calls.restore==1 and calls.sync==1 and calls.probe==1
     and calls.probeTarget=="peer",
     "explicit command did not reach its established target exactly once")
@@ -175,7 +204,9 @@ Expect("syncdebug","log viewer unavailable")
 Expect("errors","log viewer unavailable")
 Expect("performance","performance diagnostics unavailable")
 Expect("log","log viewer unavailable")
-Expect("logclear","log viewer unavailable")
+Expect("logclear","diagnostic history cleared")
+assert(calls.logclear==3 and calls.log==1,
+    "logclear incorrectly depended on LogViewer availability")
 Nexus.Nameplate=nil; Expect("nameplate","Nameplate module not loaded.")
 Nexus.DpsCapture=nil; Expect("dps","DPS capture module not loaded")
 Nexus.Sync=nil; Expect("sync","sync unavailable")

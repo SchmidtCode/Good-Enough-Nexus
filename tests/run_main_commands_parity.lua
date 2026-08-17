@@ -12,7 +12,7 @@ local calls, context = {}, {settings=true}
 local callbacks = {}
 local names = {"auto","panel","restore","flags","status","wishlist",
     "progress","missing","editor","syncdebug","probe","nameplate","dps",
-    "sync","builds","leaderboard","errors","performance","log","err",
+    "sync","builds","leaderboard","errors","performance","log","logclear","err",
     "undemote","overlay","anchor","help"}
 for _, name in ipairs(names) do
     callbacks[name] = function(receivedContext, normalized, argument)
@@ -53,7 +53,7 @@ local cases = {
     {"anchorfoo","anchor","anchorfoo",nil},
     {"", "help", ""}, {"unknown", "help", "unknown"},
     {"sniff", "help", "sniff"}, {"sniffdump", "help", "sniffdump"},
-    {"logclear", "log", "logclear"}, {"probe ", "help", "probe"},
+    {"logclear", "logclear", "logclear"}, {"probe ", "help", "probe"},
 }
 
 for index, row in ipairs(cases) do

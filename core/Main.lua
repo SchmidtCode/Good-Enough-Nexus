@@ -983,8 +983,9 @@ EnsureMainCommands = function()
                 else Print("performance diagnostics unavailable") end
             end,
             logclear=function()
-                if Nexus.LogViewer then Nexus.LogViewer.Toggle()
-                else Print("log viewer unavailable") end
+                local ok, cleared = pcall(ClearDiagnosticLogs, "state")
+                Print(ok and cleared and "diagnostic history cleared"
+                    or "could not clear diagnostic history")
             end,
             log=function()
                 if Nexus.LogViewer then Nexus.LogViewer.Toggle()
