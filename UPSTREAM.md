@@ -1,4 +1,4 @@
-﻿# Upstream provenance
+# Upstream provenance
 
 Better Nexus begins from a locally installed Nexus 1.19.3 snapshot.
 

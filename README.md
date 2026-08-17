@@ -1,6 +1,6 @@
-﻿# Better Nexus
+# Better Nexus
 
-Better Nexus is a community-maintained continuation of the deprecated
+Better Nexus is a public, community-maintained continuation of the deprecated
 Nexus addon for Project Ebonhold.
 
 The repository begins from the installed Nexus 1.19.3 player build. The in-game
@@ -9,12 +9,13 @@ compatibility with existing installations and user data.
 
 ## Project status
 
-- Repository visibility: public.
-- Current stable release: Nexus 1.19.5.
-- Current test release: Nexus 1.20 Beta (`1.20.0-beta.1`).
+- Stable production release: Nexus 1.19.5.
+- Experimental public prereleases are available through
+  [GitHub Releases](https://github.com/Viscerals/Better-Nexus/releases). These
+  builds are for testing and are not stable releases.
 - Client target: World of Warcraft 3.3.5a / Project Ebonhold.
 - Language target: Lua 5.1.
-- Current TOC maintainer metadata identifies Valentine. Original upstream author attribution is preserved in [UPSTREAM.md](UPSTREAM.md).
+- Current TOC maintainer metadata identifies Valentine. Original upstream author attribution is preserved in `Nexus.toc` and [UPSTREAM.md](UPSTREAM.md).
 
 ## What it does
 
@@ -45,6 +46,14 @@ DPS records, and Snapshot convergence for Project Ebonhold.
 Do not rename the installed addon folder to `Better-Nexus`; the repository name
 is different from the runtime addon identity by design.
 
+Back up `NexusDB` and `WishlistRealizerDB` before testing a prerelease. Better
+Nexus preserves compatibility with these SavedVariables because existing user
+data must survive upgrades and rollback testing.
+
+## Reporting problems
+
+Use the [structured issue forms](https://github.com/Viscerals/Better-Nexus/issues/new/choose) to report a bug, performance or stutter problem, or multiplayer Sync problem. Include the exact prerelease build and the diagnostics requested by the selected form.
+
 ## Commands
 
 - `/nexus` — show commands
@@ -67,14 +76,10 @@ is different from the runtime addon identity by design.
 - Preserve Lua 5.1 and WoW 3.3.5a compatibility.
 - Preserve `NexusDB` and `WishlistRealizerDB` migrations and user data.
 - Keep policy decisions deterministic and data-driven.
-- Do not include tests, backups, local logs, or development artifacts in player
-  release archives.
-- Include `LICENSE.md`, `AI_POLICY.md`, and `UPSTREAM.md` beside `Nexus.toc` in
-  every player release archive, without adding those Markdown files to the TOC.
+- Do not include tests, backups, local logs, or development artifacts in player release archives.
+- Include `LICENSE.md`, `AI_POLICY.md`, and `UPSTREAM.md` beside `Nexus.toc` in every player release archive, without adding those Markdown files to the TOC.
 - Validate changes offline and in game before claiming a live issue fixed.
-- Update notices come only from versions on already accepted Nexus Sync traffic.
-  Nexus never downloads or installs updates; the notice exposes the stable
-  releases page for manual use.
+- Update notices come only from versions on already accepted Nexus Sync traffic. Nexus never downloads or installs updates; the notice exposes the stable releases page for manual use.
 
 The release build catalog is generated, not hand-edited. Run
 `node tools/export-bundled-builds.js --help` for the local export command. The

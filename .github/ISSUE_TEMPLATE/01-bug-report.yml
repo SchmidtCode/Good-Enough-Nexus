@@ -1,0 +1,110 @@
+name: Bug Report
+description: Report a reproducible Better Nexus public prerelease bug that is not primarily performance or multiplayer Sync related.
+title: "[Bug]: "
+labels:
+  - bug
+  - prerelease
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing a Better Nexus public prerelease. Back up your Nexus SavedVariables before testing and search existing issues before submitting a new report.
+
+  - type: input
+    id: nexus-build
+    attributes:
+      label: Exact Nexus build
+      description: Copy the exact build shown by `/nexus status` or the release filename. Do not enter only "latest."
+      placeholder: "Example: test.18-d9b48c5"
+    validations:
+      required: true
+
+  - type: input
+    id: character-context
+    attributes:
+      label: Class and character context
+      description: Include the class and any relevant character, level, loadout, or realm context. Do not include private account information.
+      placeholder: "Example: Death Knight, level 80, existing character with several saved loadouts"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: database-upgrade
+    attributes:
+      label: Existing or older Nexus database
+      description: Did this prerelease installation upgrade Nexus SavedVariables that already contained data?
+      options:
+        - Yes - upgraded an existing or older Nexus database
+        - No - tested with a new or empty Nexus database
+        - Unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: List the smallest repeatable sequence that triggers the problem, including commands, UI actions, reloads, relogs, or zoning.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: Describe what you expected Nexus to do.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual behavior
+      description: Describe exactly what happened instead, including whether it recurs after `/reload`.
+    validations:
+      required: true
+
+  - type: textarea
+    id: lua-errors
+    attributes:
+      label: Lua errors
+      description: Paste the complete Lua error and stack trace. If no Lua error appeared, enter "None observed."
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots-diagnostics
+    attributes:
+      label: Screenshots and diagnostics
+      description: Drag in relevant screenshots and paste useful Nexus diagnostics such as `/nexus status` or `/nexus log`. If evidence is unavailable, explain why.
+      placeholder: Attach screenshots or paste diagnostics here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: relevant-addons
+    attributes:
+      label: Other relevant addons
+      description: List addons that affect the same UI, data, automation, or gameplay path. Enter "None" if no other addon appears relevant.
+      placeholder: "Example: Details!, StutterAlert, or None"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Reporting acknowledgements
+      options:
+        - label: I understand that I am testing an unfinished Better Nexus prerelease.
+          required: true
+        - label: I searched existing issues and did not find a duplicate report.
+          required: true
+        - label: I included the exact Nexus build rather than only saying "latest."
+          required: true
+        - label: I included enough reproduction information for someone else to investigate the problem.
+          required: true

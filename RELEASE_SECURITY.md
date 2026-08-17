@@ -1,4 +1,4 @@
-﻿# Release Security
+# Release Security
 
 ## Core principles
 

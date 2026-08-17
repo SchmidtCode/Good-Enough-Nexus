@@ -1,4 +1,4 @@
-﻿# Better Nexus Source-Available License
+# Better Nexus Source-Available License
 
 ## Copyright and scope
 

@@ -1,4 +1,4 @@
-﻿# AI and Automated Systems Policy
+# AI and Automated Systems Policy
 
 ## Scope
 
