@@ -25,10 +25,12 @@ local TABS = {
 
 local frame, editBox, scroll, tabButtons, statusFS, exportButton
 local peerLabel, peerEdit, peerStart, peerStop
-local exportRunner, exportJob, exportGeneration = nil, nil, 0
+local repaintRunner, exportRunner, exportFinisher, clearResetRunner
+local exportJob, exportGeneration = nil, 0
 local provider, clearProvider
 local activeTab = "state"
 local repaintPending = false
+local clearResetButton, clearResetGeneration = nil, 0
 local peerRefreshElapsed, peerRefreshActive = 0, false
 local MAX_TEXT_CHARS = 60000
 
@@ -91,12 +93,17 @@ end
 local function ScheduleRepaint()
     if repaintPending then return end
     repaintPending = true
-    local waiter = CreateFrame("Frame")
+    if not repaintRunner then
+        repaintRunner = CreateFrame("Frame")
+        repaintRunner:Hide()
+    end
     local elapsed = 0
-    waiter:SetScript("OnUpdate", function(self, dt)
+    repaintRunner:Show()
+    repaintRunner:SetScript("OnUpdate", function(self, dt)
         elapsed = elapsed + (tonumber(dt) or 0)
         if elapsed < 0.05 then return end
         self:SetScript("OnUpdate", nil)
+        self:Hide()
         Repaint()
     end)
 end
@@ -107,6 +114,10 @@ local function StopExport()
     if exportRunner then
         exportRunner:SetScript("OnUpdate", nil)
         exportRunner:Hide()
+    end
+    if exportFinisher then
+        exportFinisher:SetScript("OnUpdate", nil)
+        exportFinisher:Hide()
     end
 end
 
@@ -164,11 +175,17 @@ local function StartExport()
                 self:SetScript("OnUpdate", nil)
                 self:Hide()
                 local finalText = value
-                local finisher = CreateFrame("Frame")
+                if not exportFinisher then
+                    exportFinisher = CreateFrame("Frame")
+                    exportFinisher:Hide()
+                end
                 local waited = false
-                finisher:SetScript("OnUpdate", function(f)
+                exportFinisher:Show()
+                exportFinisher:SetScript("OnUpdate", function(f)
                     if not waited then waited = true; return end
                     f:SetScript("OnUpdate", nil)
+                    f:Hide()
+                    if myGeneration ~= exportGeneration then return end
                     FinishExport(finalText)
                     finalText = nil
                 end)
@@ -197,7 +214,23 @@ local function EnsureFrame()
     frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
     frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
     frame:SetFrameStrata("DIALOG")
-    frame:SetScript("OnHide", StopExport)
+    frame:SetScript("OnHide", function()
+        StopExport()
+        repaintPending = false
+        if repaintRunner then
+            repaintRunner:SetScript("OnUpdate", nil)
+            repaintRunner:Hide()
+        end
+        clearResetGeneration = clearResetGeneration + 1
+        if clearResetRunner then
+            clearResetRunner:SetScript("OnUpdate", nil)
+            clearResetRunner:Hide()
+        end
+        if clearResetButton then
+            clearResetButton:SetText("Clear Log")
+            clearResetButton = nil
+        end
+    end)
     frame:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -334,13 +367,23 @@ local function EnsureFrame()
             if statusFS then statusFS:SetText("Could not clear diagnostic history") end
         end
         ScheduleRepaint()
-        local resetter = CreateFrame("Frame")
+        clearResetGeneration = clearResetGeneration + 1
+        local myResetGeneration = clearResetGeneration
+        clearResetButton = self
+        if not clearResetRunner then
+            clearResetRunner = CreateFrame("Frame")
+            clearResetRunner:Hide()
+        end
         local elapsed = 0
-        resetter:SetScript("OnUpdate", function(f, dt)
+        clearResetRunner:Show()
+        clearResetRunner:SetScript("OnUpdate", function(f, dt)
             elapsed = elapsed + (tonumber(dt) or 0)
             if elapsed < 1.2 then return end
             f:SetScript("OnUpdate", nil)
+            f:Hide()
+            if myResetGeneration ~= clearResetGeneration then return end
             if self then self:SetText("Clear Log") end
+            clearResetButton = nil
         end)
     end)
     clearButton:SetScript("OnEnter", function(self)
