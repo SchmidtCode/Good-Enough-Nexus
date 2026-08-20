@@ -255,6 +255,46 @@ function Controller.New(options)
         return OwnerKey(UnitName and UnitName("player"), CurrentRealm())
     end
 
+    local function CurrentVerifiedOwnerKey()
+        local ownerKey = Identity.CanonicalOwnerKey(CurrentOwnerKey())
+        return ownerKey and not ownerKey:match("@unknown$")
+            and ownerKey or nil
+    end
+
+    local function OwnerEvidenceKey(record)
+        if type(record) ~= "table" then return nil end
+        local author = record.player or record.p or record.author
+        local ownerKey = record.claimedOwnerKey or record.ownerKey or record.o
+        local realm = record.realm
+        if realm == nil then realm = record.r end
+        if ownerKey == nil and realm ~= nil then
+            ownerKey = Identity.OwnerKey(author, realm)
+        end
+        ownerKey = Identity.CanonicalOwnerKey(ownerKey)
+        if not ownerKey or ownerKey:match("@unknown$")
+            or not Identity.OwnerKeyMatchesAuthor(ownerKey, author) then
+            return nil
+        end
+        if realm ~= nil then
+            local realmOwner = Identity.CanonicalOwnerKey(
+                Identity.OwnerKey(author, realm))
+            if realmOwner ~= ownerKey then return nil end
+        end
+        return ownerKey
+    end
+
+    local function VerifiedDpsOwnerKey(record)
+        if type(record) ~= "table" or record.ownerVerified ~= true then
+            return nil
+        end
+        local dps = Nexus and Nexus.DpsCapture
+        if not (dps and type(dps.HasCanonicalOwnerIdentity) == "function") then
+            return nil
+        end
+        local valid, ownerKey = dps.HasCanonicalOwnerIdentity(record)
+        return valid == true and ownerKey or nil
+    end
+
     function M.BindAdapter(adapter)
         Adapter = adapter
     end
@@ -595,17 +635,7 @@ function Controller.New(options)
     end
 
     IsOwnBuild = function(build)
-        if not build then return false end
-        local mine = CurrentOwnerKey()
-        if not mine then return false end
-        if build.ownerKey then
-            return Identity.CanonicalOwnerKey(build.ownerKey) == mine
-        end
-        -- Legacy builds predate ownerKey. They remain editable only when both
-        -- their local marker and author name match the current character.
-        if not build.isMine then return false end
-        local me = (UnitName and UnitName("player")) or ""
-        return Identity.SamePlayer(build.author, me)
+        return Identity.LocalOwnsRecord(build, CurrentOwnerKey())
     end
 
     function M.IsOwnBuild(idOrBuild)
@@ -852,6 +882,7 @@ function Controller.New(options)
         local signature = table.concat(signatureParts, "|")
         if not old or old._savedSignature ~= signature then
             local stamp = NextStamp(old and old.lastModified or 0)
+            local localOwner = CurrentVerifiedOwnerKey()
             local record = {
                         id=current.id, title=current.title,
                         serverTitle=current.serverTitle,
@@ -862,9 +893,11 @@ function Controller.New(options)
                         userDescription=old and old.userDescription or nil,
                         publishedBuildId=old and old.publishedBuildId or nil,
                         lastPublishedAt=old and old.lastPublishedAt or nil,
-                        author=job.me, ownerKey=CurrentOwnerKey(), class=class, echoes=echoes,
+                        author=job.me, ownerKey=localOwner,
+                        ownerVerified=localOwner and true or false,
+                        class=class, echoes=echoes,
                         postedAt=(old and old.postedAt) or stamp, lastModified=stamp,
-                        isMine=true, importedSavedBuild=true, serverSlot=slot,
+                        isMine=localOwner ~= nil, importedSavedBuild=true, serverSlot=slot,
                         recordBuildId=recordBuildId,
                         destinationWishlistName=current.destinationName,
                         destinationWishlistSlot=current.linked and current.linked.slot or nil,
@@ -1227,11 +1260,11 @@ function Controller.New(options)
         end
         local key = D.GetEchoKey(echoes)
         if not key then return nil end
-        local incomingOwnerVerified = record and record.ownerVerified
         local explicitClass = NormalizeClass(record and (record.class or record.k))
         local player = tostring(record and record.player
             or (UnitName and UnitName("player")) or "Unknown")
-        local recordOwner = record and record.ownerKey
+        local recordOwner = VerifiedDpsOwnerKey(record)
+        local recordClaim = OwnerEvidenceKey(record)
         local explicitId = record and (record.buildId or record.b)
         if type(explicitId) ~= "string" or explicitId == "" then explicitId = nil end
         local catalog = Catalog()
@@ -1243,21 +1276,31 @@ function Controller.New(options)
                 and evidence.OrdinaryCompleteness(recovered) or nil
             if recoveredId and type(verdict) == "table"
                 and verdict.complete == true then
-                local recoveredOwner = recovered.ownerKey
-                    and Identity.CanonicalOwnerKey(recovered.ownerKey) or nil
-                local incomingOwner = recordOwner
-                    and Identity.CanonicalOwnerKey(recordOwner) or nil
-                local sameAutoOwner = recovered.autoDps ~= true
-                    or (incomingOwner and recoveredOwner
-                        and incomingOwner == recoveredOwner)
-                    or ((not incomingOwner or not recoveredOwner)
-                        and Identity.SamePlayer(recovered.author, player))
+                local recoveredOwner = Identity.VerifiedOwnerKey(recovered)
+                local recoveredClaim = OwnerEvidenceKey(recovered)
+                local sameAutoOwner
+                if recovered.autoDps == true then
+                    if recordOwner then
+                        sameAutoOwner = recoveredOwner == recordOwner
+                            or (not recoveredOwner
+                                and recoveredClaim == recordOwner)
+                    elseif recordClaim then
+                        sameAutoOwner = recoveredOwner == recordClaim
+                            or (not recoveredOwner
+                                and recoveredClaim == recordClaim)
+                    else
+                        sameAutoOwner = false
+                    end
+                else
+                    sameAutoOwner = recordOwner ~= nil
+                        and recoveredOwner == recordOwner
+                end
                 -- A relay-created page may be reused for ambient reads, but
                 -- the exact direct owner must reach the promotion boundary.
                 -- Auto-DPS pages are owner-specific even when their ordinary
                 -- fingerprint happens to match another player's record.
-                if sameAutoOwner and not (incomingOwnerVerified == true
-                    and recovered.ownerVerified == false) then
+                if sameAutoOwner and not (recordOwner
+                    and not recoveredOwner) then
                     return recoveredId, recovered
                 end
             end
@@ -1267,9 +1310,9 @@ function Controller.New(options)
         -- its record to a different loadout or owner merely because IDs collide.
         local explicitExisting = explicitId and LoadBuild(explicitId) or nil
         if explicitExisting then
-            -- Relayed DPS evidence may remain visible as an ambient record, but
-            -- it cannot hydrate or publish an existing Community identity.
-            if record and record.ownerVerified == false then return nil end
+            -- Only a verified canonical DPS owner may hydrate or promote an
+            -- existing opaque identity.  Claims remain evidence, never power.
+            if not recordOwner then return nil end
             local evidence = Nexus and Nexus.LoadoutEvidence
             local existingVerdict = evidence
                 and type(evidence.OrdinaryCompleteness) == "function"
@@ -1279,26 +1322,25 @@ function Controller.New(options)
             local existingKey = existingComplete
                 and existingVerdict.fingerprint or nil
             if existingComplete and existingKey ~= key then return nil end
-            if explicitExisting.ownerKey then
-                if not recordOwner then return nil end
-                local recordOwnerKey = Identity.CanonicalOwnerKey(recordOwner)
-                if not recordOwnerKey or recordOwnerKey
-                    ~= Identity.CanonicalOwnerKey(explicitExisting.ownerKey) then
-                    return nil
-                end
-            elseif not Identity.SamePlayer(explicitExisting.author, player) then
-                return nil
-            end
-            local promoteOwner = incomingOwnerVerified == true
-                and explicitExisting.ownerVerified == false
-            if promoteOwner
-                and not Identity.SamePlayer(explicitExisting.author, player) then
-                return nil
-            end
+            local existingOwner = Identity.VerifiedOwnerKey(explicitExisting)
+            local existingClaim = OwnerEvidenceKey(explicitExisting)
+            local producerPromotion = record
+                and record._promotedFromUnverified == true
+                and explicitExisting.autoDps == true
+                and existingClaim == nil
+                and Identity.OwnerKeyMatchesAuthor(
+                    recordOwner, explicitExisting.author)
+            if existingOwner and existingOwner ~= recordOwner then return nil end
+            if not existingOwner and existingClaim ~= recordOwner
+                and not producerPromotion then return nil end
+            local promoteOwner = existingOwner == nil
             if promoteOwner then
+                explicitExisting.ownerKey = recordOwner
                 explicitExisting.ownerVerified = true
+                explicitExisting.claimedOwnerKey = nil
                 explicitExisting.relaySender = nil
-                explicitExisting.ownerKey = explicitExisting.ownerKey or recordOwner
+                explicitExisting.isMine = recordOwner
+                    == CurrentVerifiedOwnerKey()
             end
             if not existingComplete then
                 if type(explicitExisting.echoes) == "table"
@@ -1321,7 +1363,12 @@ function Controller.New(options)
                 explicitExisting.tombstoned = nil
                 explicitExisting.autoDps = true
                 explicitExisting.author = explicitExisting.author or player
-                explicitExisting.ownerKey = explicitExisting.ownerKey or recordOwner
+                explicitExisting.ownerKey = recordOwner
+                explicitExisting.ownerVerified = true
+                explicitExisting.claimedOwnerKey = nil
+                explicitExisting.relaySender = nil
+                explicitExisting.isMine = recordOwner
+                    == CurrentVerifiedOwnerKey()
                 explicitExisting.class = explicitClass or explicitExisting.class
                     or InferBuildClass(copied) or "UNKNOWN"
                 if explicitExisting.title == "Loadout pending" then
@@ -1333,7 +1380,7 @@ function Controller.New(options)
                     explicitExisting.lastModified or explicitExisting.postedAt or 0)
                 local saved = SaveBuild(explicitExisting)
                 if not saved then return nil end
-                if explicitExisting.ownerVerified ~= false then
+                if Identity.VerifiedOwnerKey(explicitExisting) then
                     BroadcastIfPossible(explicitExisting)
                 end
             elseif promoteOwner then
@@ -1348,7 +1395,6 @@ function Controller.New(options)
         end
 
         local ownAutoId, ownAutoBuild
-        local manualId, manualBuild
         if not explicitId then
             for id, build in pairs(Store()) do
                 local evidence = Nexus and Nexus.LoadoutEvidence
@@ -1358,24 +1404,26 @@ function Controller.New(options)
                 if type(verdict) == "table" and verdict.complete == true
                     and verdict.fingerprint == key then
                     if not build.autoDps then
-                        if IsOwnBuild(build) then return id, build end
-                        manualId, manualBuild = manualId or id, manualBuild or build
+                        if recordOwner
+                            and Identity.VerifiedOwnerKey(build)
+                                == recordOwner then return id, build end
                     else
-                        local recordOwnerKey = recordOwner
-                            and Identity.CanonicalOwnerKey(recordOwner)
-                        local sameOwner = recordOwnerKey and build.ownerKey
-                            and recordOwnerKey
-                                == Identity.CanonicalOwnerKey(build.ownerKey)
-                        local sameLegacyAuthor = not recordOwner
-                            and Identity.SamePlayer(build.author, player)
-                        if sameOwner or sameLegacyAuthor then
+                        local buildOwner = Identity.VerifiedOwnerKey(build)
+                        local buildClaim = OwnerEvidenceKey(build)
+                        local sameOwner = recordOwner and (
+                            buildOwner == recordOwner
+                            or (not buildOwner and buildClaim == recordOwner))
+                        local sameClaim = not recordOwner and recordClaim
+                            and (buildOwner == recordClaim
+                                or (not buildOwner
+                                    and buildClaim == recordClaim))
+                        if sameOwner or sameClaim then
                             ownAutoId, ownAutoBuild = id, build
                         end
                     end
                 end
             end
         end
-        if manualId then return manualId, manualBuild end
 
         local copied = {}
         for _, e in ipairs(echoes or {}) do
@@ -1384,8 +1432,8 @@ function Controller.New(options)
         end
         -- Locked Echoes remain supplemental record evidence. They are never
         -- folded into the ordinary build pool or its fingerprint.
-        local me = tostring((UnitName and UnitName("player")) or "")
-        local playerIsLocal = Identity.SamePlayer(player, me)
+        local playerIsLocal = recordOwner ~= nil
+            and recordOwner == CurrentVerifiedOwnerKey()
         local localClass
         if playerIsLocal and UnitClass then
             local _, token = UnitClass("player")
@@ -1396,17 +1444,18 @@ function Controller.New(options)
 
         if ownAutoId then
             local changed = false
-            if incomingOwnerVerified == true
-                and ownAutoBuild.ownerVerified == false then
-                if not Identity.SamePlayer(ownAutoBuild.author, player) then
-                    return nil
-                end
+            if recordOwner and not Identity.VerifiedOwnerKey(ownAutoBuild) then
+                if OwnerEvidenceKey(ownAutoBuild) ~= recordOwner then return nil end
+                ownAutoBuild.ownerKey = recordOwner
                 ownAutoBuild.ownerVerified = true
+                ownAutoBuild.claimedOwnerKey = nil
                 ownAutoBuild.relaySender = nil
-                ownAutoBuild.ownerKey = ownAutoBuild.ownerKey or recordOwner
+                ownAutoBuild.isMine = recordOwner
+                    == CurrentVerifiedOwnerKey()
                 changed = true
             end
-            if explicitClass and ownAutoBuild.class ~= explicitClass then
+            if recordOwner and explicitClass
+                and ownAutoBuild.class ~= explicitClass then
                 ownAutoBuild.class = explicitClass
                 ownAutoBuild.title = (CLASS_LABEL[explicitClass] or explicitClass)
                     .. " Record Loadout"
@@ -1417,7 +1466,7 @@ function Controller.New(options)
                     ownAutoBuild.lastModified or ownAutoBuild.postedAt)
                 local saved = SaveBuild(ownAutoBuild)
                 if not saved then return nil end
-                if ownAutoBuild.ownerVerified ~= false then
+                if Identity.VerifiedOwnerKey(ownAutoBuild) then
                     BroadcastIfPossible(ownAutoBuild)
                 end
             end
@@ -1425,28 +1474,24 @@ function Controller.New(options)
         end
 
         local stamp = NextStamp(0)
-        local ownerKey = recordOwner or (playerIsLocal and CurrentOwnerKey() or nil)
-        local buildOwnerVerified
-        if incomingOwnerVerified == true then
-            buildOwnerVerified = true
-        elseif incomingOwnerVerified == false then
-            buildOwnerVerified = false
-        end
-        local identity = ownerKey or Identity.PlayerKey(player)
+        local ownerKey = recordOwner
+        local claimKey = not recordOwner and recordClaim or nil
+        local identity = ownerKey or claimKey or Identity.PlayerKey(player)
         if not identity then return nil end
         local id = explicitId or ("dps-" .. FingerprintHash(key) .. "-"
             .. FingerprintHash(identity):sub(1, 8))
         local build = {
             id=id, title=(CLASS_LABEL[class] or class) .. " Record Loadout",
             description="Automatically created from a compatible DPS record. Exact Echo IDs and stack quantities are preserved for copying and comparison.",
-            author=player, ownerKey=ownerKey, class=class, echoes=copied,
+            author=player, ownerKey=ownerKey, claimedOwnerKey=claimKey,
+            realm=record and (record.realm or record.r) or nil,
+            class=class, echoes=copied,
             postedAt=stamp, lastModified=stamp,
-            isMine=(ownerKey and ownerKey == CurrentOwnerKey()) or false,
+            isMine=ownerKey ~= nil and ownerKey == CurrentVerifiedOwnerKey(),
             autoDps=true, fingerprint=key, loadoutAvailable=true,
             needsFullBuild=false,
-            ownerVerified=buildOwnerVerified,
-            relaySender=incomingOwnerVerified == false
-                and record.relaySender or nil,
+            ownerVerified=ownerKey ~= nil,
+            relaySender=not ownerKey and record and record.relaySender or nil,
         }
         if record and type(record.lockedEchoes) == "table" then
             build.lockedEchoes = {}
@@ -1460,7 +1505,7 @@ function Controller.New(options)
         if not RefreshBuildIdentity(build) then return nil end
         local saved = SaveBuild(build)
         if not saved then return nil end
-        if build.ownerVerified ~= false then BroadcastIfPossible(build) end
+        if Identity.VerifiedOwnerKey(build) then BroadcastIfPossible(build) end
         return id, build
     end
 
@@ -1517,13 +1562,15 @@ function Controller.New(options)
         end
         local stamp = NextStamp(0)
         local id = string.format("mine-%d-%d", stamp, math.random(100000,999999))
+        local localOwner = CurrentVerifiedOwnerKey()
         local record = {
             id=id, title=title, description=description,
             author=(UnitName and UnitName("player")) or "You",
-            ownerKey=CurrentOwnerKey(),
+            ownerKey=localOwner, ownerVerified=localOwner and true or false,
             class=NormalizeClass(selectedClass) or InferBuildClass(echoes)
                 or NormalizeClass(wl.class),
-            echoes=echoes, postedAt=stamp, lastModified=stamp, isMine=true,
+            echoes=echoes, postedAt=stamp, lastModified=stamp,
+            isMine=localOwner ~= nil,
         }
         local identityOk, identityErr = RefreshBuildIdentity(record)
         if not identityOk then return false, identityErr end
@@ -1829,17 +1876,18 @@ function Controller.New(options)
         end
         if #echoes == 0 then return false, "that build has no ordinary echoes" end
         -- Build and validate a complete replacement before changing either record.
+        local localOwner = CurrentVerifiedOwnerKey()
         local record = {
             id=publishedId,
             title=source.title or "Saved Build",
             description=source.userDescription or source.description or "",
             author=(UnitName and UnitName("player")) or "You",
-            ownerKey=CurrentOwnerKey(),
+            ownerKey=localOwner, ownerVerified=localOwner and true or false,
             class=NormalizeClass(source.class) or InferBuildClass(echoes),
             echoes=echoes,
             postedAt=old and old.postedAt or stamp,
             lastModified=stamp,
-            isMine=true,
+            isMine=localOwner ~= nil,
             sourceSavedBuildId=id,
             link=old and old.link or nil,
         }

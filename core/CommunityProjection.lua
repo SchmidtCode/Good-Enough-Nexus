@@ -2,6 +2,8 @@
 -- Pure Community list/detail preparation over established defensive readers.
 
 Nexus = Nexus or {}
+local Identity = assert(Nexus.Identity,
+    "Nexus Identity must load before CommunityProjection")
 if type(Nexus.CommunityInternals) ~= "table" then
     Nexus.CommunityInternals = {}
 end
@@ -64,15 +66,7 @@ local function RevisionKey(snapshot)
 end
 
 local function IsOwnBuild(build, context)
-    if type(build) ~= "table" then return false end
-    local ownerKey = tostring(context.ownerKey or ""):lower()
-    if build.ownerKey then
-        return ownerKey ~= ""
-            and tostring(build.ownerKey):lower() == ownerKey
-    end
-    local player = tostring(context.player or ""):lower()
-    return build.isMine == true and player ~= ""
-        and tostring(build.author or ""):lower() == player
+    return Identity.LocalOwnsRecord(build, context.ownerKey)
 end
 
 local function PublicOrdinaryComplete(build)

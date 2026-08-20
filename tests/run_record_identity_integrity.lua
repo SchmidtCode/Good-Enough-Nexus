@@ -19,6 +19,7 @@ local mageEchoes={{spellId=200100,stacks=1},{spellId=200101,stacks=1}}
 local fp=DPS.GetEchoKey(mageEchoes)
 local id,b=C.EnsureDpsBuildForEchoes(mageEchoes,"dummy",{
   player="Mageowner",class="MAGE",ownerKey="mageowner@ebonhold",realm="ebonhold",
+  ownerVerified=true,
   dps=24000000,duration=65,ts=now,fingerprint=fp,echoes=mageEchoes,
 })
 assert(id and b and b.class=="MAGE", "local Mage record must create a Mage build")

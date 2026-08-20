@@ -24,6 +24,7 @@ for index = 1, 1000 do
         description=index % 7 == 0 and "needle" or "",
         author=index % 10 == 0 and "ProjectionMage" or "Peer",
         ownerKey=index % 10 == 0 and "projectionmage@ebonhold" or "peer@ebonhold",
+        ownerVerified=true,
         class=index % 2 == 0 and "MAGE" or "WARRIOR",
         postedAt=index, lastModified=index,
         importedSavedBuild=index <= 15 and true or nil,

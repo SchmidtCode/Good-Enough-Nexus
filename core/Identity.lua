@@ -217,6 +217,44 @@ function Identity.OwnerKeyMatchesAuthor(ownerKey, author)
     return name ~= nil and authorKey ~= nil and name == authorKey
 end
 
+-- Durable record ownership requires both an explicit verification decision and
+-- one coherent canonical name@realm tuple.  Presentation names, local-looking
+-- flags, and malformed/unknown realm metadata never satisfy this predicate.
+function Identity.VerifiedOwnerKey(record)
+    if type(record) ~= "table" or record.ownerVerified ~= true then return nil end
+    local ownerKey = Identity.CanonicalOwnerKey(record.o or record.ownerKey)
+    local author = record.p or record.player or record.author
+    if not ownerKey or ownerKey:match("@unknown$")
+        or not Identity.OwnerKeyMatchesAuthor(ownerKey, author) then return nil end
+    local realm = record.r
+    if realm == nil then realm = record.realm end
+    if realm ~= nil then
+        local realmOwner = Identity.CanonicalOwnerKey(
+            Identity.OwnerKey(author, realm))
+        if realmOwner ~= ownerKey then return nil end
+    end
+    return ownerKey
+end
+
+-- One shared consumer policy keeps mutation, detail controls, and "My Builds"
+-- filtering aligned.  The narrow nil-flag branch preserves old locally-created
+-- manual/Saved rows, but auto-DPS or provenance-bearing rows always fail closed.
+function Identity.LocalOwnsRecord(record, currentOwnerKey)
+    if type(record) ~= "table" then return false end
+    local current = Identity.CanonicalOwnerKey(currentOwnerKey)
+    if not current or current:match("@unknown$") then return false end
+    local verified = Identity.VerifiedOwnerKey(record)
+    if verified then return verified == current end
+    if record.ownerVerified ~= nil or record.autoDps == true
+        or record.relaySender ~= nil or record.claimedOwnerKey ~= nil
+        or record.isMine ~= true then return false end
+    local legacyOwner = record.ownerKey
+        and Identity.CanonicalOwnerKey(record.ownerKey) or nil
+    if legacyOwner and legacyOwner ~= current then return false end
+    return Identity.OwnerKeyMatchesAuthor(current,
+        record.author or record.player)
+end
+
 function Identity.SanitizeText(value, maxBytes)
     local ok, text = pcall(tostring, value)
     text = ok and tostring(text or "") or "unprintable"

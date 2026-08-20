@@ -181,7 +181,7 @@ depends_on: [43.1]
 
 depends_on: [47.1]
 
-- Status: `NOT_STARTED`
+- Status: `IN_REVIEW`
 - Objective:
   - Prevent DPS-derived Community builds from acquiring local ownership through short-name resemblance or unverified metadata.
 - Deliverables:
@@ -189,10 +189,10 @@ depends_on: [47.1]
   - Focused local, remote, realm-less, cross-realm, and later-authoritative-promotion coverage.
   - Preservation of current-session local capture and non-owner public visibility.
 - Acceptance:
-  - [ ] Synthesized `ownerKey` and `isMine` originate only from verified canonical record authority.
-  - [ ] Realm-less and same-short-name remote records receive no owner actions.
-  - [ ] Later promotion occurs only through the checkpoint 47.1 authority bridge.
-  - [ ] Current-session local capture and ordinary public display remain functional.
+  - [x] Synthesized `ownerKey` and `isMine` originate only from verified canonical record authority.
+  - [x] Realm-less and same-short-name remote records receive no owner actions.
+  - [x] Later promotion occurs only through the checkpoint 47.1 authority bridge.
+  - [x] Current-session local capture and ordinary public display remain functional.
   - [ ] Focused Community/DPS tests, mapped tests, Fast, required review/Full, and diff checks pass.
 - Demo commands:
   - `luajit tests/run_community_dps_eligibility.lua && luajit tests/run_record_identity_integrity.lua`

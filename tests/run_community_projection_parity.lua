@@ -47,6 +47,7 @@ for index = 1, 1000 do
         author=index % 10 == 0 and "ProjectionMage" or "Peer",
         ownerKey=index % 10 == 0
             and "projectionmage@ebonhold" or "peer@ebonhold",
+        ownerVerified=true,
         class=index % 2 == 0 and "MAGE" or "WARRIOR",
         postedAt=index,lastModified=index,
         importedSavedBuild=index <= 10 and true or nil,

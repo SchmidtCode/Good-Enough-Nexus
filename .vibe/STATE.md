@@ -7,32 +7,30 @@
 ## Current focus
 
 - Stage: 47
-- Checkpoint: 47.1
-- Status: DONE
+- Checkpoint: 47.2
+- Status: IN_REVIEW
 - Branch: `refactor/test19-wp2-wp5`
-- Validated head: `69001d8c902a3372deeac057ac337db215ffaece`; product/test head `781165b484a2c7fdd5100fbef457e40138840de3`
+- Starting head: `4eaf7131e09f6a57ae84514291e70916cb4fcea6`; checkpoint 47.1 product/test head `781165b484a2c7fdd5100fbef457e40138840de3`
 - Worktree: `.test19-wp2-wp5-worktree`
 - Base: published WP1 head `03870e75254848c941dcd3534a9c79a90a644fe3`
 
 ## Objective (current checkpoint)
 
-Make durable owner claims require exact realm-qualified transport identity while keeping transport-envelope and presentation-name comparisons separate.
+Prevent DPS-derived Community builds from acquiring local ownership through short-name resemblance or unverified metadata.
 
 ## Deliverables (current checkpoint)
 
-- One canonical-owner API in `core/Identity.lua` with explicit verified/unverified results.
-- Sync ingress/egress adoption at durable ownership boundaries without changing protocol 7.
-- Focused same-name cross-realm, realm-less, reload, relay, and owner-action coverage.
-- Expected-red, focused green, mapped tests, Lua 5.1 parse, Fast, required review/Full, and exact-scope receipts.
+- Verified-record authority consumption in the DPS-to-Community synthesis path.
+- Focused local, remote, realm-less, cross-realm, and later-authoritative-promotion coverage.
+- Preservation of current-session local capture and non-owner public visibility.
 
 ## Acceptance (current checkpoint)
 
-- [x] An exact `name@realm` sender can establish only that canonical owner.
-- [x] A same-name sender from another realm cannot claim, edit, delete, relay as owner, or replace that record.
-- [x] Realm-less transport remains unverified and never becomes durable ownership through `SamePlayer()`.
-- [x] `SameTransportSender()` remains the envelope anti-spoofing owner and `SamePlayer()` remains presentation-only.
-- [x] Two verified same-name/different-realm records coexist across reload without ownership drift.
-- [x] Focused owner/transport tests, mapped tests, Lua 5.1 parse, Fast, required review/Full, and diff checks pass.
+- [x] Synthesized `ownerKey` and `isMine` originate only from verified canonical record authority.
+- [x] Realm-less and same-short-name remote records receive no owner actions.
+- [x] Later promotion occurs only through the checkpoint 47.1 authority bridge.
+- [x] Current-session local capture and ordinary public display remain functional.
+- [ ] Focused Community/DPS tests, mapped tests, Fast, required review/Full, and diff checks pass.
 
 ## Evidence
 
@@ -57,6 +55,10 @@ Make durable owner claims require exact realm-qualified transport identity while
 
 ## Work log
 
+- Checkpoint 47.2 focused green establishes one shared verified-record ownership policy across Community mutations, details, and My Builds; preserves unverified evidence as a non-authoritative claim; permits only exact verified promotion; and keeps public display/copy plus verified local capture intact. All 21 focused Community/DPS/identity/projection/security/integration runners pass after authoritative positive fixtures gained explicit verification. Release inventory is `211` runnable plus one manual runner.
+- Checkpoint 47.2 Fast passed `71/71` against exact WP1 base `03870e`, with no failed, unavailable, or skipped checks. The implementation candidate is ready to freeze for independent Spec/Standards review; Full remains reserved for the reviewed frozen bytes.
+- Checkpoint 47.2 expected red reproduced the end-to-end #41 defect: a `Twin-RealmB` DPS packet retained as unverified evidence still synthesized a RealmA Community page with local owner actions, failing at `run_community_owner_authority.lua:74`.
+- Manual advance moved the completed 47.1 pointer to executable checkpoint 47.2/#41 at starting head `4eaf713`; no product code changed during the advance.
 - Stage 47 consolidation corrected plan-marker drift: checkpoints 45.1 and 47.1 were `DONE` in their bodies but lacked dispatcher-readable heading markers. The 47.1 mismatch falsely routed past dep-blocked 47.2-47.5 toward Stage 48, while 45.1 remained a stale parallel-ready candidate. Both headings now match their completed state; the pointer remains at 47.1 so normal advance selects 47.2, with no stage transition or archive.
 - Checkpoint 47.1 hygiene CLEAN: the bounded authority surface has no correctness/security issue, safe quick win, or actionable debt. The only repeated tombstone predicate is not worth declaration-order churn; product/test bytes remain frozen. Staged-artifact policy checked `364` paths with `0` violations, and range/working diff checks pass.
 - Checkpoint 47.1 final review PASS: repeat Spec/Standards and adversarial provenance audits accepted the repaired range, and the one replacement Full at exact head `69001d8` passed all 18 blocking checks with Lua `210/210`, Lua 5.1 parse `283/283`, integration `70/70`, and one explicit nonblocking manual SavedVariables skip. Checkpoint 47.1 is DONE pending its required bounded hygiene pass.
@@ -112,7 +114,7 @@ Make durable owner claims require exact realm-qualified transport identity while
 
 ## Active issues
 
-- #28 — canonical ownership authority.
+- #41 — authority-first DPS-to-Community ownership.
 
 ## Blockers
 
@@ -145,8 +147,8 @@ Make durable owner claims require exact realm-qualified transport identity while
 
 ## Last completed loop
 
-- Checkpoint 47.1 checkpoint hygiene completed CLEAN without changing product/test bytes.
+- Manual advance moved Stage 47 from completed checkpoint 47.1 to not-started checkpoint 47.2.
 
 ## Recommended next action
 
-- Advance to checkpoint 47.2/#41 and prevent unverified DPS evidence from regaining local edit/delete ownership through presentation-name matching.
+- Add the focused Community owner-authority expected-red runner, then make Community ownership consume verified canonical record authority.

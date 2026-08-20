@@ -192,13 +192,7 @@ local function Cached(kind, keyBuilder, builder)
 end
 
 local function IsOwnBuild(build, filters)
-    if type(build) ~= "table" then return false end
-    if build.ownerKey then
-        return filters.ownerKey ~= ""
-            and Identity.CanonicalOwnerKey(build.ownerKey) == filters.ownerKey
-    end
-    return build.isMine == true and filters.player ~= ""
-        and Identity.PlayerKey(build.author) == filters.player
+    return Identity.LocalOwnsRecord(build, filters.ownerKey)
 end
 
 local function IsLoaded(build)

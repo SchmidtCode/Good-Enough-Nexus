@@ -2772,6 +2772,8 @@ local function ReceiveRecord(record, transportSender, relayed)
     end
     local incomingLocked = NormalizeEchoes(rawLocked)
     local legacyLocal = not relayed and transportSender == nil
+    local promotedBuildId = directOwner and existing
+        and existing.ownerVerified ~= true and existing.buildId or nil
     local row = {
         dps = math.floor(dps), level = level, ts = ts, duration = duration,
         player = player,
@@ -2783,12 +2785,13 @@ local function ReceiveRecord(record, transportSender, relayed)
             or directSender and transportRealm
             or (relayed or legacyLocal) and (realm and Identity.OwnerKey(player, realm):match("@(.+)$")
                 or ownerRealm) or nil,
-        buildId = record.b or record.buildId,
+        buildId = record.b or record.buildId or promotedBuildId,
         echoes = echoes, fingerprint = fingerprint, loadoutHash = hash or EchoHashFromKey(fingerprint),
         lockedEchoes = incomingLocked,
         protocolVersion = PROTOCOL_VERSION,
         ownerVerified = directOwner and true or false,
         relaySender = not directOwner and transportSender or nil,
+        _promotedFromUnverified = promotedBuildId and true or nil,
     }
     -- A relayed row may fill an empty slot, but it never overwrites an existing
     -- row. The established nil-sender compatibility path may still replace a
@@ -2876,6 +2879,7 @@ local function ReceiveRecord(record, transportSender, relayed)
             if safeOk and safeId then row.buildId = safeId end
         end
     end
+    row._promotedFromUnverified = nil
     local previousCharacterKey = existing and existingKey ~= characterKey
         and existingKey or nil
     if previousCharacterKey then bucket[previousCharacterKey] = nil end

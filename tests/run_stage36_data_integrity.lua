@@ -1106,6 +1106,9 @@ local relayCommunityState = relayCommunityId
     and Catalog.SyncState(relayCommunityId) or nil
 Desired("provenance", relayCommunity
         and relayCommunity.ownerVerified == false
+        and relayCommunity.ownerKey == nil
+        and relayCommunity.claimedOwnerKey == "communityorigin@ebonhold"
+        and relayCommunity.isMine ~= true
         and relayCommunity.relaySender == "RelayOne"
         and #communityBroadcasts == 0
         and relayCommunityState and relayCommunityState.delta == nil,
@@ -1124,8 +1127,10 @@ local afterCommunityCollision = relayCommunityId
 Desired("provenance", afterCommunityCollision
         and collisionCommunityId ~= relayCommunityId
         and afterCommunityCollision.author == "CommunityOrigin"
-        and afterCommunityCollision.ownerKey == "communityorigin@ebonhold"
+        and afterCommunityCollision.ownerKey == nil
+        and afterCommunityCollision.claimedOwnerKey == "communityorigin@ebonhold"
         and afterCommunityCollision.ownerVerified == false
+        and afterCommunityCollision.isMine ~= true
         and afterCommunityCollision.relaySender == "RelayOne"
         and Catalog.SyncState(relayCommunityId).delta == nil,
     "cross-author exact Community collision promoted relayed provenance")
@@ -1145,7 +1150,9 @@ local promotedCommunityState = promotedCommunityId
     and Catalog.SyncState(promotedCommunityId) or nil
 Desired("provenance", promotedCommunityId == relayCommunityId
         and promotedCommunity and promotedCommunity.ownerVerified == true
+        and promotedCommunity.claimedOwnerKey == nil
         and promotedCommunity.relaySender == nil
+        and promotedCommunity.isMine ~= true
         and promotedCommunity.author == "CommunityOrigin"
         and promotedCommunity.ownerKey == "communityorigin@ebonhold"
         and promotedCommunityState and promotedCommunityState.delta ~= nil
