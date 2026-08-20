@@ -372,11 +372,12 @@ local function SummaryValue(value)
 end
 
 local SUMMARY_FIELDS = {
-    "id", "title", "description", "author", "ownerKey", "class",
+    "id", "title", "description", "author", "ownerKey", "realm", "class",
     "postedAt", "lastModified", "importedSavedBuild", "isMine",
     "destinationWishlistName", "destinationProgress", "destinationTotal",
     "recordBuildId", "publishedBuildId", "autoDps", "fingerprint",
     "fingerprintHash", "needsFullBuild", "ownerVerified",
+    "claimedOwnerKey", "relaySender",
 }
 
 -- Browser/hash consumers need identity and display metadata, not tens of

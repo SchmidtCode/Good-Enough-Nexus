@@ -226,6 +226,10 @@ function Identity.VerifiedOwnerKey(record)
     local author = record.p or record.player or record.author
     if not ownerKey or ownerKey:match("@unknown$")
         or not Identity.OwnerKeyMatchesAuthor(ownerKey, author) then return nil end
+    if type(author) == "string" and author:find("-", 1, true)
+        and Identity.CanonicalOwnerFromTransport(author) ~= ownerKey then
+        return nil
+    end
     local realm = record.r
     if realm == nil then realm = record.realm end
     if realm ~= nil then
@@ -243,16 +247,31 @@ function Identity.LocalOwnsRecord(record, currentOwnerKey)
     if type(record) ~= "table" then return false end
     local current = Identity.CanonicalOwnerKey(currentOwnerKey)
     if not current or current:match("@unknown$") then return false end
+    if record.relaySender ~= nil or record.claimedOwnerKey ~= nil then
+        return false
+    end
     local verified = Identity.VerifiedOwnerKey(record)
     if verified then return verified == current end
     if record.ownerVerified ~= nil or record.autoDps == true
-        or record.relaySender ~= nil or record.claimedOwnerKey ~= nil
         or record.isMine ~= true then return false end
-    local legacyOwner = record.ownerKey
-        and Identity.CanonicalOwnerKey(record.ownerKey) or nil
-    if legacyOwner and legacyOwner ~= current then return false end
-    return Identity.OwnerKeyMatchesAuthor(current,
-        record.author or record.player)
+    local rawLegacyOwner = record.ownerKey
+    if rawLegacyOwner == nil then rawLegacyOwner = record.o end
+    if rawLegacyOwner ~= nil then
+        local legacyOwner = Identity.CanonicalOwnerKey(rawLegacyOwner)
+        if not legacyOwner or legacyOwner:match("@unknown$")
+            or legacyOwner ~= current then return false end
+    end
+    local author = record.author or record.player or record.p
+    if not Identity.OwnerKeyMatchesAuthor(current, author) then return false end
+    if type(author) == "string" and author:find("-", 1, true)
+        and Identity.CanonicalOwnerFromTransport(author) ~= current then
+        return false
+    end
+    local realm = record.realm
+    if realm == nil then realm = record.r end
+    if realm ~= nil and Identity.CanonicalOwnerKey(
+        Identity.OwnerKey(author, realm)) ~= current then return false end
+    return true
 end
 
 function Identity.SanitizeText(value, maxBytes)

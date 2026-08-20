@@ -161,6 +161,46 @@ assert(not Community.IsOwnBuild({author="Other", ownerKey="twin@realma",
 assert(not Community.IsOwnBuild({author="Twin", ownerKey="twin@unknown",
         ownerVerified=true, isMine=true}),
     "unknown-realm verified metadata gained local authority")
+assert(not Community.IsOwnBuild({author="Twin", ownerKey="malformed",
+        isMine=true}),
+    "malformed legacy owner metadata fell through to local authority")
+assert(not Community.IsOwnBuild({author="Twin", ownerKey="twin@realma",
+        realm="RealmB", isMine=true}),
+    "cross-realm legacy metadata fell through to local authority")
+assert(not Community.IsOwnBuild({author="Twin", ownerKey="twin@realma",
+        ownerVerified=true, claimedOwnerKey="twin@realmb", isMine=true}),
+    "verified metadata with a conflicting retained claim gained authority")
+assert(not Community.IsOwnBuild({author="Twin", ownerKey="twin@realma",
+        ownerVerified=true, relaySender="Relay-RealmB", isMine=true}),
+    "verified relay provenance gained local authority")
+assert(not Community.IsOwnBuild({author="Twin-RealmB",
+        ownerKey="twin@realma", ownerVerified=true, isMine=true}),
+    "realm-qualified author conflict collapsed into local authority")
+
+-- My Builds consumes catalog summaries, so every field used by the shared
+-- authority policy must survive that projection.
+for _, row in ipairs({
+    {
+        id="summary-provenance", title="Claimed summary", author="Twin",
+        ownerKey="twin@realma", claimedOwnerKey="twin@realmb",
+        relaySender="Relay-RealmB", isMine=true, class="MAGE",
+        echoes={{spellId=720005, quality=2, stacks=1}},
+        postedAt=1, lastModified=1,
+    },
+    {
+        id="summary-realm", title="Conflicting realm", author="Twin",
+        ownerKey="twin@realma", ownerVerified=true, realm="RealmB",
+        isMine=true, class="MAGE",
+        echoes={{spellId=720006, quality=2, stacks=1}},
+        postedAt=1, lastModified=1,
+    },
+}) do
+    assert(Nexus.BuildCatalog.Put(row), "summary authority control was not stored")
+    assert(not Community.IsOwnBuild(row.id),
+        "full catalog row unexpectedly granted summary-control authority")
+end
+AssertNotMineInLibrary("summary-provenance")
+AssertNotMineInLibrary("summary-realm")
 
 -- A verified RealmA record cannot promote the page retained from RealmB.
 local wrongId = Community.EnsureDpsBuildForEchoes(crossEchoes, "dummy", {
@@ -198,6 +238,7 @@ now = now + 1
 local soloEchoes = {{spellId=720002, quality=2, stacks=2}}
 local soloFingerprint = DPS.GetEchoKey(soloEchoes)
 local soloWire = Wire("Solo", nil, nil, soloEchoes, now)
+soloWire.k = "WARLOCK"
 assert(DPS.ReceiveRecord(soloWire, "Solo"),
     "realm-less DPS compatibility evidence was not retained")
 local soloRow = assert(BoardRow("dummy", soloFingerprint, nil),
@@ -211,6 +252,7 @@ assert(soloBuild.ownerVerified == false and soloBuild.ownerKey == nil
 
 soloWire.o = "solo@realma"
 soloWire.r = "RealmA"
+soloWire.k = "MAGE"
 assert(DPS.ReceiveRecord(soloWire, "Solo-RealmA"),
     "exact local transport could not promote realm-less evidence")
 local promotedSolo = assert(StoredBuild(soloId),
@@ -218,9 +260,20 @@ local promotedSolo = assert(StoredBuild(soloId),
 assert(promotedSolo.ownerVerified == true
         and promotedSolo.ownerKey == "solo@realma"
         and promotedSolo.claimedOwnerKey == nil
+        and promotedSolo.class == "MAGE"
+        and promotedSolo.title == "Mage Record Loadout"
         and promotedSolo.isMine == true
         and Community.IsOwnBuild(promotedSolo),
     "exact local authority did not restore legitimate owner actions")
+
+local claimlessId = Community.EnsureDpsBuildForEchoes(
+    soloEchoes, "dummy", {player="Solo", class="WARLOCK"})
+local afterClaimless = assert(StoredBuild(soloId))
+assert(claimlessId == nil and afterClaimless.ownerVerified == true
+        and afterClaimless.ownerKey == "solo@realma"
+        and afterClaimless.class == "MAGE"
+        and afterClaimless.title == "Mage Record Loadout",
+    "claimless realm-less evidence overwrote a verified Community page")
 
 local unchangedId = Community.EnsureDpsBuildForEchoes(
     soloEchoes, "dummy", {

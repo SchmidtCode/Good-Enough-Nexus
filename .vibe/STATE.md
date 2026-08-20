@@ -55,6 +55,9 @@ Prevent DPS-derived Community builds from acquiring local ownership through shor
 
 ## Work log
 
+- Checkpoint 47.2 replacement Fast passed `72/72` with no failed, unavailable, or skipped checks after ISSUE-47.2-R1 repair. Strict Vibe validation and diff checks pass; the replacement repair delta is ready to freeze for repeat Spec/Standards/adversarial review, with Full still unrun.
+- ISSUE-47.2-R1 triage resolved all four frozen-review reproductions: invalid/conflicting identity now fails closed, summaries preserve every ownership input, generated IDs never overwrite represented rows, and exact promotion replaces unverified auto-page class/title. The expanded authority runner plus 22 surrounding Community/catalog/identity/DPS/Sync/integration regressions pass; replacement Fast remains pending.
+- Checkpoint 47.2 frozen review FAIL at `7da384e`: Spec passed, while Standards/adversarial review found four reproducible fail-closed gaps—malformed/conflicting legacy identity acceptance, authority fields stripped from My Builds summaries, claimless deterministic-ID overwrite of a verified page, and exact promotion retaining unverified class/title. Full was not run; the checkpoint returned to implementation for bounded repair.
 - Checkpoint 47.2 focused green establishes one shared verified-record ownership policy across Community mutations, details, and My Builds; preserves unverified evidence as a non-authoritative claim; permits only exact verified promotion; and keeps public display/copy plus verified local capture intact. All 21 focused Community/DPS/identity/projection/security/integration runners pass after authoritative positive fixtures gained explicit verification. Release inventory is `211` runnable plus one manual runner.
 - Checkpoint 47.2 Fast passed `71/71` against exact WP1 base `03870e`, with no failed, unavailable, or skipped checks. The implementation candidate is ready to freeze for independent Spec/Standards review; Full remains reserved for the reviewed frozen bytes.
 - Checkpoint 47.2 expected red reproduced the end-to-end #41 defect: a `Twin-RealmB` DPS packet retained as unverified evidence still synthesized a RealmA Community page with local owner actions, failing at `run_community_owner_authority.lua:74`.
@@ -114,7 +117,7 @@ Prevent DPS-derived Community builds from acquiring local ownership through shor
 
 ## Active issues
 
-- #41 — authority-first DPS-to-Community ownership.
+- #41 — authority-first DPS-to-Community ownership; no open Vibe issue remains after ISSUE-47.2-R1 repair.
 
 ## Blockers
 
@@ -147,8 +150,8 @@ Prevent DPS-derived Community builds from acquiring local ownership through shor
 
 ## Last completed loop
 
-- Manual advance moved Stage 47 from completed checkpoint 47.1 to not-started checkpoint 47.2.
+- Checkpoint 47.2 replacement implementation closed ISSUE-47.2-R1, passed the expanded focused matrix and replacement Fast `72/72`, and froze the repaired candidate for repeat review without running Full.
 
 ## Recommended next action
 
-- Add the focused Community owner-authority expected-red runner, then make Community ownership consume verified canonical record authority.
+- Repeat independent Spec/Standards/adversarial review on the frozen repaired candidate; run the one required Full only if all review axes pass.

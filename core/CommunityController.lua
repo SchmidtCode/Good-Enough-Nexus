@@ -275,6 +275,10 @@ function Controller.New(options)
             or not Identity.OwnerKeyMatchesAuthor(ownerKey, author) then
             return nil
         end
+        if type(author) == "string" and author:find("-", 1, true)
+            and Identity.CanonicalOwnerFromTransport(author) ~= ownerKey then
+            return nil
+        end
         if realm ~= nil then
             local realmOwner = Identity.CanonicalOwnerKey(
                 Identity.OwnerKey(author, realm))
@@ -1334,6 +1338,7 @@ function Controller.New(options)
             if not existingOwner and existingClaim ~= recordOwner
                 and not producerPromotion then return nil end
             local promoteOwner = existingOwner == nil
+            local presentationChanged = false
             if promoteOwner then
                 explicitExisting.ownerKey = recordOwner
                 explicitExisting.ownerVerified = true
@@ -1341,6 +1346,16 @@ function Controller.New(options)
                 explicitExisting.relaySender = nil
                 explicitExisting.isMine = recordOwner
                     == CurrentVerifiedOwnerKey()
+                if explicitExisting.autoDps == true and explicitClass then
+                    local verifiedTitle = (CLASS_LABEL[explicitClass]
+                        or explicitClass) .. " Record Loadout"
+                    if explicitExisting.class ~= explicitClass
+                        or explicitExisting.title ~= verifiedTitle then
+                        explicitExisting.class = explicitClass
+                        explicitExisting.title = verifiedTitle
+                        presentationChanged = true
+                    end
+                end
             end
             if not existingComplete then
                 if type(explicitExisting.echoes) == "table"
@@ -1383,7 +1398,7 @@ function Controller.New(options)
                 if Identity.VerifiedOwnerKey(explicitExisting) then
                     BroadcastIfPossible(explicitExisting)
                 end
-            elseif promoteOwner then
+            elseif promoteOwner or presentationChanged then
                 explicitExisting.lastModified = NextStamp(
                     explicitExisting.lastModified
                         or explicitExisting.postedAt or 0)
@@ -1480,6 +1495,10 @@ function Controller.New(options)
         if not identity then return nil end
         local id = explicitId or ("dps-" .. FingerprintHash(key) .. "-"
             .. FingerprintHash(identity):sub(1, 8))
+        -- Deterministic IDs derived from ambiguous evidence may already belong
+        -- to a page that was later promoted. Never replace any represented row
+        -- merely because a claimless packet recomputed the same short-name ID.
+        if LoadBuild(id) then return nil end
         local build = {
             id=id, title=(CLASS_LABEL[class] or class) .. " Record Loadout",
             description="Automatically created from a compatible DPS record. Exact Echo IDs and stack quantities are preserved for copying and comparison.",
