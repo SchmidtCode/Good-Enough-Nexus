@@ -66,7 +66,7 @@ CheckOutboundReason("relay_authorization", {
 }, true, {requester="Requester",requestId="diagnostic",bucket=1})
 CheckOutboundReason("outside_request", {
     player="RemoteOutside",ownerKey="remoteoutside@ebonhold",
-    ownerVerified=false,_originVerified=true,
+    ownerVerified=true,_originVerified=true,
 }, true, nil)
 CheckOutboundReason("integrity", {fingerprint="different"})
 local firstDirect, firstWhy = Sync.BroadcastDpsRecord(Variant())

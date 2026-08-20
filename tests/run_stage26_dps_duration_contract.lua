@@ -100,6 +100,7 @@ for _, category in ipairs({"dummy", "lk"}) do
         relay.duration, relay.ts, relay.player = relay.u, relay.t, relay.p
         relay.level, relay.class, relay._originVerified = relay.l, relay.k, true
         relay.ownerKey, relay.realm = relay.o, relay.r
+        relay.ownerVerified = true
         local bucket = DPS.SyncBucket(category, relayPlayer)
         local offered = Sync.BroadcastDpsRecord(relay, nil, true, {
             requester="Requester",requestId="duration-contract",bucket=bucket,

@@ -524,6 +524,19 @@ local rejected, rejectWhy = Sync.BroadcastDpsRecord(
 assert(rejected == false and rejectWhy == "relay_authorization",
     "unverified relay crossed the response-only authorization boundary")
 
+-- A caller-supplied origin hint is not durable owner evidence. In particular,
+-- it cannot override an explicit unverified verdict on the public relay seam.
+Sync = Boot("ForgeryRelay", DeepCopy(seedDb))
+local forged = DeepCopy(verboseRecord)
+forged.ownerVerified = false
+forged._originVerified = true
+local forgedRejected, forgedWhy = Sync.BroadcastDpsRecord(
+    forged, nil, true, {
+        requester=REQUESTER,requestId="c1-forged-relay",bucket=dpsBucket,
+    }, {chunks=64,bytes=16384,seconds=75,transfers=8})
+assert(forgedRejected == false and forgedWhy == "relay_authorization",
+    "EXPECTED RED: caller-supplied DPS origin hint overrode unverified authority")
+
 -- The ranked seed can move to another bucket when its player identity changes.
 -- Reorder the final cohorts by the exact final bucket delay, and explicitly
 -- retain the direct owner in both populations.

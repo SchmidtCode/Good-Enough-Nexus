@@ -2215,7 +2215,10 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
     local relayContext
     if not directOwner then
         if not responseMode then return false, "owner_sender" end
-        if record._originVerified ~= true then
+        -- `_originVerified` records how verified evidence reached this client;
+        -- it is never owner authority by itself. The durable row must still
+        -- carry one coherent explicit verified owner verdict.
+        if verifiedOwner == nil or record._originVerified ~= true then
             return false, "relay_authorization"
         end
         if type(responseContext) ~= "table" then
@@ -2287,8 +2290,8 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
         Reconciler.NoteStat("chunkMessagesBuilt", #messages)
     end
     prepared = {messages=messages, payload=payload,context=envelopeContext,
-        originVerified=record.ownerVerified == true
-            or record._originVerified == true}
+        originVerified=directOwner
+            or (verifiedOwner ~= nil and record._originVerified == true)}
     local wireCost = PreparedWireCost(prepared, responseMode, false)
     local budgetWhy = ResponseBudgetReason(wireCost, responseBudget)
     if budgetWhy then
