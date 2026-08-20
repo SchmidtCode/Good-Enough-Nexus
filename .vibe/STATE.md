@@ -57,6 +57,7 @@ Prevent locked-baseline migration from applying unproven evidence to historical 
 
 ## Work log
 
+- Stage 46.1 final checkpoint hygiene CLEAN: bounded review of `core/DpsCapture.lua` and the two repaired migration runners found no redundant policy owner, unsafe compatibility branch, speculative abstraction, correctness/security issue, or actionable deferred debt; product/test bytes remain frozen at `981a257`.
 - Stage 46.1 final review PASS: independent Spec and Standards axes accepted source-first unsynced rollback, fail-closed preservation, readiness retry, revision ownership, validation, and Vibe truth with no remaining finding or hygiene signal.
 - Stage 46.1 final source-first implementation restores/retires rollback before readiness, leaves only the version stamp gated, preserves authoritative retry/reload behavior, and froze the final validated bytes for review.
 - Stage 46.1 unsynced-restart triage resolved the final blocker: rollback now restores and retires the source before readiness, the version stamp still waits, and the authoritative retry/reload remains idempotent.
@@ -95,7 +96,7 @@ Prevent locked-baseline migration from applying unproven evidence to historical 
 
 ## Workflow state
 
-- [ ] RUN_STOPPED
+- [x] RUN_STOPPED
 - [ ] RUN_CONTEXT_CAPTURE
 - [x] STAGE_DESIGNED
 - [x] MAINTENANCE_CYCLE_DONE
