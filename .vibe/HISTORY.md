@@ -12,6 +12,7 @@ This file is non-authoritative. Archive completed checkpoints, resolved issues, 
 
 ## Resolved issues
 
+- ISSUE-47.2-R2: Repeat-review mixed-alias, summary-laundering, qualified-player, and retained-provenance authority gaps were closed at the durable Identity, BuildCatalog summary, DPS tuple, verified-DPS authority, and exact-promotion owners. The expanded authority runner and 27 surrounding regressions pass; checkpoint gate evidence remains in checkpoint 47.2.
 - ISSUE-47.2-R1: Frozen-review Community authority gaps were closed by rejecting malformed/conflicting identity and contradictory provenance, preserving all ownership inputs in catalog summaries, refusing deterministic-ID collisions, and refreshing auto-page presentation only from exact verified promotion. Expanded focused and surrounding regression evidence is recorded in checkpoint 47.2.
 - ISSUE-183 / Stage 46.1 independent review: late current-state backfill, unproven completed-v1 references, and shared keyed-alias transforms were resolved by preserving historical rows whenever the durable schema cannot prove provenance; expected-red, adversarial preservation, interruption/idempotence, Fast, and Full evidence are recorded in checkpoint 46.1.
 - ISSUE-46-1-D: Interrupted restart now restores `lockedMigrationSource` before legacy reconciliation can inspect partial live rows; the regression proves zero partial-row evidence touches and a revision advance for represented restoration.

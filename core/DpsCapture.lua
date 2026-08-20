@@ -1442,26 +1442,61 @@ local function ValidWireEchoList(source)
     return entries > 0 and entries == maxIndex
 end
 
--- Canonical DPS ownership is one identity tuple. A separately persisted realm
--- may be absent for older rows, but when present it must describe the same
--- name@realm as ownerKey; conflicting metadata is never claim/send authority.
+-- Canonical DPS identity is one tuple. Compact wire and verbose storage aliases
+-- may coexist, but every present value must agree. Authority is layered below
+-- so contextual relays may validate the tuple without becoming record owners.
 function DPS.HasCanonicalOwnerIdentity(record)
     if type(record) ~= "table" then return false end
-    local player = tostring(record.p or record.player or "")
-    local ownerKey = Identity.CanonicalOwnerKey(record.o or record.ownerKey)
-    local realm = record.r
-    if realm == nil then realm = record.realm end
-    if not ownerKey or ownerKey:match("@unknown$")
-        or not Identity.ValidPlayer(player)
-        or not Identity.OwnerKeyMatchesAuthor(ownerKey, player) then
+    local ownerKey
+    local function AcceptOwner(value)
+        if value == nil then return true end
+        local canonical = Identity.CanonicalOwnerKey(value)
+        if not canonical or canonical:match("@unknown$")
+            or (ownerKey and ownerKey ~= canonical) then return false end
+        ownerKey = canonical
+        return true
+    end
+    if not AcceptOwner(record.o) or not AcceptOwner(record.ownerKey)
+        or not ownerKey then return false end
+
+    local hasPlayer = false
+    local function AcceptPlayer(value)
+        if value == nil then return true end
+        hasPlayer = true
+        if type(value) ~= "string" or not Identity.ValidPlayer(value)
+            or not Identity.OwnerKeyMatchesAuthor(ownerKey, value) then
+            return false
+        end
+        if value:find("-", 1, true)
+            and Identity.CanonicalOwnerFromTransport(value) ~= ownerKey then
+            return false
+        end
+        return true
+    end
+    if not AcceptPlayer(record.p) or not AcceptPlayer(record.player)
+        or not hasPlayer then return false end
+
+    local ownerName = ownerKey:match("^([^@]+)@")
+    local function AcceptRealm(value)
+        if value == nil then return true end
+        if type(value) ~= "string" or #value > 96
+            or value:find("[%c|%s]") then return false end
+        return Identity.CanonicalOwnerKey(
+            Identity.OwnerKey(ownerName, value)) == ownerKey
+    end
+    if not AcceptRealm(record.r) or not AcceptRealm(record.realm) then
         return false
     end
-    if realm == nil then return true, ownerKey end
-    if type(realm) ~= "string" or #realm > 96
-        or realm:find("[%c|%s]") then return false end
-    local realmOwner = Identity.CanonicalOwnerKey(
-        Identity.OwnerKey(player, realm))
-    return realmOwner == ownerKey, ownerKey
+    return true, ownerKey
+end
+
+function DPS.VerifiedOwnerKey(record)
+    if type(record) ~= "table" or record.ownerVerified ~= true
+        or record.claimedOwnerKey ~= nil or record.relaySender ~= nil then
+        return nil
+    end
+    local valid, ownerKey = DPS.HasCanonicalOwnerIdentity(record)
+    return valid == true and ownerKey or nil
 end
 
 -- The response election may suppress every equivalent peer, so its cached
@@ -1479,8 +1514,7 @@ local function DpsResponseClaimInfo(category, playerKey, row)
     local dps, stamp, level = tonumber(row.dps), tonumber(row.ts),
         tonumber(row.level)
     local nowTs = (time and time()) or 0
-    local ownerValid = DPS.HasCanonicalOwnerIdentity(row)
-    local authorityValid = row.ownerVerified == true
+    local authorityValid = DPS.VerifiedOwnerKey(row) ~= nil
     local safe = authorityValid and Identity.ValidPlayer(player)
         and #player <= 64
         and CharacterKey(player, row.ownerKey, row.realm) == tostring(playerKey)
@@ -1492,7 +1526,6 @@ local function DpsResponseClaimInfo(category, playerKey, row)
         and level == math.floor(level) and NormalizeClass(row.class) ~= nil
         and fingerprint ~= nil and fingerprint == row.fingerprint
         and loadoutHash ~= nil and EchoHashFromKey(fingerprint) == loadoutHash
-        and ownerValid
     return safe, safe and CharacterKey(player, row.ownerKey, row.realm) or nil
 end
 
@@ -2736,6 +2769,8 @@ local function ReceiveRecord(record, transportSender, relayed)
     local directSender = not relayed and transportSender ~= nil
         and Identity.SamePlayer(player, transportSender)
     local directOwner = directSender
+        and DPS.HasCanonicalOwnerIdentity(record) == true
+        and record.claimedOwnerKey == nil and record.relaySender == nil
         and Identity.TransportOwns(canonicalOwner, transportSender)
     local transportOwner = directSender
         and Identity.CanonicalOwnerFromTransport(transportSender) or nil

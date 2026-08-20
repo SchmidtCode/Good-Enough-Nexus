@@ -217,26 +217,43 @@ function Identity.OwnerKeyMatchesAuthor(ownerKey, author)
     return name ~= nil and authorKey ~= nil and name == authorKey
 end
 
+local function ExactOwnerIdentity(ownerKey, value)
+    if value == nil then return true, false end
+    if not Identity.OwnerKeyMatchesAuthor(ownerKey, value) then
+        return false, true
+    end
+    if type(value) == "string" and value:find("-", 1, true)
+        and Identity.CanonicalOwnerFromTransport(value) ~= ownerKey then
+        return false, true
+    end
+    return true, true
+end
+
+local function ExactOwnerRealm(ownerKey, realm)
+    if realm == nil then return true end
+    local name = ownerKey and ownerKey:match("^([^@]+)@") or nil
+    return name ~= nil and Identity.CanonicalOwnerKey(
+        Identity.OwnerKey(name, realm)) == ownerKey
+end
+
 -- Durable record ownership requires both an explicit verification decision and
 -- one coherent canonical name@realm tuple.  Presentation names, local-looking
 -- flags, and malformed/unknown realm metadata never satisfy this predicate.
 function Identity.VerifiedOwnerKey(record)
     if type(record) ~= "table" or record.ownerVerified ~= true then return nil end
-    local ownerKey = Identity.CanonicalOwnerKey(record.o or record.ownerKey)
-    local author = record.p or record.player or record.author
-    if not ownerKey or ownerKey:match("@unknown$")
-        or not Identity.OwnerKeyMatchesAuthor(ownerKey, author) then return nil end
-    if type(author) == "string" and author:find("-", 1, true)
-        and Identity.CanonicalOwnerFromTransport(author) ~= ownerKey then
+    -- Compact DPS aliases are transport input, not durable Community fields.
+    -- Rejecting them here prevents a summary or mixed-shape record from hiding
+    -- a contradiction through alias precedence.
+    if record.o ~= nil or record.p ~= nil or record.r ~= nil
+        or record.relaySender ~= nil or record.claimedOwnerKey ~= nil then
         return nil
     end
-    local realm = record.r
-    if realm == nil then realm = record.realm end
-    if realm ~= nil then
-        local realmOwner = Identity.CanonicalOwnerKey(
-            Identity.OwnerKey(author, realm))
-        if realmOwner ~= ownerKey then return nil end
-    end
+    local ownerKey = Identity.CanonicalOwnerKey(record.ownerKey)
+    if not ownerKey or ownerKey:match("@unknown$") then return nil end
+    local authorOk, hasAuthor = ExactOwnerIdentity(ownerKey, record.author)
+    local playerOk, hasPlayer = ExactOwnerIdentity(ownerKey, record.player)
+    if not authorOk or not playerOk or not (hasAuthor or hasPlayer)
+        or not ExactOwnerRealm(ownerKey, record.realm) then return nil end
     return ownerKey
 end
 
@@ -247,7 +264,8 @@ function Identity.LocalOwnsRecord(record, currentOwnerKey)
     if type(record) ~= "table" then return false end
     local current = Identity.CanonicalOwnerKey(currentOwnerKey)
     if not current or current:match("@unknown$") then return false end
-    if record.relaySender ~= nil or record.claimedOwnerKey ~= nil then
+    if record.o ~= nil or record.p ~= nil or record.r ~= nil
+        or record.relaySender ~= nil or record.claimedOwnerKey ~= nil then
         return false
     end
     local verified = Identity.VerifiedOwnerKey(record)
@@ -255,22 +273,15 @@ function Identity.LocalOwnsRecord(record, currentOwnerKey)
     if record.ownerVerified ~= nil or record.autoDps == true
         or record.isMine ~= true then return false end
     local rawLegacyOwner = record.ownerKey
-    if rawLegacyOwner == nil then rawLegacyOwner = record.o end
     if rawLegacyOwner ~= nil then
         local legacyOwner = Identity.CanonicalOwnerKey(rawLegacyOwner)
         if not legacyOwner or legacyOwner:match("@unknown$")
             or legacyOwner ~= current then return false end
     end
-    local author = record.author or record.player or record.p
-    if not Identity.OwnerKeyMatchesAuthor(current, author) then return false end
-    if type(author) == "string" and author:find("-", 1, true)
-        and Identity.CanonicalOwnerFromTransport(author) ~= current then
-        return false
-    end
-    local realm = record.realm
-    if realm == nil then realm = record.r end
-    if realm ~= nil and Identity.CanonicalOwnerKey(
-        Identity.OwnerKey(author, realm)) ~= current then return false end
+    local authorOk, hasAuthor = ExactOwnerIdentity(current, record.author)
+    local playerOk, hasPlayer = ExactOwnerIdentity(current, record.player)
+    if not authorOk or not playerOk or not (hasAuthor or hasPlayer)
+        or not ExactOwnerRealm(current, record.realm) then return false end
     return true
 end
 

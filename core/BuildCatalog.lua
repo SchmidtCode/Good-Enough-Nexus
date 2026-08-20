@@ -372,7 +372,8 @@ local function SummaryValue(value)
 end
 
 local SUMMARY_FIELDS = {
-    "id", "title", "description", "author", "ownerKey", "realm", "class",
+    "id", "title", "description", "author", "player", "ownerKey", "realm",
+    "o", "p", "r", "class",
     "postedAt", "lastModified", "importedSavedBuild", "isMine",
     "destinationWishlistName", "destinationProgress", "destinationTotal",
     "recordBuildId", "publishedBuildId", "autoDps", "fingerprint",

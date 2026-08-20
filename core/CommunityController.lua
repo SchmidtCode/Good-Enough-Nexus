@@ -292,11 +292,10 @@ function Controller.New(options)
             return nil
         end
         local dps = Nexus and Nexus.DpsCapture
-        if not (dps and type(dps.HasCanonicalOwnerIdentity) == "function") then
+        if not (dps and type(dps.VerifiedOwnerKey) == "function") then
             return nil
         end
-        local valid, ownerKey = dps.HasCanonicalOwnerIdentity(record)
-        return valid == true and ownerKey or nil
+        return dps.VerifiedOwnerKey(record)
     end
 
     function M.BindAdapter(adapter)
@@ -1344,6 +1343,8 @@ function Controller.New(options)
                 explicitExisting.ownerVerified = true
                 explicitExisting.claimedOwnerKey = nil
                 explicitExisting.relaySender = nil
+                explicitExisting.author = player
+                explicitExisting.realm = recordOwner:match("@(.+)$")
                 explicitExisting.isMine = recordOwner
                     == CurrentVerifiedOwnerKey()
                 if explicitExisting.autoDps == true and explicitClass then
@@ -1465,6 +1466,8 @@ function Controller.New(options)
                 ownAutoBuild.ownerVerified = true
                 ownAutoBuild.claimedOwnerKey = nil
                 ownAutoBuild.relaySender = nil
+                ownAutoBuild.author = player
+                ownAutoBuild.realm = recordOwner:match("@(.+)$")
                 ownAutoBuild.isMine = recordOwner
                     == CurrentVerifiedOwnerKey()
                 changed = true

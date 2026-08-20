@@ -176,6 +176,31 @@ assert(not Community.IsOwnBuild({author="Twin", ownerKey="twin@realma",
 assert(not Community.IsOwnBuild({author="Twin-RealmB",
         ownerKey="twin@realma", ownerVerified=true, isMine=true}),
     "realm-qualified author conflict collapsed into local authority")
+for _, mixed in ipairs({
+    {author="Twin", ownerKey="twin@realma", o="twin@realmb",
+        ownerVerified=true, isMine=true},
+    {author="Twin", p="Other", ownerKey="twin@realma",
+        ownerVerified=true, isMine=true},
+    {author="Twin", player="Other", ownerKey="twin@realma",
+        ownerVerified=true, isMine=true},
+    {author="Twin", realm="RealmA", r="RealmB",
+        ownerKey="twin@realma", ownerVerified=true, isMine=true},
+    {author="Twin", ownerKey="twin@realma", o="twin@realmb",
+        isMine=true},
+    {author="Twin", p="Other", ownerKey="twin@realma", isMine=true},
+    {author="Twin", player="Other", ownerKey="twin@realma", isMine=true},
+    {author="Twin", realm="RealmA", r="RealmB",
+        ownerKey="twin@realma", isMine=true},
+    {author="Twin", ownerKey="twin@realmb", o="twin@realma",
+        ownerVerified=true, isMine=true},
+    {author="Other", p="Twin", ownerKey="twin@realma",
+        ownerVerified=true, isMine=true},
+    {author="Twin", realm="RealmB", r="RealmA",
+        ownerKey="twin@realma", ownerVerified=true, isMine=true},
+}) do
+    assert(not Community.IsOwnBuild(mixed),
+        "mixed compact/durable identity aliases gained local authority")
+end
 
 -- My Builds consumes catalog summaries, so every field used by the shared
 -- authority policy must survive that projection.
@@ -194,6 +219,47 @@ for _, row in ipairs({
         echoes={{spellId=720006, quality=2, stacks=1}},
         postedAt=1, lastModified=1,
     },
+    {
+        id="summary-alias-owner", title="Alias owner", author="Twin",
+        ownerKey="twin@realma", o="twin@realmb", ownerVerified=true,
+        isMine=true, class="MAGE",
+        echoes={{spellId=720007, quality=2, stacks=1}},
+        postedAt=1, lastModified=1,
+    },
+    {
+        id="summary-alias-p", title="Compact player alias", author="Twin",
+        ownerKey="twin@realma", p="Other",
+        ownerVerified=true, isMine=true, class="MAGE",
+        echoes={{spellId=720008, quality=2, stacks=1}},
+        postedAt=1, lastModified=1,
+    },
+    {
+        id="summary-alias-player", title="Durable player alias", author="Twin",
+        ownerKey="twin@realma", player="Other",
+        ownerVerified=true, isMine=true, class="MAGE",
+        echoes={{spellId=720018, quality=2, stacks=1}},
+        postedAt=1, lastModified=1,
+    },
+    {
+        id="summary-alias-realm", title="Alias realm", author="Twin",
+        ownerKey="twin@realma", realm="RealmA", r="RealmB",
+        ownerVerified=true, isMine=true, class="MAGE",
+        echoes={{spellId=720009, quality=2, stacks=1}},
+        postedAt=1, lastModified=1,
+    },
+    {
+        id="summary-legacy-alias", title="Legacy compact alias", author="Twin",
+        ownerKey="twin@realma", p="Twin", isMine=true, class="MAGE",
+        echoes={{spellId=720019, quality=2, stacks=1}},
+        postedAt=1, lastModified=1,
+    },
+    {
+        id="summary-inverse-owner", title="Inverse owner aliases", author="Twin",
+        ownerKey="twin@realmb", o="twin@realma", ownerVerified=true,
+        isMine=true, class="MAGE",
+        echoes={{spellId=720020, quality=2, stacks=1}},
+        postedAt=1, lastModified=1,
+    },
 }) do
     assert(Nexus.BuildCatalog.Put(row), "summary authority control was not stored")
     assert(not Community.IsOwnBuild(row.id),
@@ -201,6 +267,75 @@ for _, row in ipairs({
 end
 AssertNotMineInLibrary("summary-provenance")
 AssertNotMineInLibrary("summary-realm")
+AssertNotMineInLibrary("summary-alias-owner")
+AssertNotMineInLibrary("summary-alias-p")
+AssertNotMineInLibrary("summary-alias-player")
+AssertNotMineInLibrary("summary-alias-realm")
+AssertNotMineInLibrary("summary-legacy-alias")
+AssertNotMineInLibrary("summary-inverse-owner")
+
+-- The DPS producer must not stamp verified authority before the durable
+-- Community consumer gets a chance to reject contradictory identity.
+local qualifiedEchoes = {{spellId=720010, quality=2, stacks=1}}
+local qualifiedWire = Wire(
+    "Twin-RealmB", nil, "twin@realma", qualifiedEchoes, now)
+assert(not DPS.HasCanonicalOwnerIdentity(qualifiedWire),
+    "DPS canonical identity collapsed a realm-qualified player conflict")
+assert(DPS.ReceiveRecord(qualifiedWire, "Twin-RealmA"),
+    "qualified-author conflict was not retained as ambient evidence")
+local qualifiedRow = assert(BoardRow(
+    "dummy", DPS.GetEchoKey(qualifiedEchoes), "realma"))
+local qualifiedBuild = assert(qualifiedRow.buildId
+        and StoredBuild(qualifiedRow.buildId),
+    "qualified-author conflict lost its ambient Community page")
+assert(qualifiedRow.ownerVerified == false and qualifiedRow.ownerKey == nil
+        and qualifiedBuild.ownerVerified == false
+            and qualifiedBuild.ownerKey == nil
+            and qualifiedBuild.isMine ~= true
+            and not Community.IsOwnBuild(qualifiedBuild),
+    "qualified-author conflict was stamped as verified Community authority")
+
+-- Later exact evidence may promote the same retained page, but it must replace
+-- every stale identity component rather than only flipping the verified flag.
+now = now + 1
+local exactQualified = Wire(
+    "Twin-RealmA", nil, "twin@realma", qualifiedEchoes, now,
+    qualifiedRow.buildId)
+assert(DPS.HasCanonicalOwnerIdentity(exactQualified),
+    "qualified exact DPS tuple was rejected as incoherent")
+assert(DPS.ReceiveRecord(exactQualified, "Twin-RealmA"),
+    "qualified exact owner could not promote retained ambient evidence")
+local promotedQualified = assert(StoredBuild(qualifiedRow.buildId),
+    "qualified exact promotion replaced the stable Community identity")
+assert(promotedQualified.ownerVerified == true
+        and promotedQualified.ownerKey == "twin@realma"
+        and promotedQualified.author == "Twin-RealmA"
+        and promotedQualified.realm == "realma"
+        and promotedQualified.isMine == true
+        and Community.IsOwnBuild(promotedQualified),
+    "qualified exact promotion retained contradictory identity metadata")
+
+for index, provenance in ipairs({
+    {relaySender="Relay-RealmB"},
+    {claimedOwnerKey="twin@realmb"},
+}) do
+    local echoes = {{spellId=720010 + index, quality=2, stacks=1}}
+    local record = {
+        player="Twin", class="MAGE", ownerKey="twin@realma",
+        realm="RealmA", ownerVerified=true,
+    }
+    for key, value in pairs(provenance) do record[key] = value end
+    assert(DPS.HasCanonicalOwnerIdentity(record),
+        "authority provenance incorrectly invalidated a coherent DPS tuple")
+    assert(DPS.VerifiedOwnerKey(record) == nil,
+        "retained DPS provenance remained verified owner authority")
+    local id, build = Community.EnsureDpsBuildForEchoes(
+        echoes, "dummy", record)
+    assert(id and build and build.ownerVerified == false
+            and build.ownerKey == nil and build.isMine ~= true
+            and not Community.IsOwnBuild(build),
+        "contradictory DPS provenance was laundered into local ownership")
+end
 
 -- A verified RealmA record cannot promote the page retained from RealmB.
 local wrongId = Community.EnsureDpsBuildForEchoes(crossEchoes, "dummy", {

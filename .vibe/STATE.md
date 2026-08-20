@@ -55,6 +55,9 @@ Prevent DPS-derived Community builds from acquiring local ownership through shor
 
 ## Work log
 
+- Checkpoint 47.2 second replacement Fast passed `72/72` with no failed, unavailable, or skipped checks after ISSUE-47.2-R2. The expanded public authority matrix and strict Vibe/diff checks pass; repaired code/test bytes are ready to freeze for repeat Spec/Standards/adversarial review, with Full still unrun.
+- ISSUE-47.2-R2 triage resolved the four repeat-review blockers at their owning boundaries. Durable Community ownership rejects every compact/durable alias conflict; catalog summaries preserve all authority inputs; DPS tuple validation checks every owner/player/realm alias; verified DPS authority separately rejects retained claim/relay provenance; exact promotion replaces stale qualified identity. The expanded authority runner and 27 surrounding Community/catalog/identity/DPS/Sync/security/integration runners pass; replacement Fast remains pending.
+- Checkpoint 47.2 repeat review FAIL at `0e407da`: Spec passed, while Standards/adversarial probes found mixed compact/durable aliases erased by summaries or preferred inconsistently, plus DPS producer authority accepting realm-qualified author and retained-provenance conflicts. Full was not run; the checkpoint returned to implementation under ISSUE-47.2-R2.
 - Checkpoint 47.2 replacement Fast passed `72/72` with no failed, unavailable, or skipped checks after ISSUE-47.2-R1 repair. Strict Vibe validation and diff checks pass; the replacement repair delta is ready to freeze for repeat Spec/Standards/adversarial review, with Full still unrun.
 - ISSUE-47.2-R1 triage resolved all four frozen-review reproductions: invalid/conflicting identity now fails closed, summaries preserve every ownership input, generated IDs never overwrite represented rows, and exact promotion replaces unverified auto-page class/title. The expanded authority runner plus 22 surrounding Community/catalog/identity/DPS/Sync/integration regressions pass; replacement Fast remains pending.
 - Checkpoint 47.2 frozen review FAIL at `7da384e`: Spec passed, while Standards/adversarial review found four reproducible fail-closed gaps—malformed/conflicting legacy identity acceptance, authority fields stripped from My Builds summaries, claimless deterministic-ID overwrite of a verified page, and exact promotion retaining unverified class/title. Full was not run; the checkpoint returned to implementation for bounded repair.
@@ -117,7 +120,7 @@ Prevent DPS-derived Community builds from acquiring local ownership through shor
 
 ## Active issues
 
-- #41 — authority-first DPS-to-Community ownership; no open Vibe issue remains after ISSUE-47.2-R1 repair.
+- None.
 
 ## Blockers
 
@@ -150,8 +153,8 @@ Prevent DPS-derived Community builds from acquiring local ownership through shor
 
 ## Last completed loop
 
-- Checkpoint 47.2 replacement implementation closed ISSUE-47.2-R1, passed the expanded focused matrix and replacement Fast `72/72`, and froze the repaired candidate for repeat review without running Full.
+- Checkpoint 47.2 repaired all repeat-review authority findings and passed the second replacement Fast `72/72`; the exact code/test delta is ready for repeat independent review without Full.
 
 ## Recommended next action
 
-- Repeat independent Spec/Standards/adversarial review on the frozen repaired candidate; run the one required Full only if all review axes pass.
+- Freeze the exact repair delta and repeat independent Spec/Standards/adversarial review before the checkpoint's single Full.
