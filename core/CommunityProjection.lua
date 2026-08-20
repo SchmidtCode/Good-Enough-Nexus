@@ -66,6 +66,9 @@ local function RevisionKey(snapshot)
 end
 
 local function IsOwnBuild(build, context)
+    if type(build) == "table" and build.importedSavedBuild == true then
+        return Identity.LocalOwnsSavedMirror(build, context.ownerKey)
+    end
     return Identity.LocalOwnsRecord(build, context.ownerKey)
 end
 

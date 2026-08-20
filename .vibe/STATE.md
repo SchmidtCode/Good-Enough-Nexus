@@ -55,6 +55,8 @@ Require verified canonical owner equality before any fingerprint, title, subset,
 
 ## Work log
 
+- Checkpoint 47.3 replacement implementation closes all five frozen-review blockers plus two pre-freeze audit gaps. Imported Saved ownership is verified-only, while a narrow explicit-owner legacy bridge can only adopt and verify the row during exact live-slot reconciliation; list/detail DPS joins consume one bounded authority-and-content resolver and report that join in work telemetry from startup, before any Community render. Mirror/publication allocation preserves tombstone and opaque occupancy and reuses established source-bound targets before free IDs. The expanded public regression, mapped Community/catalog/projection/identity suites, release policy, Lua 5.1 parse `285/285`, strict Vibe validation, and final repair Fast `81/81` in `118.668s` pass with zero failed, unavailable, or skipped checks. Full remains reserved for the replacement frozen candidate after repeat independent review.
+- Checkpoint 47.3 frozen review FAIL at `c39eb43`: Spec passed and Standards found no hard violation, but adversarial public probes found five related blockers. Realm-less imported mirrors still gained generic edit/upload authority; My Builds admitted every imported mirror and attached fingerprint-wide DPS without a validated relation; tombstoned/opaque raw IDs were treated as free allocation targets; and a stale publication pointer plus a vacated collision migrated the stable publication ID. Full was not run. The checkpoint returned to implementation for one bounded repair that also resolves four nonblocking duplication/naming smells.
 - Checkpoint 47.3 implementation is frozen for review. One authority-first Saved relation scorer now gates exact/title/subset evidence before class, DPS, or durable IDs; every read path revalidates record/publication targets; collision-safe mirror/publication IDs preserve verified foreign and ambiguous evidence; valid persisted/upload relationships remain stable across cache revisions and reload. The public expected-red matrix, mapped projection/index/attribution/identity/renderer/Stage 36 runners, release inventory `212`, and Fast `79/79` pass. Full remains intentionally unrun pending frozen review.
 - Manual dispatcher advance moved completed checkpoint 47.2 to executable checkpoint 47.3/#42 at starting head `1b4bdd5`; no product or test byte changed during the transition.
 - Checkpoint 47.2 hygiene CLEAN: bounded inspection found one shared durable build authority owner, one provenance-aware DPS authority owner, one explicit immutable-bundled coherence bridge, no weakened negative control, no duplicate policy worth churn, no debug/TODO artifact, and no safe quick win or actionable debt. Product/test bytes remain frozen at `8c05b81`; range and working diff checks pass, and only final Vibe receipts changed after Full.
@@ -165,8 +167,8 @@ Require verified canonical owner equality before any fingerprint, title, subset,
 
 ## Last completed loop
 
-- Checkpoint 47.3 implementation completed with focused/mapped/Fast validation and frozen bytes ready for independent review.
+- Checkpoint 47.3 replacement implementation completed with focused/mapped/Fast validation and bytes ready to freeze for repeat independent review.
 
 ## Recommended next action
 
-- Review the frozen checkpoint 47.3 implementation against issue #42 and repository standards, then run the single reserved Full gate only if both axes pass.
+- Freeze the replacement checkpoint 47.3 implementation, repeat independent Spec/Standards/adversarial review, and run the single reserved Full gate only if every review axis passes.

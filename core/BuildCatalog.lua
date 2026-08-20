@@ -372,11 +372,13 @@ local function SummaryValue(value)
 end
 
 local SUMMARY_FIELDS = {
-    "id", "title", "description", "author", "player", "ownerKey", "realm",
+    "id", "title", "serverTitle", "description", "author", "player",
+    "ownerKey", "realm",
     "o", "p", "r", "class",
     "postedAt", "lastModified", "importedSavedBuild", "isMine",
     "destinationWishlistName", "destinationProgress", "destinationTotal",
-    "recordBuildId", "publishedBuildId", "autoDps", "fingerprint",
+    "recordBuildId", "publishedBuildId", "sourceSavedBuildId", "autoDps",
+    "fingerprint",
     "fingerprintHash", "needsFullBuild", "ownerVerified",
     "claimedOwnerKey", "relaySender",
 }
@@ -819,6 +821,36 @@ function Catalog.Get(id)
     EnsureBound()
     local record, source = Selected(id)
     return PublicRecord(record, source), source
+end
+
+-- Return absent, visible, bundled, tombstone, or opaque plus an optional
+-- defensive represented record. Tombstones and opaque SavedVariables evidence
+-- win conflicts; an immutable bundled ID stays bundled even when an overlay
+-- currently supplies its represented row.
+function Catalog.AllocationOccupancy(id)
+    EnsureBound()
+    local tombstones = db and type(db.syncTombstones) == "table"
+        and db.syncTombstones or nil
+    if tombstones and tombstones[id] ~= nil then return "tombstone", nil end
+    local overlay = db and type(db.communityBuilds) == "table"
+        and db.communityBuilds or nil
+    local raw = overlay and overlay[id]
+    if raw ~= nil and (type(raw) ~= "table" or raw.id ~= id) then
+        return "opaque", nil
+    end
+    if baseline[id] ~= nil then
+        local record, source = SelectedRaw(id)
+        local represented = PublicRecord(record, source)
+        return "bundled", type(represented) == "table"
+            and DeepCopy(represented) or nil
+    end
+    if raw ~= nil then
+        local record, source = SelectedRaw(id)
+        local represented = PublicRecord(record, source)
+        if type(represented) ~= "table" then return "opaque", nil end
+        return "visible", DeepCopy(represented)
+    end
+    return "absent", nil
 end
 
 function Catalog.All()

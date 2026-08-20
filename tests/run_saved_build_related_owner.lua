@@ -426,14 +426,342 @@ assert(Nexus.BuildCatalog.Get("saved-twin-6").recordBuildId == nil,
 
 assert(Nexus.BuildCatalog.RemoveOverlay("realm-a-subset"),
     "wrong-owner subset candidate removal failed")
+local restoredSubsetEchoes = Echoes(989001, 10)
 assert(Nexus.BuildCatalog.Put({
     id="realm-a-subset",title="Subset Target",author="Twin",
     ownerKey="twin@realma",ownerVerified=true,realm="realma",
     class="MAGE",postedAt=62,lastModified=64,
-    echoes=Echoes(989001, 10),
+    echoes=restoredSubsetEchoes,
+    fingerprint=Nexus.DpsCapture.GetEchoKey(restoredSubsetEchoes),
+    fingerprintHash=Nexus.DpsCapture.GetEchoHash(restoredSubsetEchoes),
 }), "restored exact-owner subset candidate did not initialize")
 ImportAll(reloadedController)
-assert(Nexus.BuildCatalog.Get("saved-twin-6").recordBuildId == "realm-a-subset",
+local restoredSubset = assert(Nexus.BuildCatalog.Get("saved-twin-6"))
+assert(restoredSubset.recordBuildId == "realm-a-subset",
     "later verified exact-owner evidence did not restore the relation")
+local compactSubsetRelation = assert(
+    reloadedController.SavedProjectionRelation(
+        Nexus.BuildCatalog.GetSummary(restoredSubset.id)),
+    "compact Saved projection could not validate a title/subset relation")
+assert(compactSubsetRelation.buildId == "realm-a-subset",
+    "compact Saved projection selected the wrong title/subset relation")
+local malformedSourceSummary = Nexus.BuildCatalog.GetSummary(restoredSubset.id)
+malformedSourceSummary.fingerprint = "989001x8,malformed"
+assert(reloadedController.SavedProjectionRelation(malformedSourceSummary) == nil,
+    "malformed compact Saved fingerprint entered relationship scoring")
+assert(Nexus.BuildCatalog.Put({
+    id="malformed-compact-target",title="Subset Target",author="Twin",
+    ownerKey="twin@realma",ownerVerified=true,realm="realma",
+    class="MAGE",postedAt=65,lastModified=65,
+    echoes=restoredSubsetEchoes,fingerprint="malformed",
+}), "malformed compact target fixture did not initialize")
+local malformedTargetSource = Nexus.BuildCatalog.GetSummary(restoredSubset.id)
+malformedTargetSource.recordBuildId = "malformed-compact-target"
+malformedTargetSource.publishedBuildId = nil
+assert(reloadedController.SavedProjectionRelation(malformedTargetSource) == nil,
+    "malformed compact target fingerprint entered relationship scoring")
+
+-- Public ownership and library consumers must apply the same verified-owner
+-- boundary as Saved Build relationship reconciliation. Preserve the explicit
+-- owner-key legacy adoption path as a positive control: it is authoritative
+-- enough to adopt locally, while a claimless isMine row is not.
+local savedRelationResolver = function(build)
+    return controller.SavedProjectionRelation(build)
+end
+assert(Nexus.ViewProjections.BindSavedRelationResolver(
+    savedRelationResolver), "Saved relation resolver did not bind")
+
+local function ProjectedBuild(rows, id)
+    for _, row in ipairs(type(rows) == "table" and rows or {}) do
+        if row.id == id then return row end
+    end
+    return nil
+end
+
+local function ProjectMine(search, qualifiedOnly)
+    Nexus.ViewProjections.Reset()
+    local rows, summary, err = Nexus.ViewProjections.Builds({
+        scope="mine",search=search,currentClassOnly=false,
+        qualifiedOnly=qualifiedOnly,sortMode="title",
+    })
+    assert(type(rows) == "table", tostring(err or "My Builds projection failed"))
+    return rows, summary
+end
+
+local function ProjectMineAsync(search, qualifiedOnly)
+    Nexus.ViewProjections.Reset()
+    local filters = {
+        scope="mine",search=search,currentClassOnly=false,
+        qualifiedOnly=qualifiedOnly,sortMode="title",
+    }
+    for _ = 1, 200 do
+        local rows, summary, err = Nexus.ViewProjections.RequestBuilds(filters)
+        if type(rows) == "table" then return rows, summary end
+        assert(err == "pending", tostring(err or "async My Builds failed"))
+        Nexus.ViewProjections.PumpBuilds()
+    end
+    error("async My Builds projection did not converge")
+end
+
+local function ProjectPublic(search, qualifiedOnly)
+    Nexus.ViewProjections.Reset()
+    local rows, summary, err = Nexus.ViewProjections.Builds({
+        scope="all",search=search,currentClassOnly=false,
+        qualifiedOnly=qualifiedOnly,sortMode="title",
+    })
+    assert(type(rows) == "table", tostring(err or "public projection failed"))
+    return rows, summary
+end
+
+local function LocalMirrorForSlot(slot)
+    for id, build in pairs(Nexus.BuildCatalog.All()) do
+        if build.importedSavedBuild and tonumber(build.serverSlot) == slot
+            and Nexus.Identity.VerifiedOwnerKey(build) == "twin@realma" then
+            return id, build
+        end
+    end
+    return nil, nil
+end
+
+local explicitLegacyId = "saved-twin-9"
+local explicitLegacyEchoes = Echoes(990001, 6)
+assert(Nexus.BuildCatalog.Put({
+    id=explicitLegacyId,title="Legacy Local Private",
+    userTitle="Legacy Local Private",serverTitle="Legacy Before Import",
+    author="Twin",ownerKey="twin@realma",realm="realma",
+    class="MAGE",postedAt=70,lastModified=70,
+    echoes=Echoes(990101, 6),importedSavedBuild=true,isMine=true,
+    serverSlot=9,
+}), "explicit-owner legacy Saved mirror fixture did not initialize")
+local explicitLegacyBefore = assert(Nexus.BuildCatalog.Get(explicitLegacyId))
+local explicitLegacyPublished, explicitLegacyWhy =
+    controller.PublishImportedBuild(explicitLegacyId)
+local explicitLegacyRows = ProjectMine("legacy local private", false)
+assert(not controller.IsOwnBuild(explicitLegacyBefore)
+    and not explicitLegacyPublished and explicitLegacyWhy == "not your build"
+    and not ProjectedBuild(explicitLegacyRows, explicitLegacyId),
+    "EXPECTED RED: unverified explicit-owner mirror gained authority before adoption")
+slots.bySlot[9] = {
+    name="Legacy Live Slot",class="MAGE",echoes=explicitLegacyEchoes,
+}
+ImportAll(controller)
+local explicitLegacy = assert(Nexus.BuildCatalog.Get(explicitLegacyId))
+assert(Nexus.Identity.VerifiedOwnerKey(explicitLegacy) == "twin@realma"
+    and explicitLegacy.ownerVerified == true
+    and explicitLegacy.userTitle == "Legacy Local Private"
+    and explicitLegacy.title == "Legacy Local Private",
+    "explicit-owner legacy Saved mirror was not adopted by its exact owner")
+local explicitRows = ProjectMine("legacy local private", false)
+assert(ProjectedBuild(explicitRows, explicitLegacyId),
+    "verified explicit-owner legacy mirror was excluded from My Builds")
+
+local ambiguousBefore = assert(Nexus.BuildCatalog.Get(ambiguousMirrorId))
+assert(not controller.IsOwnBuild(ambiguousBefore),
+    "EXPECTED RED: claimless isMine Saved mirror granted owner authority")
+local ambiguousPublished, ambiguousWhy =
+    controller.PublishImportedBuild(ambiguousMirrorId)
+assert(not ambiguousPublished and ambiguousWhy == "not your build"
+    and Nexus.BuildCatalog.Get("published-" .. ambiguousMirrorId) == nil,
+    "EXPECTED RED: claimless Saved mirror reached publication authority")
+
+for _, denied in ipairs({
+    {id=foreignOrphanId,search="realmb orphan"},
+    {id=ambiguousMirrorId,search="ambiguous private"},
+    {id=ambiguousOrphanId,search="ambiguous orphan"},
+}) do
+    assert(Nexus.BuildCatalog.Get(denied.id),
+        "My Builds denial fixture disappeared: " .. denied.id)
+    local deniedRows = ProjectMine(denied.search, false)
+    assert(not ProjectedBuild(deniedRows, denied.id),
+        "EXPECTED RED: foreign or ambiguous Saved mirror entered My Builds: "
+            .. denied.id)
+end
+
+-- A valid foreign DPS pair proves the fingerprint is qualified, but that
+-- fingerprint alone must not qualify the local Saved mirror when the only
+-- related canonical build belongs to another realm.
+local foreignFingerprintId = "foreign-fingerprint-only"
+local foreignFingerprintEchoes = Echoes(994001, 6)
+local foreignFingerprint =
+    assert(Nexus.DpsCapture.GetEchoKey(foreignFingerprintEchoes))
+local foreignFingerprintHash =
+    assert(Nexus.DpsCapture.GetEchoHash(foreignFingerprintEchoes))
+assert(Nexus.BuildCatalog.Put({
+    id=foreignFingerprintId,title="Foreign Fingerprint Only",author="Twin",
+    ownerKey="twin@realmb",ownerVerified=true,realm="realmb",
+    class="ROGUE",postedAt=80,lastModified=80,
+    echoes=foreignFingerprintEchoes,fingerprint=foreignFingerprint,
+    fingerprintHash=foreignFingerprintHash,
+}), "wrong-owner fingerprint candidate did not initialize")
+slots.bySlot[10] = {
+    name="Foreign Fingerprint Only",class="MAGE",
+    echoes=foreignFingerprintEchoes,
+}
+ImportAll(controller)
+local localFingerprintId, localFingerprintMirror = LocalMirrorForSlot(10)
+assert(localFingerprintId and localFingerprintMirror.recordBuildId == nil
+    and controller.RecordBuildId(localFingerprintMirror) == nil
+    and controller.DpsSummary(localFingerprintMirror).best == 0,
+    "wrong-owner fingerprint fixture gained a durable DPS relationship")
+
+local function ForeignDpsWire(category, dps, duration, stamp)
+    return {
+        v=7,f=foreignFingerprint,h=foreignFingerprintHash,
+        e=foreignFingerprintEchoes,c=category,d=dps,u=duration,t=stamp,
+        p="Twin",k="ROGUE",o="twin@realmb",r="realmb",l=80,
+        b=foreignFingerprintId,
+    }
+end
+assert(Nexus.DpsCapture.ReceiveRecord(
+    ForeignDpsWire("dummy", 765432, 65, 701), "Twin-RealmB"),
+    "valid foreign Dummy DPS control was rejected")
+assert(Nexus.DpsCapture.ReceiveRecord(
+    ForeignDpsWire("lk", 654321, 240, 702), "Twin-RealmB"),
+    "valid foreign Lich King DPS control was rejected")
+local eligibility = Nexus.DpsCapture.GetCommunityEligibility()
+assert(eligibility[foreignFingerprint]
+    and eligibility[foreignFingerprint].dummy == 765432
+    and eligibility[foreignFingerprint].lk == 654321,
+    "valid foreign DPS pair did not enter public eligibility")
+local foreignPublicRows = ProjectPublic("foreign fingerprint only", true)
+local foreignPublic = ProjectedBuild(foreignPublicRows, foreignFingerprintId)
+assert(foreignPublic and foreignPublic._nexusQualified == true
+    and foreignPublic._nexusDps.dummy == 765432
+    and foreignPublic._nexusDps.lk == 654321,
+    "valid canonical foreign DPS disappeared from the public build list")
+local wrongOwnerRows = ProjectMine("foreign fingerprint only", true)
+assert(not ProjectedBuild(wrongOwnerRows, localFingerprintId),
+    "EXPECTED RED: wrong-owner fingerprint DPS qualified a local Saved mirror")
+
+local validSaved = assert(Nexus.BuildCatalog.Get("saved-twin-1"))
+local validRelation = assert(controller.SavedProjectionRelation(validSaved),
+    "verified Saved relation was unavailable to the list projection")
+local validRelationEchoes = exactEchoes
+local validRelationHash =
+    assert(Nexus.DpsCapture.GetEchoHash(validRelationEchoes))
+local function LocalDpsWire(category, dps, duration, stamp)
+    return {
+        v=7,f=validRelation.fingerprint,h=validRelationHash,
+        e=validRelationEchoes,c=category,d=dps,u=duration,t=stamp,
+        p="Twin",k="MAGE",o="twin@realma",r="realma",l=80,
+        b=validRelation.buildId,
+    }
+end
+assert(Nexus.DpsCapture.ReceiveRecord(
+    LocalDpsWire("dummy", 876543, 65, 711), "Twin-RealmA")
+    and Nexus.DpsCapture.ReceiveRecord(
+        LocalDpsWire("lk", 765431, 240, 712), "Twin-RealmA"),
+    "valid exact-owner Saved relation DPS controls were rejected")
+local validSavedRows = ProjectMine("saved target", true)
+local projectedSaved = ProjectedBuild(validSavedRows, validSaved.id)
+assert(projectedSaved and projectedSaved._nexusQualified == true
+    and projectedSaved._nexusDps.dummy == 876543
+    and projectedSaved._nexusDps.lk == 765431,
+    "validated Saved relation did not join the bulk DPS eligibility snapshot")
+local asyncSavedRows = ProjectMineAsync("saved target", true)
+local asyncProjectedSaved = ProjectedBuild(asyncSavedRows, validSaved.id)
+assert(asyncProjectedSaved and asyncProjectedSaved._nexusQualified == true
+    and asyncProjectedSaved._nexusDps.dummy == 876543
+    and asyncProjectedSaved._nexusDps.lk == 765431,
+    "async Saved projection diverged from validated relation DPS")
+
+-- Tombstones and opaque SavedVariables values are occupied identities even
+-- though BuildCatalog.Get cannot materialize them. Neither Saved mirror nor
+-- publication allocation may overwrite or hide data at those identities.
+local tombstoneMirrorBase = "saved-twin-11"
+assert(Nexus.BuildCatalog.SetTombstone(tombstoneMirrorBase, {
+    stamp=900000,author="Twin",
+}), "Saved mirror tombstone fixture did not initialize")
+slots.bySlot[11] = {
+    name="Tombstone Collision Slot",class="MAGE",echoes=Echoes(995001, 6),
+}
+ImportAll(controller)
+local tombstoneMirrorId = LocalMirrorForSlot(11)
+local tombstoneMirrorState = Nexus.BuildCatalog.SyncState(tombstoneMirrorBase)
+assert(tombstoneMirrorId and tombstoneMirrorId ~= tombstoneMirrorBase
+    and tombstoneMirrorState.visible == nil
+    and tombstoneMirrorState.delta == nil
+    and tombstoneMirrorState.tombstone ~= nil
+    and NexusDB.communityBuilds[tombstoneMirrorBase] == nil,
+    "EXPECTED RED: Saved mirror allocation wrote through a tombstoned ID")
+
+local opaqueMirrorBase = "saved-twin-12"
+local opaqueMirrorValue = "opaque-saved-mirror-collision"
+NexusDB.communityBuilds[opaqueMirrorBase] = opaqueMirrorValue
+assert(Nexus.BuildCatalog.AllocationOccupancy(opaqueMirrorBase) == "opaque",
+    "opaque Saved mirror fixture was not observable as occupied")
+slots.bySlot[12] = {
+    name="Opaque Collision Slot",class="MAGE",echoes=Echoes(996001, 6),
+}
+ImportAll(controller)
+local opaqueMirrorId = LocalMirrorForSlot(12)
+assert(opaqueMirrorId and opaqueMirrorId ~= opaqueMirrorBase
+    and NexusDB.communityBuilds[opaqueMirrorBase] == opaqueMirrorValue,
+    "EXPECTED RED: Saved mirror allocation overwrote opaque raw storage")
+
+local tombstonePublicationBase = "published-" .. tombstoneMirrorId
+assert(Nexus.BuildCatalog.SetTombstone(tombstonePublicationBase, {
+    stamp=900001,author="Twin",
+}), "publication tombstone fixture did not initialize")
+local tombstonePublished, tombstonePublishedId =
+    controller.PublishImportedBuild(tombstoneMirrorId)
+local tombstonePublicationState =
+    Nexus.BuildCatalog.SyncState(tombstonePublicationBase)
+local tombstonePublication = tombstonePublishedId
+    and Nexus.BuildCatalog.Get(tombstonePublishedId) or nil
+assert(tombstonePublished and tombstonePublishedId ~= tombstonePublicationBase
+    and tombstonePublicationState.visible == nil
+    and tombstonePublicationState.delta == nil
+    and tombstonePublicationState.tombstone ~= nil
+    and NexusDB.communityBuilds[tombstonePublicationBase] == nil
+    and tombstonePublication
+    and tombstonePublication.sourceSavedBuildId == tombstoneMirrorId
+    and Nexus.Identity.VerifiedOwnerKey(tombstonePublication)
+        == "twin@realma",
+    "EXPECTED RED: publication allocation wrote through a tombstoned ID")
+
+local opaquePublicationBase = "published-" .. opaqueMirrorId
+local opaquePublicationValue = "opaque-publication-collision"
+NexusDB.communityBuilds[opaquePublicationBase] = opaquePublicationValue
+assert(Nexus.BuildCatalog.AllocationOccupancy(opaquePublicationBase)
+        == "opaque",
+    "opaque publication fixture was not observable as occupied")
+local opaquePublished, opaquePublishedId =
+    controller.PublishImportedBuild(opaqueMirrorId)
+local opaquePublication = opaquePublishedId
+    and Nexus.BuildCatalog.Get(opaquePublishedId) or nil
+assert(opaquePublished and opaquePublishedId ~= opaquePublicationBase
+    and NexusDB.communityBuilds[opaquePublicationBase]
+        == opaquePublicationValue
+    and opaquePublication
+    and opaquePublication.sourceSavedBuildId == opaqueMirrorId
+    and Nexus.Identity.VerifiedOwnerKey(opaquePublication) == "twin@realma",
+    "EXPECTED RED: publication allocation overwrote opaque raw storage")
+
+-- Once a collision-safe publication is source-bound, vacating the historical
+-- base and persisting a stale published hint must not move the upload target.
+local stablePublication = assert(Nexus.BuildCatalog.Get(publishedId))
+assert(stablePublication.sourceSavedBuildId == "saved-twin-1"
+    and Nexus.Identity.VerifiedOwnerKey(stablePublication) == "twin@realma",
+    "stable publication control disappeared before the vacancy regression")
+assert(Nexus.BuildCatalog.RemoveOverlay(occupiedId),
+    "foreign publication base did not vacate for the stability regression")
+assert(Nexus.BuildCatalog.Get(occupiedId) == nil,
+    "vacated publication base remained represented")
+local stableSource = assert(Nexus.BuildCatalog.Get("saved-twin-1"))
+stableSource.publishedBuildId = occupiedId
+stableSource.recordBuildId = publishedId
+stableSource.lastModified = stableSource.lastModified + 1
+assert(Nexus.BuildCatalog.Put(stableSource),
+    "stale publication hint did not enter the stability fixture")
+local republished, reusedPublicationId =
+    controller.PublishImportedBuild("saved-twin-1")
+local sourceAfterReuse = assert(Nexus.BuildCatalog.Get("saved-twin-1"))
+assert(republished and reusedPublicationId == publishedId
+    and sourceAfterReuse.publishedBuildId == publishedId
+    and sourceAfterReuse.recordBuildId == publishedId
+    and Nexus.BuildCatalog.Get(occupiedId) == nil
+    and Nexus.BuildCatalog.Get(publishedId) ~= nil,
+    "EXPECTED RED: vacated base or stale hint moved a source-bound publication")
 
 print("saved build related owner: exact-owner-first stale-read-denial projection collision-safe-publish -- OK")

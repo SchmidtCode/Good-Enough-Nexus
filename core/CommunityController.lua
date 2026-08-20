@@ -16,7 +16,7 @@ local function Measure(name, callback, ...)
     return callback(...)
 end
 
-local function FingerprintHash(text)
+local function StableIdHash(text)
     text = tostring(text or "")
     local h1, h2 = 5381, 2166136261
     for i = 1, #text do
@@ -25,6 +25,14 @@ local function FingerprintHash(text)
         h2 = (h2 * 131 + b) % 2147483629
     end
     return string.format("%08x%08x", h1, h2)
+end
+
+local COLLISION_ATTEMPT_LIMIT = 16
+
+local function CollisionCandidateId(base, token, attempt)
+    if attempt == 0 then return base end
+    if attempt == 1 then return base .. "-" .. token end
+    return base .. "-" .. token .. "-" .. tostring(attempt)
 end
 
 function Controller.New(options)
@@ -105,6 +113,49 @@ function Controller.New(options)
         local catalog = Catalog()
         if not (catalog and catalog.Get) then return nil end
         return catalog.Get(id)
+    end
+
+    local function LoadBuildSummary(id)
+        local catalog = Catalog()
+        if not (catalog and type(catalog.GetSummary) == "function") then
+            return nil
+        end
+        return catalog.GetSummary(id)
+    end
+
+    local function AllocationOccupancy(id)
+        local catalog = Catalog()
+        if catalog and type(catalog.AllocationOccupancy) == "function" then
+            local ok, state, represented = pcall(
+                catalog.AllocationOccupancy, id)
+            if ok and (state == "absent" or state == "visible"
+                or state == "bundled" or state == "tombstone"
+                or state == "opaque") then
+                return state, represented
+            end
+            return "opaque", nil
+        end
+        -- Compatibility for injected controller-only tests. The shipped
+        -- catalog always supplies AllocationOccupancy and therefore protects
+        -- tombstones, bundled IDs, and malformed raw persistence.
+        local represented = LoadBuild(id)
+        return represented and "visible" or "absent", represented
+    end
+
+    local function FindStableCollisionTarget(base, token, reusable)
+        local firstFree
+        local lastAttempt = token and COLLISION_ATTEMPT_LIMIT or 0
+        for attempt = 0, lastAttempt do
+            local candidateId = CollisionCandidateId(base, token, attempt)
+            local state, candidate = AllocationOccupancy(candidateId)
+            if state == "absent" then
+                if not firstFree then firstFree = candidateId end
+            elseif state == "visible" and type(reusable) == "function"
+                and reusable(candidate) then
+                return candidateId, candidate
+            end
+        end
+        return firstFree, nil
     end
 
     local function SaveBuild(build)
@@ -665,6 +716,9 @@ function Controller.New(options)
     end
 
     IsOwnBuild = function(build)
+        if type(build) == "table" and build.importedSavedBuild == true then
+            return Identity.LocalOwnsSavedMirror(build, CurrentOwnerKey())
+        end
         return Identity.LocalOwnsRecord(build, CurrentOwnerKey())
     end
 
@@ -686,6 +740,56 @@ function Controller.New(options)
             < tostring(best and best.id or "")
     end
 
+    PublishedBuild = function(source, loadCandidate)
+        if type(source) ~= "table" or not source.importedSavedBuild then
+            return nil
+        end
+        loadCandidate = type(loadCandidate) == "function"
+            and loadCandidate or LoadBuild
+        local ownerKey = Identity.VerifiedOwnerKey(source)
+        if not ownerKey then return nil end
+        local seen = {}
+        for _, field in ipairs({"publishedBuildId", "recordBuildId"}) do
+            local candidateId = source[field]
+            if candidateId ~= nil and not seen[candidateId] then
+                seen[candidateId] = true
+                local candidate = loadCandidate(candidateId)
+                if HasVerifiedRelatedOwner(candidate, ownerKey)
+                    and candidate.sourceSavedBuildId == source.id then
+                    return candidate
+                end
+            end
+        end
+        return nil
+    end
+
+    local function PreferredRelatedCandidates(source, loadCandidate)
+        loadCandidate = type(loadCandidate) == "function"
+            and loadCandidate or LoadBuild
+        local preferred = {}
+        local published = PublishedBuild(source, loadCandidate)
+        if published then preferred[#preferred + 1] = published end
+        local record = source and source.recordBuildId
+            and loadCandidate(source.recordBuildId) or nil
+        if record and (not published or record.id ~= published.id) then
+            preferred[#preferred + 1] = record
+        end
+        return preferred
+    end
+
+    local function BestPreferredRelated(source, score, loadCandidate)
+        local best, bestScore = nil, -1
+        for _, candidate in ipairs(
+            PreferredRelatedCandidates(source, loadCandidate)) do
+            local candidateScore = score(candidate)
+            if BetterRelatedCandidate(candidate, candidateScore,
+                best, bestScore, true) then
+                best, bestScore = candidate, candidateScore
+            end
+        end
+        return best, bestScore
+    end
+
     RelatedBuild = function(build)
         if type(build) ~= "table" or not build.importedSavedBuild then
             return build, type(build) == "table"
@@ -694,37 +798,8 @@ function Controller.New(options)
         if not ownerKey then return build, false end
         local score = NewRelatedScorer(
             build.serverTitle or build.title, build.echoes, ownerKey)
-        local preferred = {}
-        local published = PublishedBuild and PublishedBuild(build) or nil
-        if published then preferred[#preferred + 1] = published end
-        local record = build.recordBuildId
-            and LoadBuild(build.recordBuildId) or nil
-        if record and (not published or record.id ~= published.id) then
-            preferred[#preferred + 1] = record
-        end
-        local best, bestScore = nil, -1
-        for _, candidate in ipairs(preferred) do
-            local candidateScore = score(candidate)
-            if BetterRelatedCandidate(candidate, candidateScore,
-                best, bestScore, true) then
-                best, bestScore = candidate, candidateScore
-            end
-        end
+        local best = BestPreferredRelated(build, score)
         return best or build, best ~= nil
-    end
-
-    PublishedBuild = function(source)
-        if type(source) ~= "table" or not source.importedSavedBuild then
-            return nil
-        end
-        local ownerKey = Identity.VerifiedOwnerKey(source)
-        local candidate = source.publishedBuildId
-            and LoadBuild(source.publishedBuildId) or nil
-        if HasVerifiedRelatedOwner(candidate, ownerKey)
-            and candidate.sourceSavedBuildId == source.id then
-            return candidate
-        end
-        return nil
     end
 
     function M.IsOwnBuild(idOrBuild)
@@ -737,32 +812,60 @@ function Controller.New(options)
         return tostring(text or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
     end
 
-    local function EchoPresence(echoes)
+    local function EchoPresence(evidence, fingerprintComplete)
         local out = {}
-        for _, e in ipairs(type(echoes) == "table" and echoes or {}) do
-            local id = tonumber(e.spellId or e.id)
-            if id then out[id] = (out[id] or 0) + (tonumber(e.stacks or e.count) or 1) end
+        if type(evidence) == "table" then
+            for _, e in ipairs(evidence) do
+                local id = tonumber(e.spellId or e.id)
+                if id then
+                    out[id] = (out[id] or 0)
+                        + (tonumber(e.stacks or e.count) or 1)
+                end
+            end
+            return out
         end
+        if type(evidence) ~= "string" or fingerprintComplete ~= true
+            or evidence == "" or evidence == "0" then return nil end
+        local parts = {}
+        for part in evidence:gmatch("[^,]+") do
+            local rawId, rawCount = part:match("^(%d+)x(%d+)$")
+            local id, count = tonumber(rawId), tonumber(rawCount)
+            if not id or id <= 0 or not count or count <= 0 then return nil end
+            parts[#parts + 1] = part
+            out[id] = (out[id] or 0) + count
+        end
+        if #parts == 0 or table.concat(parts, ",") ~= evidence then return nil end
         return out
     end
 
-    NewRelatedScorer = function(serverTitle, echoes, ownerKey)
+    NewRelatedScorer = function(serverTitle, evidence, ownerKey,
+        fingerprintComplete)
         local D = Nexus.DpsCapture
-        local exactKey = D and D.GetEchoKey and D.GetEchoKey(echoes) or nil
+        local wanted = EchoPresence(evidence, fingerprintComplete)
+        local exactKey = type(evidence) == "table" and D and D.GetEchoKey
+            and D.GetEchoKey(evidence) or wanted and evidence or nil
         local titleKey = NormalizeTitle(serverTitle)
         ownerKey = Identity.CanonicalOwnerKey(ownerKey)
-        local wanted = EchoPresence(echoes)
         local wantedTotal = 0
-        for _, count in pairs(wanted) do wantedTotal = wantedTotal + count end
+        for _, count in pairs(wanted or {}) do wantedTotal = wantedTotal + count end
 
         local function CandidateScore(candidate)
-            if not HasVerifiedRelatedOwner(candidate, ownerKey) then return nil end
+            if not wanted or not exactKey
+                or not HasVerifiedRelatedOwner(candidate, ownerKey) then
+                return nil
+            end
 
-            local candidateKey = D and D.GetEchoKey
-                and D.GetEchoKey(candidate.echoes) or candidate.fingerprint
+            local candidateEvidence = type(candidate.echoes) == "table"
+                and candidate.echoes or candidate.fingerprint
+            local have = EchoPresence(candidateEvidence,
+                candidate.ordinaryComplete == true)
+            if not have then return nil end
+            local candidateKey = type(candidateEvidence) == "table"
+                and D and D.GetEchoKey and D.GetEchoKey(candidateEvidence)
+                or candidate.fingerprint
             if exactKey and candidateKey == exactKey then return 100000 end
 
-            local have, overlap = EchoPresence(candidate.echoes), 0
+            local overlap = 0
             for id, count in pairs(wanted) do
                 overlap = overlap + math.min(count, have[id] or 0)
             end
@@ -796,22 +899,7 @@ function Controller.New(options)
         -- Never trust a persisted recordBuildId blindly. Saved slot numbers and
         -- mirrored records survive reloads and can otherwise keep a stale record
         -- from another class attached forever.
-        local preferred = {}
-        local published = old and PublishedBuild(old) or nil
-        if published then preferred[#preferred + 1] = published end
-        local record = old and old.recordBuildId
-            and LoadBuild(old.recordBuildId) or nil
-        if record and (not published or record.id ~= published.id) then
-            preferred[#preferred + 1] = record
-        end
-        local best, bestScore = nil, -1
-        for _, candidate in ipairs(preferred) do
-            local score = CandidateScore(candidate)
-            if BetterRelatedCandidate(candidate, score,
-                best, bestScore, true) then
-                best, bestScore = candidate, score
-            end
-        end
+        local best, bestScore = BestPreferredRelated(old, CandidateScore)
         local cursor = catalog and catalog.BeginRelatedCursor
             and catalog.BeginRelatedCursor(author, serverTitle, exactKey) or nil
         return {
@@ -904,39 +992,18 @@ function Controller.New(options)
     end
 
     local function SavedMirrorOwnedBy(candidate, ownerKey)
-        if type(candidate) ~= "table" or not candidate.importedSavedBuild
-            or not ownerKey then return false end
-        local verified = Identity.VerifiedOwnerKey(candidate)
-        if verified then return verified == ownerKey end
-        return candidate.ownerVerified == nil
-            and Identity.CanonicalOwnerKey(candidate.ownerKey) == ownerKey
-            and Identity.LocalOwnsRecord(candidate, ownerKey)
+        return Identity.CanAdoptSavedMirror(candidate, ownerKey)
     end
 
     local function SavedMirrorId(job, slot)
         local base = string.format("saved-%s-%d", job.meKey, slot)
         local token = job.ownerKey
-            and FingerprintHash(job.ownerKey):sub(1, 8) or nil
-        local firstFree
-        for attempt = 0, token and 16 or 0 do
-            local candidateId
-            if attempt == 0 then
-                candidateId = base
-            elseif attempt == 1 then
-                candidateId = base .. "-" .. token
-            else
-                candidateId = base .. "-" .. token .. "-" .. tostring(attempt)
-            end
-            local candidate = LoadBuild(candidateId)
-            if not candidate and not firstFree then
-                firstFree = candidateId
-            elseif candidate and candidate.importedSavedBuild
+            and StableIdHash(job.ownerKey):sub(1, 8) or nil
+        return FindStableCollisionTarget(base, token, function(candidate)
+            return candidate and candidate.importedSavedBuild
                 and tonumber(candidate.serverSlot) == slot
-                and SavedMirrorOwnedBy(candidate, job.ownerKey) then
-                return candidateId
-            end
-        end
-        return firstFree
+                and SavedMirrorOwnedBy(candidate, job.ownerKey)
+        end)
     end
 
     local function PrepareSavedSlot(job, slot)
@@ -1636,8 +1703,8 @@ function Controller.New(options)
         local claimKey = not recordOwner and recordClaim or nil
         local identity = ownerKey or claimKey or Identity.PlayerKey(player)
         if not identity then return nil end
-        local id = explicitId or ("dps-" .. FingerprintHash(key) .. "-"
-            .. FingerprintHash(identity):sub(1, 8))
+        local id = explicitId or ("dps-" .. StableIdHash(key) .. "-"
+            .. StableIdHash(identity):sub(1, 8))
         -- Deterministic IDs derived from ambiguous evidence may already belong
         -- to a page that was later promoted. Never replace any represented row
         -- merely because a claimless packet recomputed the same short-name ID.
@@ -1914,6 +1981,29 @@ function Controller.New(options)
         return related and related.id or nil
     end
 
+    -- Compact projection rows deliberately omit Echo arrays. Revalidate only
+    -- their persisted relationship hints against compact catalog summaries;
+    -- the list projection can then join the accepted target to its one bulk
+    -- DPS eligibility snapshot without per-row leaderboard reads.
+    function M.SavedProjectionRelation(build)
+        if type(build) ~= "table" or build.importedSavedBuild ~= true then
+            return nil
+        end
+        local ownerKey = Identity.VerifiedOwnerKey(build)
+        if not ownerKey then return nil end
+        local score = NewRelatedScorer(
+            build.serverTitle or build.title, build.fingerprint,
+            ownerKey, build.ordinaryComplete == true)
+        local related = BestPreferredRelated(build, score, LoadBuildSummary)
+        if not related or type(related.id) ~= "string"
+            or type(related.fingerprint) ~= "string" then return nil end
+        return {
+            buildId=related.id,
+            fingerprint=related.fingerprint,
+            fingerprintHash=related.fingerprintHash,
+        }
+    end
+
     function M.PublishedBuildId(idOrBuild)
         local build = type(idOrBuild) == "table" and idOrBuild
             or LoadBuild(idOrBuild)
@@ -2023,23 +2113,13 @@ function Controller.New(options)
         if linked then return linked.id, linked end
 
         local base = "published-" .. tostring(source.id)
-        local token = FingerprintHash(ownerKey):sub(1, 8)
-        for attempt = 0, 16 do
-            local candidateId
-            if attempt == 0 then
-                candidateId = base
-            elseif attempt == 1 then
-                candidateId = base .. "-" .. token
-            else
-                candidateId = base .. "-" .. token .. "-" .. tostring(attempt)
-            end
-            local candidate = LoadBuild(candidateId)
-            if not candidate then return candidateId, nil end
-            if HasVerifiedRelatedOwner(candidate, ownerKey)
-                and candidate.sourceSavedBuildId == source.id then
-                return candidateId, candidate
-            end
-        end
+        local token = StableIdHash(ownerKey):sub(1, 8)
+        local candidateId, candidate = FindStableCollisionTarget(
+            base, token, function(existing)
+            return HasVerifiedRelatedOwner(existing, ownerKey)
+                and existing.sourceSavedBuildId == source.id
+        end)
+        if candidateId then return candidateId, candidate end
         return nil, nil, "no safe publication identity is available"
     end
 

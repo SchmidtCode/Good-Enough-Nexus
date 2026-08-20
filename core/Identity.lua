@@ -294,6 +294,33 @@ function Identity.LocalOwnsRecord(record, currentOwnerKey)
     return true
 end
 
+-- Saved-loadout mirrors may coexist for same-named characters on different
+-- realms. Public ownership is therefore verified-only; an unverified mirror
+-- may remain visible but cannot become editable or publishable.
+function Identity.LocalOwnsSavedMirror(record, currentOwnerKey)
+    if type(record) ~= "table" or record.importedSavedBuild ~= true then
+        return false
+    end
+    local current = Identity.CanonicalOwnerKey(currentOwnerKey)
+    if not current or current:match("@unknown$") then return false end
+    return Identity.VerifiedOwnerKey(record) == current
+end
+
+-- A live Saved-slot reconciliation may adopt a pre-verification mirror only
+-- when it already carries the exact explicit canonical owner tuple. This is a
+-- storage-compatibility bridge, not mutation or projection authority.
+function Identity.CanAdoptSavedMirror(record, currentOwnerKey)
+    if Identity.LocalOwnsSavedMirror(record, currentOwnerKey) then return true end
+    if type(record) ~= "table" or record.importedSavedBuild ~= true then
+        return false
+    end
+    local current = Identity.CanonicalOwnerKey(currentOwnerKey)
+    if not current or current:match("@unknown$") then return false end
+    return record.ownerVerified == nil
+        and Identity.CanonicalOwnerKey(record.ownerKey) == current
+        and Identity.LocalOwnsRecord(record, current)
+end
+
 function Identity.SanitizeText(value, maxBytes)
     local ok, text = pcall(tostring, value)
     text = ok and tostring(text or "") or "unprintable"

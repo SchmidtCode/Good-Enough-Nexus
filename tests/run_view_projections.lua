@@ -124,6 +124,46 @@ P.Builds({scope="mine",search="needle",sortMode="title"})
 assert(P.Stats().builds.rebuilds == beforeStatus + 1,
     "DPS revision did not invalidate DPS-sorted build metadata")
 
+-- Imported Saved rows may join the bulk eligibility snapshot only through a
+-- relation that the Community controller already validated. Binding changes
+-- projection identity, and a warm cache must not re-run the resolver.
+local savedFilters = {scope="mine",search="build 0991",sortMode="dps",
+    currentClassOnly=false,qualifiedOnly=true}
+eligibility["500010x1"] = {dummy=0,lk=0,best=0,average=0,count=0}
+Revisions.Advance(Revisions.DPS_CHANGED, {scope="saved-relation"})
+assert(#P.Builds(savedFilters) == 0,
+    "raw Saved fingerprint remained qualified without a relation resolver")
+local relationCalls = 0
+local function ResolveSaved(build)
+    relationCalls = relationCalls + 1
+    if build.id == "projection-0010" then
+        return {buildId="projection-0020",fingerprint="500020x1"}
+    end
+    return nil
+end
+assert(P.BindSavedRelationResolver(ResolveSaved),
+    "Saved relation resolver did not invalidate the build projection")
+local resolvedSaved = P.Builds(savedFilters)
+assert(#resolvedSaved == 1 and resolvedSaved[1].id == "projection-0010"
+    and resolvedSaved[1]._nexusDps.dummy == 200
+    and resolvedSaved[1]._nexusDps.lk == 400
+    and relationCalls == 1,
+    "Saved relation did not join its canonical target eligibility")
+assert((P.WorkStats().joins or 0) >= 1,
+    "Saved relation join was omitted from bounded work telemetry")
+local warmRelationCalls = relationCalls
+assert(#P.Builds(savedFilters) == 1 and relationCalls == warmRelationCalls,
+    "warm Saved projection repeated relation resolution")
+assert(P.BindSavedRelationResolver(function() return nil end)
+    and not P.BuildsCurrent(savedFilters)
+    and #P.Builds(savedFilters) == 0,
+    "rebinding the Saved relation policy did not fail closed")
+P.BindSavedRelationResolver(nil)
+eligibility["500010x1"] = {
+    dummy=100,lk=200,best=200,average=150,count=2,
+}
+Revisions.Advance(Revisions.DPS_CHANGED, {scope="saved-relation-reset"})
+
 local combined = P.Leaderboard("combined", {classFilter="MAGE",search="player"})
 assert(#combined == 50 and combined[1].category == "combined"
     and combined[1].average == (combined[1].dummyDps+combined[1].lkDps)/2,

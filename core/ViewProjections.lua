@@ -20,6 +20,8 @@ local counters = {
         defensiveCopies=0},
 }
 local jobs = {builds=nil,leaderboard=nil}
+local savedRelationResolver
+local savedRelationGeneration = 0
 local workStats = {
     acquisitions=0,sourceRows=0,joins=0,comparisons=0,copies=0,
     sortMoves=0,publications=0,cancellations=0,binds=0,
@@ -145,6 +147,7 @@ local function BuildKey(filters)
         filters.scope, filters.classFilter, filters.search, filters.sortMode,
         filters.player, filters.ownerKey,
         filters.currentClassOnly,filters.qualifiedOnly,
+        savedRelationGeneration,
     })
 end
 
@@ -192,7 +195,36 @@ local function Cached(kind, keyBuilder, builder)
 end
 
 local function IsOwnBuild(build, filters)
+    if type(build) == "table" and build.importedSavedBuild == true then
+        return Identity.LocalOwnsSavedMirror(build, filters.ownerKey)
+    end
     return Identity.LocalOwnsRecord(build, filters.ownerKey)
+end
+
+local function SavedRelation(build, unit)
+    if type(build) ~= "table" or build.importedSavedBuild ~= true
+        or type(savedRelationResolver) ~= "function" then return nil end
+    workStats.joins = workStats.joins + 1
+    if type(unit) == "table" then
+        unit.joins = (unit.joins or 0) + 1
+    end
+    local ok, relation = pcall(savedRelationResolver, build)
+    if not ok or type(relation) ~= "table"
+        or type(relation.buildId) ~= "string"
+        or type(relation.fingerprint) ~= "string" then return nil end
+    return relation
+end
+
+local function BuildDpsSummary(build, eligibility, unit)
+    local fingerprint
+    if type(build) == "table" and build.importedSavedBuild == true then
+        local relation = SavedRelation(build, unit)
+        fingerprint = relation and relation.fingerprint or nil
+    else
+        fingerprint = type(build) == "table"
+            and type(build.fingerprint) == "string" and build.fingerprint or nil
+    end
+    return fingerprint and eligibility[fingerprint] or nil
 end
 
 local function IsLoaded(build)
@@ -315,27 +347,26 @@ local function BuildProjection(filters)
             local classMatch = not filters.currentClassOnly
                 or tostring(build.class or ""):upper() == filters.classFilter
             local scopeMatch = filters.scope == "mine"
-                and (build.importedSavedBuild or own)
+                and own
                 or filters.scope ~= "mine" and not build.importedSavedBuild
             local searchMatch = filters.search == ""
                 or tostring(build.title or ""):lower():find(filters.search, 1, true)
                 or tostring(build.author or ""):lower():find(filters.search, 1, true)
                 or tostring(build.description or ""):lower():find(filters.search, 1, true)
-            local fingerprint = type(build.fingerprint) == "string"
-                and build.fingerprint or nil
-            local dpsSummary = fingerprint and eligibility[fingerprint] or nil
+            local matched = classMatch and scopeMatch and searchMatch
+            local dpsSummary = matched
+                and BuildDpsSummary(build, eligibility) or nil
             local dummy = type(dpsSummary) == "table"
                 and (tonumber(dpsSummary.dummy) or 0) or 0
             local lk = type(dpsSummary) == "table"
                 and (tonumber(dpsSummary.lk) or 0) or 0
             local dpsCount = (dummy > 0 and 1 or 0) + (lk > 0 and 1 or 0)
             local eligible = dummy > 0 and lk > 0 and dpsCount == 2
-            if classMatch and scopeMatch and searchMatch then
+            if matched then
                 summary.filterMatchedCount = summary.filterMatchedCount + 1
                 if eligible then summary.qualifying = summary.qualifying + 1 end
             end
-            if classMatch and scopeMatch and searchMatch
-                and (eligible or not filters.qualifiedOnly) then
+            if matched and (eligible or not filters.qualifiedOnly) then
                 -- BuildCatalog readers return fresh public snapshots. This
                 -- projection owns the row and may attach derived DPS fields
                 -- without another full-table copy.
@@ -711,27 +742,26 @@ local function PumpBuildJob(job, unit)
                 local classMatch = not filters.currentClassOnly
                     or tostring(build.class or ""):upper() == filters.classFilter
                 local scopeMatch = filters.scope == "mine"
-                    and (build.importedSavedBuild or own)
+                    and own
                     or filters.scope ~= "mine" and not build.importedSavedBuild
                 local searchMatch = filters.search == ""
                     or tostring(build.title or ""):lower():find(filters.search,1,true)
                     or tostring(build.author or ""):lower():find(filters.search,1,true)
                     or tostring(build.description or ""):lower():find(filters.search,1,true)
-                local fingerprint = type(build.fingerprint) == "string"
-                    and build.fingerprint or nil
-                local dpsSummary = fingerprint and job.eligibility[fingerprint] or nil
+                local matched = classMatch and scopeMatch and searchMatch
+                local dpsSummary = matched
+                    and BuildDpsSummary(build, job.eligibility, unit) or nil
                 local dummy = type(dpsSummary) == "table"
                     and (tonumber(dpsSummary.dummy) or 0) or 0
                 local lk = type(dpsSummary) == "table"
                     and (tonumber(dpsSummary.lk) or 0) or 0
                 local dpsCount = (dummy > 0 and 1 or 0) + (lk > 0 and 1 or 0)
                 local eligible = dummy > 0 and lk > 0 and dpsCount == 2
-                if classMatch and scopeMatch and searchMatch then
+                if matched then
                     summary.filterMatchedCount = summary.filterMatchedCount + 1
                     if eligible then summary.qualifying = summary.qualifying + 1 end
                 end
-                if classMatch and scopeMatch and searchMatch
-                    and (eligible or not filters.qualifiedOnly) then
+                if matched and (eligible or not filters.qualifiedOnly) then
                     build._nexusDps = {
                         dummy=dummy,lk=lk,best=math.max(dummy,lk),
                         average=dpsCount > 0 and (dummy+lk)/dpsCount or 0,
@@ -1286,6 +1316,18 @@ local function Pump(kind)
     return published == true
 end
 
+function Projections.BindSavedRelationResolver(resolver)
+    if resolver ~= nil and type(resolver) ~= "function" then
+        return false, "Saved relation resolver must be a function or nil"
+    end
+    if savedRelationResolver == resolver then return false end
+    savedRelationResolver = resolver
+    savedRelationGeneration = savedRelationGeneration + 1
+    CancelJob("builds")
+    caches.builds = {}
+    return true
+end
+
 function Projections.Builds(filters)
     local normalized = NormalizeBuildFilters(filters)
     local cache, stats = caches.builds, counters.builds
@@ -1380,7 +1422,7 @@ function Projections.ExplainBuild(id, filters)
 
     local own = IsOwnBuild(build, normalized)
     local scopeMatch = normalized.scope == "mine"
-        and (build.importedSavedBuild or own)
+        and own
         or normalized.scope ~= "mine" and not build.importedSavedBuild
     if not scopeMatch then
         return normalized.scope == "mine"
@@ -1401,10 +1443,18 @@ function Projections.ExplainBuild(id, filters)
     if normalized.qualifiedOnly then
         local dpsOwner = Nexus and Nexus.DpsCapture
         local ok, dps = false, nil
-        if dpsOwner
+        local relation = build.importedSavedBuild and SavedRelation(build) or nil
+        local lookupId = relation and relation.buildId or build.id
+        local lookupFingerprint = relation and relation.fingerprint
+            or build.fingerprint
+        local lookupHash = relation and relation.fingerprintHash
+            or build.fingerprintHash
+        if build.importedSavedBuild and not relation then
+            return "qualification unavailable"
+        elseif dpsOwner
             and type(dpsOwner.GetCachedCommunityQualification) == "function" then
             ok, dps = pcall(dpsOwner.GetCachedCommunityQualification,
-                build.id, build.fingerprint, build.fingerprintHash)
+                lookupId, lookupFingerprint, lookupHash)
         elseif dpsOwner and type(dpsOwner.GetCommunityEligibility) == "function" then
             -- Compatibility for injected/older projection providers. The
             -- shipped DPS owner always supplies the narrow current-cache API,
@@ -1412,7 +1462,7 @@ function Projections.ExplainBuild(id, filters)
             local eligibility
             ok, eligibility = pcall(CommunityEligibility)
             dps = ok and type(eligibility) == "table"
-                and (eligibility[build.fingerprint] or {}) or nil
+                and (eligibility[lookupFingerprint] or {}) or nil
         end
         if not ok or type(dps) ~= "table" then
             return "qualification unavailable"
