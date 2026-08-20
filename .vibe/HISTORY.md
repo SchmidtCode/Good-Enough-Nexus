@@ -13,6 +13,7 @@ This file is non-authoritative. Archive completed checkpoints, resolved issues, 
 ## Resolved issues
 
 - ISSUE-183 / Stage 46.1 independent review: late current-state backfill, unproven completed-v1 references, and shared keyed-alias transforms were resolved by preserving historical rows whenever the durable schema cannot prove provenance; expected-red, adversarial preservation, interruption/idempotence, Fast, and Full evidence are recorded in checkpoint 46.1.
+- ISSUE-46-1-D: Interrupted restart now restores `lockedMigrationSource` before legacy reconciliation can inspect partial live rows; the regression proves zero partial-row evidence touches and a revision advance for represented restoration.
 - ISSUE-45: One shared pre-use download-URI validator now rejects unsafe tool and PSScriptAnalyzer URL metadata; expected-red, focused-green, Fast, Security, PSScriptAnalyzer, and Gitleaks evidence is recorded in checkpoint 45.1.
 - Git rename/copy discovery and workflow classification now use one NUL-safe record model and preserve both owners.
 - Policy/legal/security Markdown no longer inherits ordinary-documentation routing.

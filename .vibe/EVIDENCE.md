@@ -9,7 +9,10 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Independent review: standards found conflicting inline/reference evidence was not fail-closed; spec found late backfill provenance, unproven completed-v1 pre-state association, and keyed-store alias corruption. Repair policy is preservation because current durable fields cannot prove historical association.
 - Focused/mapped green: both WP1 runners plus all mapped DPS, Sync, integration, package, workflow, and security tests passed after removing automatic row transformation/recovery.
 - Fast: the first two attempts disclosed missing child-process Node/module environment; with the existing bundled Node and module path inherited, Fast passed `19/19`.
-- Full exactly once on frozen code/test bytes: `18` blocking checks passed, Lua `209/209`, Lua 5.1 parse `282/282`, and the explicitly authorization-gated SavedVariables backup test was the sole skip (`261.642s`).
+- First repair candidate Full: `18` blocking checks passed, Lua `209/209`, Lua 5.1 parse `282/282`, and the explicitly authorization-gated SavedVariables backup test was the sole skip (`261.642s`); final review later superseded these bytes with the restart-order repair below.
+- Final repair review FAIL: `MigrateLocalLockedBaseline` called `MigrateLegacyLeaderboard` before restoring a surviving `lockedMigrationSource`; after restart, partial build/character rows could intern orphan evidence or bump revisions before the immutable source replaced them. Stage-level PLAN wording was also reconciled to the actual fail-closed policy.
+- Restart-order red/green: the lifecycle fixture failed with `partial live rows produced evidence before immutable source restoration`; after moving source restoration ahead of legacy reconciliation, both WP1 focused runners pass, the tagged partial row has zero evidence touches, and represented restoration advances the DPS revision.
+- Final replacement candidate: all focused/mapped tests pass; Fast passed `19/19`; required Full on the final code/test bytes passed `18` blocking checks, Lua `209/209`, Lua 5.1 parse `282/282`, with only the explicit manual SavedVariables backup skip (`267.602s`).
 
 ## Bootstrap
 

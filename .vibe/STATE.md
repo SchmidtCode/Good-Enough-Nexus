@@ -10,29 +10,29 @@
 - Checkpoint: 46.1
 - Status: IN_REVIEW
 - Branch: `bugfix/test19-wp1-issue39`
-- Candidate head: branch `HEAD` after one local repair commit on `babffcbf3b30eba6990475841f4a73c3046bb96d`; code/test bytes were frozen before the single Full run
+- Candidate head: branch `HEAD` after a second local follow-up commit on `9827faa5b7096d3c4dfca76e35ed345b9f09e746`; final restart-order code/test bytes passed replacement validation
 - Worktree: `.wp1-issue39-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `3965b107574d4a394e0672cb130eab7e4694e7b5`
 
 ## Objective (current checkpoint)
 
-Prevent locked-baseline migration from applying one current character's locks to unrelated historical DPS rows, and recover only rows with exact record-specific pre-migration proof.
+Prevent locked-baseline migration from applying unproven evidence to historical DPS rows, including across interrupted-restart ordering.
 
 ## Deliverables (current checkpoint)
 
-- Focused `tests/run_locked_migration_authority.lua` coverage for prevention, exact recovery, login order, restart, future-schema, and no-churn behavior.
+- Focused `tests/run_locked_migration_authority.lua` coverage for preservation, login order, restart, future-schema, and no-churn behavior.
 - `tests/run_migration_owned_lifecycle.lua` retained for authoritative wait, immutable interruption source, retry, and idempotence without current-character guessing.
-- One fail-closed `core/DpsCapture.lua` migration owner that uses only exact row-specific locked evidence and directly related immutable pre-state evidence.
+- One fail-closed `core/DpsCapture.lua` migration owner that restores an immutable interrupted source before any side-effecting migration work and otherwise preserves historical rows.
 - Focused mapped DPS tests plus Lua 5.1 parse, Fast, required Full, diff/scope review, and one local commit.
 
 ## Acceptance (current checkpoint)
 
 - [x] Expected red proves a remote row loses a locally locked ordinary Echo under the old lifecycle.
-- [x] Pre-v1 and interrupted migration preserve every historical row when the durable schema cannot prove when or how inline/referenced locked evidence was attached.
+- [x] Pre-v1 and interrupted migration preserve every historical row, restoring a surviving immutable source before any partial live row can create evidence or revision side effects.
 - [x] Completed-v1 rows remain unchanged because direct references and strict-subset relationships prove content consistency, not historical association.
 - [x] Login order, late current-state backfill, restart/retry/idempotence, future-schema/read-only, no-lock, and Sync fingerprint stability regressions pass.
-- [x] Mapped DPS tests, related board/evidence/migration tests, Lua 5.1 parse, Fast, required Full, and `git diff --check` pass on exact repaired code/test bytes.
-- [x] Reviewed WP1 paths are staged explicitly into one clean local repair commit; no GitHub, package, install, Test18, live addon, or SavedVariables mutation occurs.
+- [x] Mapped DPS tests, related board/evidence/migration tests, Lua 5.1 parse, Fast, required Full, and `git diff --check` pass on exact final repaired code/test bytes.
+- [x] Reviewed WP1 paths are staged explicitly into local repair commit(s); no GitHub, package, install, Test18, live addon, or SavedVariables mutation occurs.
 
 ## Evidence
 
@@ -52,9 +52,13 @@ Prevent locked-baseline migration from applying one current character's locks to
 - Stage 45.1 reviewed repair CI: exact head `3432fd6` passed Quality `31978682635` and Release `31978682532`; all seven source-job logs select/assert the full SHA and both artifact inventories are empty.
 - Stage 45.1 terminal reconciliation: PR #13 body and issue #12 comment `5310228999` carry the repair/CI receipt; supported `vibe stop` reports `stopped: true`, Stage 45.1 `DONE`, dispatcher `stop`, and no prompt.
 - Stage 46.1 repair: public-lifecycle, conflicting-evidence, completed-v1, interrupted-source, and shared-keyed-alias regressions pass; mapped tests pass; Fast passed `19/19`; the single Full passed `18` blocking checks with `209/209` Lua and `282/282` Lua 5.1 parse plus one explicit manual SavedVariables skip.
+- Stage 46.1 final restart-order candidate: focused/mapped tests pass, Fast passed `19/19`, and replacement Full passed `18` blocking checks with `209/209` Lua and `282/282` Lua 5.1 parse plus the explicit manual SavedVariables skip.
 
 ## Work log
 
+- Stage 46.1 final implementation restored surviving source stores before legacy reconciliation, removed the obsolete new-source snapshot cycle, proved zero partial-row evidence touches plus represented revision advance, and froze replacement code/test bytes for review.
+- Stage 46.1 issue triage resolved the restart-order blocker: a tagged partial row failed red when evidence touched it, then passed after source restoration moved ahead of legacy reconciliation; represented restoration still advances the DPS revision.
+- Stage 46.1 final review FAIL: interrupted restart still ran `MigrateLegacyLeaderboard` over partial live stores before restoring `lockedMigrationSource`, allowing orphan evidence and revision side effects. The checkpoint returned to implementation.
 - Stage 46.1 implementation removed the unprovable subtraction/recovery paths, retained authoritative readiness plus exact interrupted-source restoration/versioning, expanded adversarial preservation coverage, and froze the repaired code/test bytes for review.
 - Stage 46.1 independent review FAIL: a public lifecycle probe proves late current-state backfill becomes destructive historical authority; separate standards/spec reviews also found conflicting inline/reference authority, unproven completed-v1 pre-state association, and shared keyed-store alias corruption. The checkpoint returned to implementation.
 - Stage 46.1 checkpoint hygiene CLEAN: bounded review found one direct-reference resolver, one exact subtraction helper, one transform path per store shape, and no safe duplication removal, speculative abstraction, correctness issue, security issue, or actionable deferred debt; product/test bytes remain frozen.
@@ -111,6 +115,7 @@ Prevent locked-baseline migration from applying one current character's locks to
 
 - Inline and referenced locked evidence prove content integrity but not historical provenance because current-state backfill can create both; absent a durable provenance bridge, automatic subtraction is forbidden.
 - An interrupted migration restores `lockedMigrationSource` exactly before completing the fail-closed version stamp; completed-v1 rows are not automatically reversed from direct references or subset relationships.
+- Source restoration precedes `MigrateLegacyLeaderboard` so partial live rows cannot leak evidence or revision side effects before replacement.
 - Preserve ambiguous evidence in place, preserve future-schema/read-only storage, avoid a new durable audit schema, and do not broaden Stage 46 beyond WP1/#39.
 - Reuse one shared strict download-URI validator for ordinary tool assets and PSScriptAnalyzer; do not add a second validation path.
 - Keep Stage 45 to checkpoint 45.1; because CI evidence must be committed into terminal Vibe truth, use the authorized two-cycle flow and require replacement Quality and Release on the receipt-only final head.
@@ -122,8 +127,8 @@ Prevent locked-baseline migration from applying one current character's locks to
 
 ## Last completed loop
 
-- Stage 46.1 implementation resolved all three independent-review defects and handed frozen local repair bytes to adversarial review.
+- Stage 46.1 final implementation resolved the restart-order defect and handed replacement local bytes to adversarial review.
 
 ## Recommended next action
 
-- Adversarially review the local repair commit against the fixed parent and WP1 provenance rules; do not publish or advance to WP2.
+- Adversarially review the final local restart-order follow-up against `9827faa` and WP1; do not publish or advance to WP2.

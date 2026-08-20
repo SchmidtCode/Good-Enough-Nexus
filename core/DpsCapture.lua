@@ -718,33 +718,31 @@ local function MigrateLocalLockedBaseline()
     if not (locked and locked.synced == true) then
         return
     end
-    MigrateLegacyLeaderboard()
-    local beforeState = {
-        personalBest=DeepCopy(PersonalBestStore()),
-        buildBest=DeepCopy(BuildBestStore()),
-        characterBest=DeepCopy(CharacterBestStore()),
-    }
-    local function RevisionIfChanged()
-        local changed = not DeepEqual(beforeState.personalBest, PersonalBestStore())
-            or not DeepEqual(beforeState.buildBest, BuildBestStore())
-            or not DeepEqual(beforeState.characterBest, CharacterBestStore())
-        if changed then BumpDps("locked baseline migrated") end
-        return changed
-    end
-
-    -- Preserve an immutable source before any subtraction. An interrupted
-    -- pass restores this snapshot and recomputes instead of subtracting twice.
-    if type(db.lockedMigrationSource) ~= "table" then
-        db.lockedMigrationSource = {
+    local source = db.lockedMigrationSource
+    local beforeState
+    if type(source) == "table" then
+        beforeState = {
             personalBest=DeepCopy(PersonalBestStore()),
             buildBest=DeepCopy(BuildBestStore()),
             characterBest=DeepCopy(CharacterBestStore()),
         }
-    else
-        db.personalBest = DeepCopy(db.lockedMigrationSource.personalBest or {})
-        db.buildBest = DeepCopy(db.lockedMigrationSource.buildBest or {})
-        db.characterBest = DeepCopy(db.lockedMigrationSource.characterBest
+        db.personalBest = DeepCopy(source.personalBest or {})
+        db.buildBest = DeepCopy(source.buildBest or {})
+        db.characterBest = DeepCopy(source.characterBest
             or { dummy={}, lk={} })
+    end
+
+    -- Reconcile legacy stores only after an interrupted pass has restored its
+    -- immutable source. Partial live rows must never create pooled evidence,
+    -- copied aliases, or revision churn before they are discarded.
+    MigrateLegacyLeaderboard()
+    local function RevisionIfChanged()
+        if not beforeState then return false end
+        local changed = not DeepEqual(beforeState.personalBest, PersonalBestStore())
+            or not DeepEqual(beforeState.buildBest, BuildBestStore())
+            or not DeepEqual(beforeState.characterBest, CharacterBestStore())
+        if changed then BumpDps("locked migration source restored") end
+        return changed
     end
 
     -- Current durable rows do not record whether locked evidence was captured

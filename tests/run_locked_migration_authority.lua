@@ -155,7 +155,7 @@ assert(provenDb.personalBest[Key(provenSource)]
 assert(proven.dps==31415926 and proven.duration==67
     and proven.category=="dummy" and proven.ownerKey=="proven@otherrealm"
     and proven.futureField.sentinel=="keep",
-    "authorized correction changed unrelated DPS or future metadata")
+    "fail-closed preservation changed unrelated DPS or future metadata")
 
 -- An interruption restores the immutable pre-pass source exactly, never the
 -- partial output and never a fresh inference from attached locked metadata.

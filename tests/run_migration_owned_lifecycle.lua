@@ -57,12 +57,34 @@ assert(Codec.JSONEncode(NexusDB.dpsCapture)==once,
 -- immutable source must win, so retrying cannot subtract the baseline twice.
 local original=FreshDpsDb()
 local interrupted=FreshDpsDb()
+local partialEvidenceTouches=0
+local revisionBumps=0
+Nexus.LoadoutEvidence={
+    Init=function() end,
+    ReferenceDpsRow=function(row)
+        if row and row.partialOnly then
+            partialEvidenceTouches=partialEvidenceTouches+1
+        end
+        return false
+    end,
+}
+Nexus.Revisions={
+    DPS_CHANGED="dps",
+    Advance=function() revisionBumps=revisionBumps+1 end,
+}
 interrupted.personalBest={ ["200100x1,200200x1"]={dummy={
     dps=sourceRow.dps,duration=65,ts=50000,player="Boganic",level=80,
     class="MAGE",fingerprint="200100x1,200200x1",
     echoes={{spellId=200100,count=1},{spellId=200200,count=1}},
     lockedEchoes={{spellId=200100,count=1}},
 }}}
+local partialRow={
+    dps=sourceRow.dps,duration=65,ts=50000,player="Partial",level=80,
+    class="MAGE",fingerprint="299999x1",ownerKey="partial@ebonhold",
+    ownerVerified=true,echoes={{spellId=299999,count=1}},partialOnly=true,
+}
+interrupted.buildBest={ [partialRow.fingerprint]={dummy=partialRow} }
+interrupted.characterBest={dummy={ [partialRow.ownerKey]=partialRow },lk={}}
 interrupted.lockedMigrationSource={
     personalBest=original.personalBest,
     buildBest=original.buildBest,
@@ -77,6 +99,10 @@ assert(retried and retried.dummy.echoes[1].spellId==200100
     and retried.dummy.echoes[1].count==2
     and NexusDB.dpsCapture.lockedMigrationSource==nil,
     "interrupted migration did not restore its immutable source exactly")
+assert(partialEvidenceTouches==0,
+    "partial live rows produced evidence before immutable source restoration")
+assert(revisionBumps>0,
+    "represented interrupted-source restoration did not advance DPS revision")
 local retryOnce=Codec.JSONEncode(NexusDB.dpsCapture)
 dofile("core/DpsCapture.lua")
 Nexus.DpsCapture.Init(adapter,{})

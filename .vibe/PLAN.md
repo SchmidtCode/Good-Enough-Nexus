@@ -117,9 +117,9 @@ depends_on: [43.1]
 
 ## Stage 46 — Test19 WP1 locked-migration authority
 
-- Goal: prevent issue #39 corruption and permit only deterministic record-specific recovery while preserving ambiguous historical evidence.
-- Decision: use the row's own exact locked evidence for pre-v1 correction; never use the current login baseline as historical authority.
-- Decision: restore an interrupted immutable source first; for completed v1, require a direct self-verifying pre-state, exact row-locked evidence, and a current inline identity that is a strict inconsistent subset before recovering only that row.
+- Goal: prevent issue #39 corruption by preserving historical rows whenever the durable schema cannot prove provenance.
+- Decision: inline and referenced row evidence can be attached by current-state backfill and therefore cannot authorize pre-v1 correction.
+- Decision: restore an interrupted immutable source before any legacy migration or other side effect; preserve completed-v1 rows without a durable historical-association bridge.
 - Decision: orphan evidence, similarity, current identity, and present ownership never authorize reconstruction; future-owned storage remains read-only.
 
 ### 46.1 — Fail closed when historical provenance is unavailable
@@ -128,17 +128,17 @@ depends_on: [43.1]
 - Objective:
   - Make locked-baseline migration preserve every historical DPS row because the current durable schema cannot distinguish capture-time history from later current-state backfill.
 - Deliverables:
-  - New `tests/run_locked_migration_authority.lua` matrix covering remote/local/build rows, proven and ambiguous authority, completed-v1 recovery, orphan evidence, login order, future fields, and no Sync churn.
+  - New `tests/run_locked_migration_authority.lua` matrix covering remote/local/build rows, ambiguous authority, completed-v1 preservation, orphan evidence, login order, future fields, and no Sync churn.
   - Rewritten lifecycle expectations in `tests/run_migration_owned_lifecycle.lua` preserving authoritative wait, immutable source restore, retry, and idempotence.
   - Minimal `core/DpsCapture.lua` fail-closed migration logic with no transport, identity, qualification, Wishlist, Orb, or UI redesign.
   - Concise `.vibe/EVIDENCE.md` receipts and one explicitly staged local commit.
 - Acceptance:
   - [x] The new runner fails on exact starting head because a local lock removes an ordinary Echo from a verified remote row, then passes after repair.
   - [x] Remote, global build, other-account-character, exact-owner-but-unknown-history, completed-v1 ambiguous, orphan-evidence, and no-lock rows remain byte-for-byte stable.
-  - [x] Inline/reference equality is not treated as historical provenance; interrupted source restoration and completed-v1 preservation are deterministic, bounded, and idempotent.
+  - [x] Inline/reference equality is not treated as historical provenance; an interrupted source is restored before any side effect; completed-v1 preservation is deterministic and idempotent.
   - [x] DPS/category/duration/owner/future fields, fingerprints, hashes, and Sync-visible row identities remain unchanged.
-  - [x] Lua 5.1 parse, mapped DPS/Sync tests, related board/evidence/migration tests, Fast, required Full, and `git diff --check` pass on exact repaired code/test bytes.
-  - [x] Final status contains one additional local WP1 repair commit and no remote, package, install, Test18, live addon, or SavedVariables change.
+  - [x] Lua 5.1 parse, mapped DPS/Sync tests, related board/evidence/migration tests, Fast, required Full, and `git diff --check` pass on exact final repaired code/test bytes.
+  - [x] Final status contains local WP1 follow-up repair commit(s) and no remote, package, install, Test18, live addon, or SavedVariables change.
 - Demo commands:
   - `luajit tests/run_locked_migration_authority.lua && luajit tests/run_migration_owned_lifecycle.lua`
   - `pwsh -NoProfile -File tools/Get-ChangedTestPlan.ps1 -BaseRef 3965b107574d4a394e0672cb130eab7e4694e7b5`
