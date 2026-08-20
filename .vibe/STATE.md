@@ -10,7 +10,7 @@
 - Checkpoint: 47.1
 - Status: IN_REVIEW
 - Branch: `refactor/test19-wp2-wp5`
-- Candidate head: `5ceb11e69c3d9f24102b6c2b03608583af39e0c1` (`47.1: enforce canonical transport owner authority`)
+- Candidate head: replacement checkpoint 47.1 candidate; exact commit recorded after the pending local repair commit
 - Worktree: `.test19-wp2-wp5-worktree`
 - Base: published WP1 head `03870e75254848c941dcd3534a9c79a90a644fe3`
 
@@ -57,6 +57,8 @@ Make durable owner claims require exact realm-qualified transport identity while
 
 ## Work log
 
+- Checkpoint 47.1 Full triage repaired 21 stale authority fixtures without weakening their negative controls, restored source-proven immutable bundled loadout responses, and fixed the DPS exact-owner rekey cache invalidation. The formerly failing matrix passes `21/21`, focused authority/compatibility/reconciler/bundled tests pass, and replacement Fast passes `64/64`; product/test bytes are frozen for repeat review.
+- Checkpoint 47.1 Spec and Standards reviews accepted the frozen `6034a56` range with no findings, but its single Full attempt failed at `189/210` Lua runners. All other 17 blocking checks passed and the one manual SavedVariables check skipped explicitly. The 21 failures are being triaged as older unmapped fixtures that still encode pre-#28 short-name ownership; no replacement candidate is frozen yet.
 - Checkpoint 47.1 implementation established exact transport-to-owner authority, isolated non-authoritative owner claims, hardened build/DPS/tombstone/claim paths, updated realm-aware fixtures, passed focused/mapped/Fast validation, and froze the candidate for independent review without running Full.
 - New human direction authorized one autonomous local WP2-WP5 Test19 effort. A clean isolated worktree was created at the exact published WP1 head, and Stages 47-49 now preserve the authoritative package order through eleven bounded checkpoints.
 - Stage 46.1 final checkpoint hygiene CLEAN: bounded review of `core/DpsCapture.lua` and the two repaired migration runners found no redundant policy owner, unsafe compatibility branch, speculative abstraction, correctness/security issue, or actionable deferred debt; product/test bytes remain frozen at `981a257`.
@@ -140,8 +142,8 @@ Make durable owner claims require exact realm-qualified transport identity while
 
 ## Last completed loop
 
-- Checkpoint 47.1 implementation completed and moved to independent Spec/Standards review on frozen product/test bytes.
+- Checkpoint 47.1 Full triage completed, the formerly failing matrix and replacement Fast passed, and the repaired bytes moved to repeat independent review.
 
 ## Recommended next action
 
-- Commit the frozen checkpoint 47.1 candidate, run independent Spec/Standards review, then execute the single required Full only after review accepts the bytes.
+- Commit the frozen checkpoint 47.1 repair, repeat independent Spec/Standards review, then give the accepted replacement candidate one Full attempt.

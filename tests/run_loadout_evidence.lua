@@ -64,6 +64,7 @@ assert(legacyLockedKey == lockedKey,
 local beforeBuildRevision = Revisions.Get(Revisions.BUILD_LIBRARY_CHANGED)
 assert(Catalog.Put({
     id="short-a", title="Short A", author="Peer", class="MAGE",
+    ownerKey="peer@ebonhold", ownerVerified=true,
     postedAt=10, lastModified=10, fingerprintHash="deadbeef", echoes=sameA,
 }))
 assert(Revisions.Get(Revisions.BUILD_LIBRARY_CHANGED) == beforeBuildRevision + 1,
@@ -207,6 +208,7 @@ assert(type(buildPayload.e) == "table" and #buildPayload.e == 2
 H.sentChatMessages = {}
 assert(Sync.BroadcastBuild({
     id="short-a", title="Reference-owned", author="Localhero", class="MAGE",
+    ownerKey="localhero@ebonhold", ownerVerified=true,
     postedAt=12, lastModified=12, evidenceKey=rawB.evidenceKey,
 }), "reference-only ID-collision build could not enter the wire path")
 Pump(10)
@@ -228,7 +230,7 @@ assert(DPS.ReceiveRecord({
     v=7, f=remoteFingerprint, h=DPS.GetEchoHash(remoteEchoes), e=remoteEchoes,
     c="dummy", d=25000000, u=65, t=49000, p="Peer", k="MAGE",
     o="peer@ebonhold", r="ebonhold", l=80, b="missing-page",
-}, "Peer"))
+}, "Peer-Ebonhold"))
 assert(Revisions.Get(Revisions.DPS_CHANGED) == beforeDpsRevision + 1,
     "one evidence-backed DPS winner did not retain one DPS revision")
 local storedRow = NexusDB.dpsCapture.characterBest.dummy["peer@ebonhold"]
@@ -262,7 +264,8 @@ local localRow = {
     loadoutHash=DPS.GetEchoHash(localEchoes), echoes=localEchoes,
     lockedEchoes=localLocked, category="dummy", dps=26000000,
     duration=66, ts=49001, player="Localhero", class="MAGE",
-    ownerKey="localhero@ebonhold", realm="ebonhold", level=80,
+    ownerKey="localhero@ebonhold", realm="ebonhold", ownerVerified=true,
+    level=80,
     buildId="missing-local-page",
 }
 local buildRevision = Revisions.Get(Revisions.BUILD_LIBRARY_CHANGED)

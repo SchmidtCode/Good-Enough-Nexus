@@ -7,6 +7,7 @@ local Codec, Sync = Nexus.Codec, Nexus.Sync
 
 NexusDB = {}
 UnitName = function() return "Alice" end
+GetNormalizedRealmName = function() return "Ebonhold" end
 fakeClock = 100
 GetTime = function() return fakeClock end
 Sync.Init(Codec, nil)
@@ -24,14 +25,15 @@ end
 local function DeliverAll(msgs)
     fakeClock = (fakeClock or 100) + 10   -- clear the request cooldown
     Sync.RequestSync()
-    for _, msg in ipairs(msgs) do Sync.HandleIncoming(msg.text, "Alice") end
+    for _, msg in ipairs(msgs) do Sync.HandleIncoming(msg.text, "Alice-Ebonhold") end
 end
 
 -- 1. Sending the exact same build twice must NOT create a duplicate or
 -- double-count as newly received.
 NexusDB = {}
 local build = { id = "b1", title = "Build One", description = "d", author = "Alice",
-    class = "MAGE", echoes = { { spellId = 200100, quality = 3, stacks = 1 } }, postedAt = 1000 }
+    ownerKey = "alice@ebonhold", ownerVerified = true, isMine = true, class = "MAGE",
+    echoes = { { spellId = 200100, quality = 3, stacks = 1 } }, postedAt = 1000 }
 DeliverAll(BroadcastAndCollect(build))
 local receivedAfterFirst = Sync.Stats().received
 DeliverAll(BroadcastAndCollect(build))  -- identical rebroadcast
@@ -46,7 +48,8 @@ print("identical rebroadcast is correctly deduplicated, no double-entry -- OK")
 -- 2. A NEWER version of the same build (higher postedAt) must update the
 -- stored copy.
 local buildV2 = { id = "b1", title = "Build One (updated)", description = "d2", author = "Alice",
-    class = "MAGE", echoes = { { spellId = 200100, quality = 3, stacks = 2 } }, postedAt = 2000 }
+    ownerKey = "alice@ebonhold", ownerVerified = true, isMine = true, class = "MAGE",
+    echoes = { { spellId = 200100, quality = 3, stacks = 2 } }, postedAt = 2000 }
 DeliverAll(BroadcastAndCollect(buildV2))
 assert(NexusDB.communityBuilds["b1"].title == "Build One (updated)",
     "newer version should have updated the stored title")
@@ -60,7 +63,8 @@ print("a newer version correctly updates the existing entry, still no duplicate 
 -- 3. An OLDER/stale rebroadcast must NOT overwrite the newer stored copy
 -- (protects against a stale peer's old data clobbering something newer).
 local staleReplay = { id = "b1", title = "Build One (STALE)", description = "old", author = "Alice",
-    class = "MAGE", echoes = { { spellId = 200100, quality = 3, stacks = 1 } }, postedAt = 1000 }
+    ownerKey = "alice@ebonhold", ownerVerified = true, isMine = true, class = "MAGE",
+    echoes = { { spellId = 200100, quality = 3, stacks = 1 } }, postedAt = 1000 }
 DeliverAll(BroadcastAndCollect(staleReplay))
 assert(NexusDB.communityBuilds["b1"].title == "Build One (updated)",
     "a stale/older replay must NOT overwrite the newer stored version")

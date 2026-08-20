@@ -684,7 +684,7 @@ function Reconciler.New(options)
             progressed = true
         end
         if not entry.preparedBuild then
-            local build = catalogGet(entry.buildId)
+            local build, source = catalogGet(entry.buildId)
             if not build or type(build.echoes) ~= "table"
                 or #build.echoes == 0 then
                 return true, false, "loadout unavailable"
@@ -692,7 +692,8 @@ function Reconciler.New(options)
             local responseContext = {requester=entry.requester,
                 requestId=entry.requestId,
                 contextCapable=supportsRequestContext(entry.requestId)}
-            local prepared, why = prepareBuild(build, true, responseContext)
+            local prepared, why = prepareBuild(build, true, responseContext,
+                source)
             if not prepared then return true, false, why end
             entry.preparedBuild = prepared
             entry.preparedRevision = currentBuildHash()

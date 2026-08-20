@@ -2876,11 +2876,14 @@ local function ReceiveRecord(record, transportSender, relayed)
             if safeOk and safeId then row.buildId = safeId end
         end
     end
-    if existingKey ~= characterKey and existing then bucket[existingKey] = nil end
+    local previousCharacterKey = existing and existingKey ~= characterKey
+        and existingKey or nil
+    if previousCharacterKey then bucket[previousCharacterKey] = nil end
     bucket[characterKey] = row
     BumpDps("public record received", {
         scope="record", category=category, player=player,
         ownerKey=row.ownerKey, realm=row.realm, characterKey=characterKey,
+        previousCharacterKey=previousCharacterKey,
     })
     if Nexus.DataRetention and Nexus.DataRetention.Request then
         Nexus.DataRetention.Request("public DPS record received")

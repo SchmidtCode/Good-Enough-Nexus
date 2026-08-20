@@ -945,8 +945,9 @@ Reconciler = ReconcilerFactory.New({
         return Identity.TransportOwns(ownerKey, sender)
     end,
     catalogGet=CatalogGet,
-    prepareBuild=function(build, responseMode, responseContext)
-        return Responder.PrepareBuild(build, responseMode, responseContext)
+    prepareBuild=function(build, responseMode, responseContext, source)
+        return Responder.PrepareBuild(build, responseMode, responseContext,
+            source)
     end,
     admitBuild=function(prepared, responseMode, responseContext)
         return Responder.AdmitBuild(prepared, responseMode, responseContext)
@@ -1106,12 +1107,13 @@ function Sync.NoteTransportNotice(text)
 end
 
 
-RelayEligible = function(build)
+RelayEligible = function(build, source)
     local ownerKey = type(build) == "table"
         and Identity.CanonicalOwnerKey(build.ownerKey) or nil
     return ownerKey ~= nil
         and OwnerKeyMatchesAuthor(ownerKey, build.author)
-        and (build.ownerVerified == true or IsExactLocalOwner(build))
+        and (source == "bundled" or build.ownerVerified == true
+            or IsExactLocalOwner(build))
         and not (build.legacyRecovered == true
             and build.ownerVerified ~= true)
 end
@@ -1679,9 +1681,9 @@ function Responder.ResolveBuild(build)
     return build
 end
 
-function Responder.PrepareBuild(build, responseMode, responseContext)
+function Responder.PrepareBuild(build, responseMode, responseContext, source)
     build = Responder.ResolveBuild(build)
-    if not RelayEligible(build) then return nil, "relay unauthorized" end
+    if not RelayEligible(build, source) then return nil, "relay unauthorized" end
     if not build or type(build.echoes) ~= "table" or #build.echoes == 0 then
         return nil, "no echoes"
     end
