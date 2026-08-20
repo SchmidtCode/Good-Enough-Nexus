@@ -537,6 +537,61 @@ local forgedRejected, forgedWhy = Sync.BroadcastDpsRecord(
 assert(forgedRejected == false and forgedWhy == "relay_authorization",
     "EXPECTED RED: caller-supplied DPS origin hint overrode unverified authority")
 
+-- Prepared response bytes are only a private serialization cache. A caller
+-- cannot manufacture the cache object, nor can an earlier verified response
+-- survive an explicit authority revocation on the supplied durable record.
+local preparedContext = {
+    requester=REQUESTER,requestId="c1-forged-prepared",bucket=dpsBucket,
+}
+local forgedPayload = {
+    v=7,f=fingerprint,h=loadoutHash,e=echoes,c="dummy",
+    d=verboseRecord.dps,u=verboseRecord.duration,t=verboseRecord.ts,
+    p=verboseRecord.player,l=verboseRecord.level,k=verboseRecord.class,
+    o=verboseRecord.ownerKey,r=verboseRecord.realm,
+    x={n=preparedContext.requester,i=preparedContext.requestId,
+        b=preparedContext.bucket},
+}
+local callerPrepared = {
+    messages={"WLD2|ForgeryRelay|forged:1:1|1/1|forged"},
+    payload=forgedPayload,context=preparedContext,originVerified=true,
+}
+local preparedRejected, preparedWhy = Sync.BroadcastDpsRecord(
+    nil, callerPrepared, true, nil,
+    {chunks=64,bytes=16384,seconds=75,transfers=8})
+assert(preparedRejected == false and preparedWhy == "relay_authorization",
+    "EXPECTED RED: caller-built prepared DPS cache bypassed durable authority")
+
+local revocable = DeepCopy(verboseRecord)
+revocable.ownerVerified = true
+revocable._originVerified = true
+local messageDeferred, messageDeferredWhy, messagePrepared =
+    Sync.BroadcastDpsRecord(revocable, nil, true, preparedContext,
+        {chunks=0,bytes=0,seconds=0,transfers=0})
+assert(messageDeferred == false
+    and messageDeferredWhy == "response wire budget"
+    and type(messagePrepared) == "table",
+    "verified relay did not expose its private prepared cache for integrity testing")
+messagePrepared.messages[1] = "WLD2|ForgeryRelay|swapped:1:1|1/1|swapped"
+local swappedAdmitted, swappedWhy = Sync.BroadcastDpsRecord(
+    revocable, messagePrepared, true, preparedContext,
+    {chunks=64,bytes=16384,seconds=75,transfers=8})
+assert(swappedAdmitted == false and swappedWhy == "relay_authorization",
+    "EXPECTED RED: prepared DPS cache admitted substituted wire bytes")
+
+local firstPrepared, firstPreparedWhy, retainedPrepared =
+    Sync.BroadcastDpsRecord(revocable, nil, true, preparedContext,
+        {chunks=0,bytes=0,seconds=0,transfers=0})
+assert(firstPrepared == false and firstPreparedWhy == "response wire budget"
+    and type(retainedPrepared) == "table",
+    "verified relay did not reach the prepared-response deferral boundary")
+revocable.ownerVerified = false
+revocable._originVerified = false
+local revokedAdmitted, revokedWhy = Sync.BroadcastDpsRecord(
+    revocable, retainedPrepared, true, preparedContext,
+    {chunks=64,bytes=16384,seconds=75,transfers=8})
+assert(revokedAdmitted == false and revokedWhy == "relay_authorization",
+    "EXPECTED RED: prepared DPS cache restored revoked owner authority")
+
 -- The ranked seed can move to another bucket when its player identity changes.
 -- Reorder the final cohorts by the exact final bucket delay, and explicitly
 -- retain the direct owner in both populations.

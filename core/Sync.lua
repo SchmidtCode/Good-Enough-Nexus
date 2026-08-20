@@ -2108,11 +2108,112 @@ local function VerifiedDpsBuildId(ownerKey, fingerprint, buildId)
     return buildId
 end
 
+-- Prepared DPS payloads are private, in-memory serialization caches. Keep an
+-- integrity proof outside the caller-visible table so a fabricated or mutated
+-- cache can never supply authority or arbitrary wire bytes on a later retry.
+local preparedDpsProofs = setmetatable({}, {__mode="k"})
+
+local function PreparedDpsProof(prepared)
+    if type(prepared) ~= "table" or type(prepared.messages) ~= "table"
+        or type(prepared.payload) ~= "table" then return nil end
+    local messages = {}
+    for index = 1, #prepared.messages do
+        if type(prepared.messages[index]) ~= "string" then return nil end
+        messages[index] = prepared.messages[index]
+    end
+    local okPayload, payload = pcall(Codec.JSONEncode, prepared.payload)
+    local okContext, context = pcall(Codec.JSONEncode,
+        prepared.context or false)
+    if not okPayload or not okContext then return nil end
+    return table.concat({
+        prepared.originVerified == true and "1" or "0",
+        payload, context, tostring(#messages), table.concat(messages, "\0"),
+    }, "\1")
+end
+
+local function CurrentPreparedDpsAuthority(record, payload, responseMode,
+        responseContext)
+    local D = Nexus and Nexus.DpsCapture
+    if type(record) ~= "table" or type(payload) ~= "table"
+        or not (D and type(D.VerifiedOwnerKey) == "function"
+            and type(D.GetCharacterBest) == "function"
+            and type(D.GetEchoKey) == "function") then
+        return false, "relay_authorization"
+    end
+    local verifiedOwner = D.VerifiedOwnerKey(record)
+    if not verifiedOwner then return false, "relay_authorization" end
+    local current = D.GetCharacterBest(
+        record.category, record.player, verifiedOwner)
+    if type(current) ~= "table"
+        or D.VerifiedOwnerKey(current) ~= verifiedOwner then
+        return false, "stale prepared DPS"
+    end
+    local fingerprint = D.GetEchoKey(current.echoes)
+    local loadoutHash = current.loadoutHash
+        or (type(D.GetEchoHash) == "function"
+            and D.GetEchoHash(current.echoes) or nil)
+    local currentOwner = CurrentOwnerKey()
+    local directOwner = currentOwner ~= nil and verifiedOwner == currentOwner
+    if not directOwner then
+        if not responseMode or record._originVerified ~= true then
+            return false, "relay_authorization"
+        end
+        local relay = {
+            n=type(responseContext) == "table"
+                and responseContext.requester or nil,
+            i=type(responseContext) == "table"
+                and responseContext.requestId or nil,
+            b=type(responseContext) == "table"
+                and responseContext.bucket or nil,
+            c=current.category,
+        }
+        local wireRelay = payload.x
+        if not ValidDpsRelayContext(relay, current.player) then
+            return false, "outside_request"
+        end
+        if type(wireRelay) ~= "table" or wireRelay.n ~= relay.n
+            or wireRelay.i ~= relay.i or tonumber(wireRelay.b) ~= relay.b then
+            return false, "stale prepared DPS"
+        end
+    elseif payload.x ~= nil then
+        return false, "stale prepared DPS"
+    end
+    if Identity.CanonicalOwnerKey(payload.o) ~= verifiedOwner
+        or tostring(payload.f or "") ~= tostring(fingerprint or "")
+        or tostring(payload.h or "") ~= tostring(loadoutHash or "")
+        or tostring(payload.c or "") ~= tostring(current.category or "")
+        or tostring(payload.p or "") ~= tostring(current.player or "")
+        or tonumber(payload.d) ~= math.floor(tonumber(current.dps) or -1)
+        or tonumber(payload.u) ~= tonumber(current.duration)
+        or tonumber(payload.t) ~= tonumber(current.ts)
+        or tonumber(payload.l) ~= tonumber(current.level)
+        or tostring(payload.k or ""):upper()
+            ~= tostring(current.class or ""):upper()
+        or tostring(payload.r or ""):lower()
+            ~= tostring(current.realm or ""):lower() then
+        return false, "stale prepared DPS"
+    end
+    return true
+end
+
 function Sync.BroadcastDpsRecord(record, prepared, responseMode,
         responseContext, responseBudget)
     if type(prepared) ~= "table" then prepared = nil end
     if responseMode and Responder.Backpressured() then
         return false, "sync queue full", prepared
+    end
+    local D = Nexus and Nexus.DpsCapture
+    if type(record) == "table" and D
+        and type(D.MaterializeRecord) == "function" then
+        local ok, resolved = pcall(D.MaterializeRecord, record)
+        if ok and type(resolved) == "table" then record = resolved end
+    end
+    if prepared ~= nil then
+        local expectedProof = preparedDpsProofs[prepared]
+        if expectedProof == nil
+            or PreparedDpsProof(prepared) ~= expectedProof then
+            return false, "relay_authorization"
+        end
     end
     if prepared ~= nil and type(prepared.payload) == "table"
         and prepared.payload.b ~= nil
@@ -2131,6 +2232,9 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
                 prepared.originVerified) then
             return false, "schema"
         end
+        local authorityOk, authorityWhy = CurrentPreparedDpsAuthority(
+            record, prepared.payload, responseMode, responseContext)
+        if not authorityOk then return false, authorityWhy end
         local wireCost = PreparedWireCost(prepared, responseMode, false)
         local budgetWhy = ResponseBudgetReason(wireCost, responseBudget)
         if budgetWhy then
@@ -2153,6 +2257,7 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
             enqueuedAt=Now(),expiresAt=Now() + PENDING_MAX_AGE,
         })
         if not queued then return false, queueWhy, prepared end
+        preparedDpsProofs[prepared] = nil
         LogEvent("TX","DPS2 [%s] %.0f by %s (%d chunks)",
             tostring(prepared.payload.c), prepared.payload.d,
             prepared.payload.p, #prepared.messages)
@@ -2165,12 +2270,6 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
         if responseMode then Reconciler.NoteStat("dpsAdmissions", 1) end
         return true, queueWhy, nil, wireCost.chunks, wireCost.bytes,
             wireCost.transfers
-    end
-    local D = Nexus.DpsCapture
-    if type(record) == "table" and D
-        and type(D.MaterializeRecord) == "function" then
-        local ok, resolved = pcall(D.MaterializeRecord, record)
-        if ok and type(resolved) == "table" then record = resolved end
     end
     if type(record) ~= "table" or type(record.fingerprint) ~= "string"
         or type(record.echoes) ~= "table" then return false, "schema" end
@@ -2292,6 +2391,7 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
     prepared = {messages=messages, payload=payload,context=envelopeContext,
         originVerified=directOwner
             or (verifiedOwner ~= nil and record._originVerified == true)}
+    preparedDpsProofs[prepared] = PreparedDpsProof(prepared)
     local wireCost = PreparedWireCost(prepared, responseMode, false)
     local budgetWhy = ResponseBudgetReason(wireCost, responseBudget)
     if budgetWhy then
@@ -2311,6 +2411,7 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
         enqueuedAt=Now(),expiresAt=Now() + PENDING_MAX_AGE,
     })
     if not queued then return false, queueWhy, prepared end
+    preparedDpsProofs[prepared] = nil
     LogEvent("TX","DPS2 [%s] %.0f by %s (%d chunks)",
         tostring(payload.c), payload.d, payload.p, total)
     if relayContext then
@@ -3207,6 +3308,7 @@ function Sync.Init(codec, adapter)
     Session.Reset()
     Compatibility.Reset()
     Reconciler.Reset()
+    preparedDpsProofs = setmetatable({}, {__mode="k"})
     hotBuilds    = {}  -- clear on init
     local evidence = Nexus and Nexus.LoadoutEvidence
     if evidence and type(evidence.RegisterReferenceProvider) == "function" then
