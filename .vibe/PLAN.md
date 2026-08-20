@@ -201,11 +201,11 @@ depends_on: [47.1]
 - Evidence:
   - Consumer expected-red/green matrix, compact gates, and independent review receipt.
 
-### 47.3 — Revalidate Saved Build related-record ownership (#42)
+### (DONE) 47.3 — Revalidate Saved Build related-record ownership (#42)
 
 depends_on: [47.1]
 
-- Status: `IN_REVIEW`
+- Status: `DONE`
 - Objective:
   - Require verified canonical owner equality before any fingerprint, title, subset, or stale persisted-ID relationship may enrich a Saved Build.
 - Deliverables:
@@ -217,7 +217,7 @@ depends_on: [47.1]
   - [x] Cross-realm and unverified candidates cannot contribute class, DPS, ownership, or related IDs.
   - [x] Persisted relationships are cleared or ignored when authority no longer validates.
   - [x] Valid exact-owner relationships and current-session local capture remain functional.
-  - [ ] Focused association/identity tests, mapped tests, Fast, required review/Full, and diff checks pass.
+  - [x] Focused association/identity tests, mapped tests, Fast, required review/Full, and diff checks pass.
 - Demo commands:
   - `luajit tests/run_snapshot_wishlist_association.lua && luajit tests/run_record_identity_integrity.lua`
   - `luajit tests/run_saved_build_related_owner.lua`

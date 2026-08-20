@@ -8,7 +8,7 @@
 
 - Stage: 47
 - Checkpoint: 47.3
-- Status: IN_REVIEW
+- Status: DONE
 - Branch: `refactor/test19-wp2-wp5`
 - Starting head: `1b4bdd513d24267a25e24b8e5c57dbb5df1c2446`; checkpoint 47.2 product/test head `8c05b81977595919f860d4586b241972f9ce53dc`
 - Worktree: `.test19-wp2-wp5-worktree`
@@ -30,7 +30,7 @@ Require verified canonical owner equality before any fingerprint, title, subset,
 - [x] Cross-realm and unverified candidates cannot contribute class, DPS, ownership, or related IDs.
 - [x] Persisted relationships are cleared or ignored when authority no longer validates.
 - [x] Valid exact-owner relationships and current-session local capture remain functional.
-- [ ] Focused association/identity tests, mapped tests, Fast, required review/Full, and diff checks pass.
+- [x] Focused association/identity tests, mapped tests, Fast, required review/Full, and diff checks pass.
 
 ## Evidence
 
@@ -55,6 +55,10 @@ Require verified canonical owner equality before any fingerprint, title, subset,
 
 ## Work log
 
+- Terminal WP2 stop is active: installed Vibe status reports Stage 47 / checkpoint 47.3 `DONE`, `stopped: true`, dispatcher `stop`, no prompt, and no active loop. Only final `.vibe/` receipts changed after the reviewed product/test/workflow head and Full gate.
+- WP2 final candidate `1fe8e7f2c0461b92ab1543cbd0b29f31d888950a` passed cumulative Spec, Standards, and adversarial/security review across `03870e75254848c941dcd3534a9c79a90a644fe3..1fe8e7f`; no excluded WP3/later semantic package was implemented. The final cache review repairs reject fabricated, mutated, revoked, cross-mode, cross-context, stale-relation, stale-locked-evidence, and stale-record prepared DPS responses while preserving unchanged exact direct-owner and verified-relay retries.
+- Final exact-head validation passed the focused WP2 authority matrix, all `212/212` normal Lua runners, Lua 5.1 parse `285/285`, integration `70/70`, Fast `108/108`, and Full `18` blocking checks with zero failures/unavailable checks plus the one explicit nonblocking manual SavedVariables skip in `378.870s`. Release policy, workflow policy, artifact policy `366/366`, and range/staged/working diff checks pass; no product/test/workflow byte changed after Full.
+- Checkpoint 47.3 hygiene CLEAN: the cumulative WP2 surface has one canonical durable build owner, one provenance-aware DPS owner, one source-proven immutable bundled bridge, and one authority-first Saved relationship resolver. No redundant authority path, unsafe compatibility branch, debug/TODO residue, behavior-preserving quick win, or actionable WP2 debt remains; WP3 and later checkpoints remain not started.
 - Checkpoint 47.3 second frozen review FAIL at exact `3e7a870`: independent Spec and adversarial public-seam audits proved three related authority gaps. Non-boolean `importedSavedBuild` markers crossed ordinary ownership into Saved publication/UI paths; rejected Saved relationship class and persisted IDs still reached list/detail/renderer reads; and exact Saved mirrors could relay, answer WLLQ, advertise, or tombstone before the live-slot adoption boundary verified them. Full was not run. The checkpoint returned to implementation with the expected-red cases retained.
 - Checkpoint 47.3 second review repair centralizes typed Saved/ordinary/invalid classification in Identity, routes Community/Sync ownership through that dispatcher, keeps the explicit-owner legacy path adoption-only, and projects Saved class/record/publication metadata through one defensive Controller verdict before list/detail/renderer/DPS use. The expanded canonical/Saved public matrices, `21/21` mapped authority/reload/cache runners, the heavy Saved-import attribution workload, Lua 5.1 parse `285/285`, release workflow policy/inventory `212`, `git diff --check`, and repair Fast `81/81` pass. Full remains reserved for the exact committed candidate after cumulative WP2 review.
 - Checkpoint 47.3 replacement implementation closes all five frozen-review blockers plus two pre-freeze audit gaps. Imported Saved ownership is verified-only, while a narrow explicit-owner legacy bridge can only adopt and verify the row during exact live-slot reconciliation; list/detail DPS joins consume one bounded authority-and-content resolver and report that join in work telemetry from startup, before any Community render. Mirror/publication allocation preserves tombstone and opaque occupancy and reuses established source-bound targets before free IDs. The expanded public regression, mapped Community/catalog/projection/identity suites, release policy, Lua 5.1 parse `285/285`, strict Vibe validation, and final repair Fast `81/81` in `118.668s` pass with zero failed, unavailable, or skipped checks. Full remains reserved for the replacement frozen candidate after repeat independent review.
@@ -127,7 +131,7 @@ Require verified canonical owner equality before any fingerprint, title, subset,
 
 ## Workflow state
 
-- [ ] RUN_STOPPED
+- [x] RUN_STOPPED
 - [ ] RUN_CONTEXT_CAPTURE
 - [x] STAGE_DESIGNED
 - [x] MAINTENANCE_CYCLE_DONE
@@ -170,8 +174,8 @@ Require verified canonical owner equality before any fingerprint, title, subset,
 
 ## Last completed loop
 
-- Checkpoint 47.3 replacement implementation completed with focused/mapped/Fast validation and bytes ready to freeze for repeat independent review.
+- Checkpoint 47.3 final cumulative review and bounded hygiene completed at product/test/workflow head `1fe8e7f2c0461b92ab1543cbd0b29f31d888950a`; every required local gate passed.
 
 ## Recommended next action
 
-- Freeze the replacement checkpoint 47.3 implementation, repeat independent Spec/Standards/adversarial review, and run the single reserved Full gate only if every review axis passes.
+- Stop Vibe at the completed WP2 boundary. Do not dispatch checkpoint 47.4, WP3, or any later package in this session; publication remains a separately authorized local-branch action.
