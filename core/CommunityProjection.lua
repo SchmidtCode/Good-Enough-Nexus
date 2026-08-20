@@ -81,9 +81,12 @@ local function PublicOrdinaryComplete(build)
     return ok and type(verdict) == "table" and verdict.complete == true
 end
 
-local function RecordBuildId(build)
-    return build and (build.recordBuildId
-        or build.publishedBuildId or build.id) or nil
+local function DefaultRecordBuildId(build)
+    return build and build.id or nil
+end
+
+local function DefaultPublishedBuildId()
+    return nil
 end
 
 local function DpsText(value)
@@ -164,6 +167,10 @@ function Projection.New(options)
         "CommunityProjection requires a build currentness reader")
     local loadBuild = assert(options.loadBuild,
         "CommunityProjection requires an exact build reader")
+    local recordBuildId = type(options.recordBuildId) == "function"
+        and options.recordBuildId or DefaultRecordBuildId
+    local publishedBuildId = type(options.publishedBuildId) == "function"
+        and options.publishedBuildId or DefaultPublishedBuildId
     local revisionSnapshot = type(options.revisionSnapshot) == "function"
         and options.revisionSnapshot or function() return {} end
     local listCache, detailCache
@@ -304,18 +311,24 @@ function Projection.New(options)
         local hasLoadout = #echoes > 0
         local mine = IsOwnBuild(build, context)
         local admin = context.isAdmin == true
-        local recordId = RecordBuildId(build)
+        local okRecordId, recordId = pcall(recordBuildId, build)
+        if not okRecordId then recordId = nil end
+        local okPublishedId, validPublishedId = pcall(publishedBuildId, build)
+        if not okPublishedId then validPublishedId = nil end
 
-        stats.detail.leaderboardReads = stats.detail.leaderboardReads + 2
-        local dummy = SafeRows(options.leaderboard, recordId, "dummy")
-        local lk = SafeRows(options.leaderboard, recordId, "lk")
-        stats.detail.personalReads = stats.detail.personalReads + 2
-        local dummyPersonal = type(options.personalBest) == "function"
-            and options.personalBest(recordId, "dummy") or nil
-        local lkPersonal = type(options.personalBest) == "function"
-            and options.personalBest(recordId, "lk") or nil
+        local dummy, lk, dummyPersonal, lkPersonal = {}, {}, nil, nil
+        if recordId ~= nil then
+            stats.detail.leaderboardReads = stats.detail.leaderboardReads + 2
+            dummy = SafeRows(options.leaderboard, recordId, "dummy")
+            lk = SafeRows(options.leaderboard, recordId, "lk")
+            stats.detail.personalReads = stats.detail.personalReads + 2
+            dummyPersonal = type(options.personalBest) == "function"
+                and options.personalBest(recordId, "dummy") or nil
+            lkPersonal = type(options.personalBest) == "function"
+                and options.personalBest(recordId, "lk") or nil
+        end
         local lockDummy, lockLk = dummy, lk
-        if recordId ~= build.id then
+        if recordId ~= nil and recordId ~= build.id then
             stats.detail.leaderboardReads = stats.detail.leaderboardReads + 2
             lockDummy = SafeRows(options.leaderboard, build.id, "dummy")
             lockLk = SafeRows(options.leaderboard, build.id, "lk")
@@ -325,7 +338,7 @@ function Projection.New(options)
 
         local editState
         if build.importedSavedBuild then
-            editState = build.publishedBuildId
+            editState = validPublishedId
                 and "Uploaded. Upload Build again to publish title/description or loadout changes."
                 or "Local server loadout. Edit its title/description, then Upload Build when ready."
         elseif mine and loadoutLocked then
@@ -354,7 +367,7 @@ function Projection.New(options)
             deleteText=admin and not mine and "Remove" or "Stop Sharing",
             editState=editState,
             actionText=build.importedSavedBuild
-                and (build.publishedBuildId and "Update Upload" or "Upload Build")
+                and (validPublishedId and "Update Upload" or "Upload Build")
                 or (hasLoadout and "Copy into Editor" or "Request Loadout"),
             detailsAvailable=context.detailsAvailable == true,
             dummyRows=Copy(dummy),lkRows=Copy(lk),

@@ -163,6 +163,13 @@ function Renderer.New(options)
         return ControllerInstance().RecordBuildId(build)
     end
 
+    local function PublishedBuildId(build)
+        local controller = ControllerInstance()
+        if type(controller.PublishedBuildId) ~= "function" then return nil end
+        local ok, publishedId = pcall(controller.PublishedBuildId, build)
+        return ok and publishedId or nil
+    end
+
     local function IsBuildFullyLoaded(build)
         return build and type(build.echoes) == "table"
             and #build.echoes > 0
@@ -1404,7 +1411,9 @@ local function RefreshDetailPanel(buildId)
             detailPanel.editState:Hide()
         end
     elseif build.importedSavedBuild then
-        local state = build.publishedBuildId and "Uploaded. Upload Build again to publish title/description or loadout changes." or "Local server loadout. Edit its title/description, then Upload Build when ready."
+        local state = PublishedBuildId(build)
+            and "Uploaded. Upload Build again to publish title/description or loadout changes."
+            or "Local server loadout. Edit its title/description, then Upload Build when ready."
         detailPanel.editState:SetText(state)
         detailPanel.editState:Show()
     elseif mine and loadoutLocked then
@@ -1444,7 +1453,8 @@ local function RefreshDetailPanel(buildId)
     if detail then
         detailPanel.lockBtn:SetText(detail.actionText)
     elseif build.importedSavedBuild then
-        detailPanel.lockBtn:SetText(build.publishedBuildId and "Update Upload" or "Upload Build")
+        detailPanel.lockBtn:SetText(
+            PublishedBuildId(build) and "Update Upload" or "Upload Build")
     else
         detailPanel.lockBtn:SetText(not hasLoadout and "Request Loadout" or "Copy into Editor")
     end

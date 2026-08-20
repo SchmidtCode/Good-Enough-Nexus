@@ -111,6 +111,7 @@ assert(type(oldRows) == "table" and #oldRows == 20,
 P.Reset(); catalogWalks, eligibilityReads = 0, 0
 
 local loadCalls, boardReads, leaderboardReads, personalReads = 0, 0, 0, 0
+local recordIds, publishedIds = {}, {}
 local failLoad, failDetailDps = false, false
 local factory = assert(Nexus.CommunityInternals
     and Nexus.CommunityInternals.Projection)
@@ -121,6 +122,14 @@ local projection = factory.New({
         loadCalls = loadCalls + 1
         if failLoad then error("forced detail failure") end
         return Copy(exact[id])
+    end,
+    recordBuildId=function(build)
+        if not build then return nil end
+        if build.importedSavedBuild then return recordIds[build.id] end
+        return build.id
+    end,
+    publishedBuildId=function(build)
+        return build and publishedIds[build.id] or nil
     end,
     revisionSnapshot=function()
         return {build=R.Get(R.BUILD_LIBRARY_CHANGED),dps=R.Get(R.DPS_CHANGED)}
@@ -252,10 +261,14 @@ assert(incomplete == nil,
 
 local mirrorId, publishedId = "community-mirror", "community-published"
 exact[mirrorId] = {
-    id=mirrorId,publishedBuildId=publishedId,importedSavedBuild=true,
-    title="Mirror",author="ProjectionMage",isMine=true,
+    id=mirrorId,recordBuildId=publishedId,publishedBuildId=publishedId,
+    importedSavedBuild=true,title="Mirror",author="ProjectionMage",
+    ownerKey="projectionmage@ebonhold",ownerVerified=true,realm="ebonhold",
+    isMine=true,
     class="MAGE",echoes={{spellId=900001,stacks=1}},
 }
+recordIds[mirrorId] = publishedId
+publishedIds[mirrorId] = publishedId
 score[publishedId] = {dummy={{player="Published",dps=250000}}}
 R.Advance(R.BUILD_LIBRARY_CHANGED, {scope="mirror"})
 local mirror = assert(projection.Detail(mirrorId, context))
@@ -263,7 +276,25 @@ assert(mirror.mine and mirror.showEdit and not mirror.showDelete
     and not mirror.loadoutLocked
     and mirror.actionText == "Update Upload"
     and mirror.dummyRecord:find("250k",1,true),
-    "legacy owner, saved-mirror actions, or distinct record identity changed")
+    "verified owner, saved-mirror actions, or distinct record identity changed")
+
+local unverifiedMirrorId = "community-unverified-mirror"
+exact[unverifiedMirrorId] = {
+    id=unverifiedMirrorId,recordBuildId=publishedId,
+    publishedBuildId=publishedId,importedSavedBuild=true,
+    title="Unverified Mirror",author="ProjectionMage",
+    ownerKey="projectionmage@ebonhold",ownerVerified=false,realm="ebonhold",
+    isMine=true,class="MAGE",echoes={{spellId=900003,stacks=1}},
+}
+score[unverifiedMirrorId] = {
+    dummy={{player="Private Mirror",dps=990000}},
+}
+R.Advance(R.BUILD_LIBRARY_CHANGED, {scope="unverified-mirror"})
+local unverifiedMirror = assert(projection.Detail(unverifiedMirrorId, context))
+assert(not unverifiedMirror.mine and not unverifiedMirror.showEdit
+    and #unverifiedMirror.dummyRows == 0
+    and not unverifiedMirror.dummyRecord:find("990k", 1, true),
+    "projection restored authority or DPS after resolver rejected Saved relation")
 
 local adminId = "community-admin"
 exact[adminId] = {

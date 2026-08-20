@@ -7,30 +7,30 @@
 ## Current focus
 
 - Stage: 47
-- Checkpoint: 47.2
-- Status: DONE
+- Checkpoint: 47.3
+- Status: IN_REVIEW
 - Branch: `refactor/test19-wp2-wp5`
-- Starting head: `4eaf7131e09f6a57ae84514291e70916cb4fcea6`; checkpoint 47.1 product/test head `781165b484a2c7fdd5100fbef457e40138840de3`
+- Starting head: `1b4bdd513d24267a25e24b8e5c57dbb5df1c2446`; checkpoint 47.2 product/test head `8c05b81977595919f860d4586b241972f9ce53dc`
 - Worktree: `.test19-wp2-wp5-worktree`
 - Base: published WP1 head `03870e75254848c941dcd3534a9c79a90a644fe3`
 
 ## Objective (current checkpoint)
 
-Prevent DPS-derived Community builds from acquiring local ownership through short-name resemblance or unverified metadata.
+Require verified canonical owner equality before any fingerprint, title, subset, or stale persisted-ID relationship may enrich a Saved Build.
 
 ## Deliverables (current checkpoint)
 
-- Verified-record authority consumption in the DPS-to-Community synthesis path.
-- Focused local, remote, realm-less, cross-realm, and later-authoritative-promotion coverage.
-- Preservation of current-session local capture and non-owner public visibility.
+- One authority-first related-record resolver in the Saved Build/Community owner.
+- Revalidation of persisted related IDs before class, DPS, or relationship metadata is reused.
+- Focused exact-owner, cross-realm, stale-ID, collision, reload, and valid-local coverage.
 
 ## Acceptance (current checkpoint)
 
-- [x] Synthesized `ownerKey` and `isMine` originate only from verified canonical record authority.
-- [x] Realm-less and same-short-name remote records receive no owner actions.
-- [x] Later promotion occurs only through the checkpoint 47.1 authority bridge.
-- [x] Current-session local capture and ordinary public display remain functional.
-- [x] Focused Community/DPS tests, mapped tests, Fast, required review/Full, and diff checks pass.
+- [x] Exact verified owner equality precedes all content-similarity scoring.
+- [x] Cross-realm and unverified candidates cannot contribute class, DPS, ownership, or related IDs.
+- [x] Persisted relationships are cleared or ignored when authority no longer validates.
+- [x] Valid exact-owner relationships and current-session local capture remain functional.
+- [ ] Focused association/identity tests, mapped tests, Fast, required review/Full, and diff checks pass.
 
 ## Evidence
 
@@ -55,6 +55,8 @@ Prevent DPS-derived Community builds from acquiring local ownership through shor
 
 ## Work log
 
+- Checkpoint 47.3 implementation is frozen for review. One authority-first Saved relation scorer now gates exact/title/subset evidence before class, DPS, or durable IDs; every read path revalidates record/publication targets; collision-safe mirror/publication IDs preserve verified foreign and ambiguous evidence; valid persisted/upload relationships remain stable across cache revisions and reload. The public expected-red matrix, mapped projection/index/attribution/identity/renderer/Stage 36 runners, release inventory `212`, and Fast `79/79` pass. Full remains intentionally unrun pending frozen review.
+- Manual dispatcher advance moved completed checkpoint 47.2 to executable checkpoint 47.3/#42 at starting head `1b4bdd5`; no product or test byte changed during the transition.
 - Checkpoint 47.2 hygiene CLEAN: bounded inspection found one shared durable build authority owner, one provenance-aware DPS authority owner, one explicit immutable-bundled coherence bridge, no weakened negative control, no duplicate policy worth churn, no debug/TODO artifact, and no safe quick win or actionable debt. Product/test bytes remain frozen at `8c05b81`; range and working diff checks pass, and only final Vibe receipts changed after Full.
 - Checkpoint 47.2 final exact-head review PASS at `8c05b81`: Spec, Standards, and adversarial/hygiene axes found no blocker across Community ownership, projections/My Builds, DPS ingress/egress, Sync relay/delete/response, reload, or exact promotion. Ten selected public runners passed; negative alias/provenance/realm/verification/collision controls remain strict, legitimate remote/local/bundled compatibility remains intact, and no safe quick win or correctness cleanup belongs in this checkpoint. Checkpoint 47.2 is DONE pending dispatcher-required hygiene acknowledgement.
 - Checkpoint 47.2 replacement Full PASS at exact clean fixture-repair head `8c05b81`: 18 blocking checks passed, zero failed, zero unavailable, and the explicit manual SavedVariables backup runner was the sole nonblocking skip in `303.712s`. The complete Lua suite passed `211/211`, Lua 5.1 parse passed `284/284`, integration passed `70/70`, and hostile Sync plus policy/package/privacy/module/upvalue/diff checks passed. Product bytes remain frozen at reviewed commit `5beef30`; final exact-head Spec/Standards/adversarial review is pending.
@@ -163,8 +165,8 @@ Prevent DPS-derived Community builds from acquiring local ownership through shor
 
 ## Last completed loop
 
-- Checkpoint 47.2 review failed frozen `57218e5` because Sync build summary/full/delete egress duplicated raw ownership flags instead of consuming the shared Identity verdict; Full remained unrun.
+- Checkpoint 47.3 implementation completed with focused/mapped/Fast validation and frozen bytes ready for independent review.
 
 ## Recommended next action
 
-- Add one public Sync build-egress authority matrix, centralize non-bundled relay/delete authority on Identity, preserve the explicit bundled source bridge, and repeat focused/Fast/review validation before Full.
+- Review the frozen checkpoint 47.3 implementation against issue #42 and repository standards, then run the single reserved Full gate only if both axes pass.

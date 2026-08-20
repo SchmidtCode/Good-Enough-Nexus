@@ -205,7 +205,7 @@ depends_on: [47.1]
 
 depends_on: [47.1]
 
-- Status: `NOT_STARTED`
+- Status: `IN_REVIEW`
 - Objective:
   - Require verified canonical owner equality before any fingerprint, title, subset, or stale persisted-ID relationship may enrich a Saved Build.
 - Deliverables:
@@ -213,10 +213,10 @@ depends_on: [47.1]
   - Revalidation of persisted related IDs before class, DPS, or relationship metadata is reused.
   - Focused exact-owner, cross-realm, stale-ID, collision, reload, and valid-local coverage.
 - Acceptance:
-  - [ ] Exact verified owner equality precedes all content-similarity scoring.
-  - [ ] Cross-realm and unverified candidates cannot contribute class, DPS, ownership, or related IDs.
-  - [ ] Persisted relationships are cleared or ignored when authority no longer validates.
-  - [ ] Valid exact-owner relationships and current-session local capture remain functional.
+  - [x] Exact verified owner equality precedes all content-similarity scoring.
+  - [x] Cross-realm and unverified candidates cannot contribute class, DPS, ownership, or related IDs.
+  - [x] Persisted relationships are cleared or ignored when authority no longer validates.
+  - [x] Valid exact-owner relationships and current-session local capture remain functional.
   - [ ] Focused association/identity tests, mapped tests, Fast, required review/Full, and diff checks pass.
 - Demo commands:
   - `luajit tests/run_snapshot_wishlist_association.lua && luajit tests/run_record_identity_integrity.lua`

@@ -63,6 +63,12 @@ local function EnsureCommunityProjection()
             return projections.BuildsCurrent(filters)
         end,
         loadBuild=function(id) return ControllerInstance().Build(id) end,
+        recordBuildId=function(build)
+            return ControllerInstance().RecordBuildId(build)
+        end,
+        publishedBuildId=function(build)
+            return ControllerInstance().PublishedBuildId(build)
+        end,
         revisionSnapshot=function()
             return ControllerInstance().RevisionSnapshot()
         end,

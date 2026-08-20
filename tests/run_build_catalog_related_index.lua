@@ -25,17 +25,20 @@ for index = 1, 1000 do
 end
 NexusDB.communityBuilds["index-exact"] = {
     id="index-exact",title="Published Exact",author="IndexMage",
-    ownerKey="indexmage@ebonhold",class="MAGE",postedAt=2001,
+    ownerKey="indexmage@ebonhold",ownerVerified=true,realm="ebonhold",
+    class="MAGE",postedAt=2001,
     lastModified=2001,echoes=Echoes(810001, 6),
 }
 NexusDB.communityBuilds["index-title"] = {
     id="index-title",title="Saved Target",author="IndexMage",
-    ownerKey="indexmage@ebonhold",class="MAGE",postedAt=2002,
+    ownerKey="indexmage@ebonhold",ownerVerified=true,realm="ebonhold",
+    class="MAGE",postedAt=2002,
     lastModified=2002,echoes=Echoes(810001, 3),
 }
 NexusDB.communityBuilds["index-subset"] = {
     id="index-subset",title="Different Title",author="IndexMage",
-    ownerKey="indexmage@ebonhold",class="MAGE",postedAt=2003,
+    ownerKey="indexmage@ebonhold",ownerVerified=true,realm="ebonhold",
+    class="MAGE",postedAt=2003,
     lastModified=2003,echoes=Echoes(810001, 7),
 }
 NexusDB.communityBuilds["stale-fingerprint"] = {
@@ -230,7 +233,8 @@ assert(narrowStats.relatedIndexRebuilds == beforeStats.relatedIndexRebuilds
 for index = 1, 80 do
     assert(Catalog.Put({
         id="wide-"..index,title="Wide Target",author="IndexMage",
-        ownerKey="indexmage@ebonhold",class="MAGE",postedAt=4000+index,
+        ownerKey="indexmage@ebonhold",ownerVerified=true,realm="ebonhold",
+        class="MAGE",postedAt=4000+index,
         lastModified=4000+index,echoes=Echoes(840000+index, 1),
     }))
 end
