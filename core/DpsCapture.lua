@@ -668,138 +668,6 @@ end
 
 local migratedLockedBaseline = false
 local LOCKED_MIGRATION_VERSION = 1
-local function EvidenceSchemaIsCurrent()
-    local evidence = Nexus and Nexus.LoadoutEvidence
-    if not (evidence and type(evidence.Stats) == "function"
-        and type(evidence.SchemaVersion) == "function") then return false end
-    local okStats, stats = pcall(evidence.Stats)
-    local okVersion, current = pcall(evidence.SchemaVersion)
-    local stored = okStats and type(stats) == "table"
-        and tonumber(stats.schemaVersion) or nil
-    current = okVersion and tonumber(current) or nil
-    return stored ~= nil and current ~= nil and stored <= current
-end
-
--- Resolve only evidence directly referenced by this row. Never search the
--- pool: an orphan entry or similar fingerprint is not historical authority.
-local function ReferencedEchoes(row, locked)
-    if type(row) ~= "table" or not EvidenceSchemaIsCurrent() then return nil end
-    local referenceField = locked and "lockedEvidenceKey" or "evidenceKey"
-    local reference = row[referenceField]
-    if type(reference) ~= "string" or reference == "" then return nil end
-    local evidence = Nexus and Nexus.LoadoutEvidence
-    if not (evidence and type(evidence.ResolveDpsEchoes) == "function") then
-        return nil
-    end
-    local probe = {[referenceField]=reference}
-    local ok, rows = pcall(evidence.ResolveDpsEchoes, probe, locked == true)
-    return ok and NormalizeEchoes(rows) or nil
-end
-
--- A locked baseline is authoritative only when it belongs to the exact row.
--- An explicit empty inline array is exact evidence that the row had no locks.
-local function ExactLockedBaseline(row)
-    if type(row) ~= "table" then return nil, false end
-    if type(row.lockedEchoes) == "table" then
-        if next(row.lockedEchoes) == nil then return {}, true end
-        local normalized = NormalizeEchoes(row.lockedEchoes)
-        return normalized, normalized ~= nil
-    end
-    local referenced = ReferencedEchoes(row, true)
-    return referenced, referenced ~= nil
-end
-
-local function SubtractExactBaseline(source, baseline)
-    source = NormalizeEchoes(source)
-    if not source or type(baseline) ~= "table" then return nil, false end
-    local counts = {}
-    for _, echo in ipairs(source) do counts[echo.spellId] = echo.count end
-    for _, echo in ipairs(baseline) do
-        local available = tonumber(counts[echo.spellId]) or 0
-        local removing = tonumber(echo.count) or 0
-        if removing <= 0 or removing > available then return nil, false end
-        counts[echo.spellId] = available - removing
-    end
-    local corrected = {}
-    for spellId, count in pairs(counts) do
-        if count > 0 then corrected[#corrected + 1] = {
-            spellId=spellId,count=count,
-        } end
-    end
-    return NormalizeEchoes(corrected), true
-end
-
-local function AuthorizedCorrection(row)
-    if type(row) ~= "table" then return nil end
-    local source = StoredEchoes(row, false)
-    local sourceKey = EchoKey(source)
-    if not sourceKey or row.fingerprint ~= sourceKey then return nil end
-    local baseline, proven = ExactLockedBaseline(row)
-    if not proven or #baseline == 0 then return nil end
-    local corrected, valid = SubtractExactBaseline(source, baseline)
-    local newKey = valid and EchoKey(corrected) or nil
-    if not newKey or newKey == sourceKey then return nil end
-    return corrected, newKey, sourceKey
-end
-
-local function ApplyRowIdentity(row, echoes, fingerprint)
-    row.echoes = echoes
-    row.fingerprint = fingerprint
-    row.loadoutHash = EchoHashFromKey(fingerprint)
-    ReferenceEvidence(row)
-end
-
-local function TransformKeyedStore(store, resolver, seen)
-    seen = seen or {}
-    local moves = {}
-    for oldKey, categories in pairs(store) do
-        for category, row in pairs(type(categories) == "table" and categories or {}) do
-            if type(row) == "table" and not seen[row] then
-                local echoes, newKey, sourceKey = resolver(row)
-                if echoes and oldKey == sourceKey and newKey ~= oldKey then
-                    seen[row] = true
-                    moves[#moves + 1] = {
-                        oldKey=oldKey,newKey=newKey,category=category,
-                        row=row,echoes=echoes,
-                    }
-                end
-            end
-        end
-    end
-    local changed = false
-    for _, m in ipairs(moves) do
-        store[m.newKey] = store[m.newKey] or {}
-        local current = store[m.newKey][m.category]
-        if not current or (tonumber(m.row.dps) or 0) > (tonumber(current.dps) or 0) then
-            ApplyRowIdentity(m.row, m.echoes, m.newKey)
-            store[m.newKey][m.category] = m.row
-        end
-        if store[m.newKey][m.category] then
-            store[m.oldKey][m.category] = nil
-            if next(store[m.oldKey]) == nil then store[m.oldKey] = nil end
-            changed = true
-        end
-    end
-    return changed
-end
-
-local function TransformCharacterRows(store, resolver, seen)
-    local changed = false
-    seen = seen or {}
-    for _, category in ipairs({ "dummy", "lk" }) do
-        for _, row in pairs(store[category] or {}) do
-            if type(row) == "table" and not seen[row] then
-                seen[row] = true
-                local echoes, newKey = resolver(row)
-                if echoes and newKey then
-                    ApplyRowIdentity(row, echoes, newKey)
-                    changed = true
-                end
-            end
-        end
-    end
-    return changed
-end
 
 local function DeepCopy(value, seen)
     if type(value) ~= "table" then return value end
@@ -838,67 +706,11 @@ local function DeepEqual(left, right, seen)
     return true
 end
 
-local function StrictEchoSubset(source, candidate)
-    source, candidate = NormalizeEchoes(source), NormalizeEchoes(candidate)
-    if not source or not candidate then return false end
-    local available = {}
-    for _, echo in ipairs(source) do available[echo.spellId] = echo.count end
-    local removed = false
-    for _, echo in ipairs(candidate) do
-        local sourceCount = tonumber(available[echo.spellId]) or 0
-        if echo.count > sourceCount then return false end
-        if echo.count < sourceCount then removed = true end
-        available[echo.spellId] = nil
-    end
-    for _, count in pairs(available) do
-        if count > 0 then removed = true end
-    end
-    return removed
-end
-
--- Version 1 deleted its full source on success, so general reversal is not
--- invertible. Recover one row only when its own direct evidence reference still
--- proves the exact pre-state, its exact locked baseline proves the correct
--- result, and the current inline state is a strict subset inconsistent with
--- that result. Similar or orphan evidence is deliberately unreachable here.
-local function CompletedRecovery(row)
-    if type(row) ~= "table" or type(row.echoes) ~= "table" then return nil end
-    local preState = ReferencedEchoes(row, false)
-    local current = NormalizeEchoes(row.echoes)
-    local preKey, currentKey = EchoKey(preState), EchoKey(current)
-    if not preKey or not currentKey or preKey == currentKey
-        or row.fingerprint ~= currentKey
-        or not StrictEchoSubset(preState, current) then return nil end
-
-    local currentHash, preHash = EchoHashFromKey(currentKey), EchoHashFromKey(preKey)
-    if row.loadoutHash ~= nil and row.loadoutHash ~= currentHash
-        and row.loadoutHash ~= preHash then return nil end
-
-    local baseline, proven = ExactLockedBaseline(row)
-    if not proven then return nil end
-    local corrected, valid = SubtractExactBaseline(preState, baseline)
-    local correctedKey = valid and EchoKey(corrected) or nil
-    if not correctedKey or correctedKey == currentKey then return nil end
-    return corrected, correctedKey, currentKey
-end
-
-local function RecoverCompletedMigration(db)
-    local seen = {}
-    local changed = TransformKeyedStore(PersonalBestStore(), CompletedRecovery, seen)
-    changed = TransformKeyedStore(BuildBestStore(), CompletedRecovery, seen)
-        or changed
-    changed = TransformCharacterRows(CharacterBestStore(), CompletedRecovery, seen)
-        or changed
-    if changed then BumpDps("locked baseline exactly recovered") end
-    return changed
-end
-
 local function MigrateLocalLockedBaseline()
     if migratedLockedBaseline then return end
     local db = DB()
     if (tonumber(db.lockedMigrationVersion) or 0)
         >= LOCKED_MIGRATION_VERSION then
-        RecoverCompletedMigration(db)
         migratedLockedBaseline = true
         return
     end
@@ -935,13 +747,10 @@ local function MigrateLocalLockedBaseline()
             or { dummy={}, lk={} })
     end
 
-    local ok = pcall(function()
-        local seen = {}
-        TransformKeyedStore(PersonalBestStore(), AuthorizedCorrection, seen)
-        TransformKeyedStore(BuildBestStore(), AuthorizedCorrection, seen)
-        TransformCharacterRows(CharacterBestStore(), AuthorizedCorrection, seen)
-    end)
-    if not ok then RevisionIfChanged(); return end
+    -- Current durable rows do not record whether locked evidence was captured
+    -- with the pull or attached later from the current login. Inline and direct
+    -- references therefore prove content integrity, not historical provenance.
+    -- Preserve the restored source exactly and only complete the version stamp.
     db.lockedMigrationSource = nil
     db.lockedMigrationVersion = LOCKED_MIGRATION_VERSION
     migratedLockedBaseline = true

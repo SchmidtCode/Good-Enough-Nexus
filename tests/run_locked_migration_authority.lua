@@ -111,7 +111,31 @@ assert(prevention.lockedMigrationVersion==1,
 assert(unrelatedBroadcasts==0,
     "preserved fingerprints fabricated unrelated Sync churn")
 
--- Exact locked evidence attached to this row may authorize correction.
+-- Current locked metadata can arrive before the adapter declares its snapshot
+-- authoritative. Backfilling that current state onto a historical local row
+-- must not turn it into historical migration authority on a later retry.
+local lateAuthority = NewRow("Local", "local@ebonhold", Echoes(A,1,B,1))
+local lateDb = EmptyDps()
+lateDb.characterBest.dummy[lateAuthority.ownerKey]=lateAuthority
+DPS = LoadDps({loadoutEvidence={schemaVersion=1,entries={}},dpsCapture=lateDb})
+local lockedReady = false
+local lateAdapter = {
+    LockedOwned=function()
+        return {synced=lockedReady,bySpell={[A]=1}}
+    end,
+}
+DPS.Init(lateAdapter,{})
+DPS.GetDpsBoard("dummy")
+assert(type(lateAuthority.lockedEchoes)=="table",
+    "fixture did not exercise late current-state metadata backfill")
+lockedReady = true
+DPS.GetDpsBoard("dummy")
+assert(Signature(lateAuthority.echoes)==Signature(Echoes(A,1,B,1))
+    and lateAuthority.fingerprint==Key(Echoes(A,1,B,1)),
+    "late current-state backfill became historical migration authority")
+
+-- Inline locked evidence does not prove when it was attached. Even an exact
+-- content match must remain unchanged without a durable provenance bridge.
 local provenSource = Echoes(A,2,B,1)
 local provenFinal = Echoes(A,1,B,1)
 local proven = NewRow("Proven", "proven@otherrealm", provenSource, {
@@ -119,21 +143,22 @@ local proven = NewRow("Proven", "proven@otherrealm", provenSource, {
 })
 local provenDb = EmptyDps()
 provenDb.personalBest[proven.fingerprint]={dummy=proven}
+local provenBefore = Signature(proven)
 DPS = LoadDps({loadoutEvidence={schemaVersion=1,entries={}},dpsCapture=provenDb})
 DPS.Init(Adapter({[C]=9}),{})
 local provenKey = Key(provenFinal)
-assert(provenDb.personalBest[provenKey]
-    and provenDb.personalBest[provenKey].dummy == proven
-    and not provenDb.personalBest[Key(provenSource)]
-    and Signature(proven.echoes)==Signature(provenFinal)
-    and proven.fingerprint==provenKey,
-    "exact row-specific locked baseline did not authorize its correction")
+assert(provenDb.personalBest[Key(provenSource)]
+    and provenDb.personalBest[Key(provenSource)].dummy == proven
+    and not provenDb.personalBest[provenKey]
+    and Signature(proven)==provenBefore,
+    "unproven inline locked evidence authorized historical correction")
 assert(proven.dps==31415926 and proven.duration==67
     and proven.category=="dummy" and proven.ownerKey=="proven@otherrealm"
     and proven.futureField.sentinel=="keep",
     "authorized correction changed unrelated DPS or future metadata")
 
--- An interruption restores the immutable pre-pass source, never partial output.
+-- An interruption restores the immutable pre-pass source exactly, never the
+-- partial output and never a fresh inference from attached locked metadata.
 local interruptedSource = NewRow("Interrupted", "interrupted@otherrealm",
     provenSource, {lockedEchoes=Echoes(A,1)})
 local partial = NewRow("Interrupted", "interrupted@otherrealm",
@@ -148,11 +173,11 @@ interrupted.personalBest[Key(provenFinal)]={dummy=partial}
 DPS = LoadDps({loadoutEvidence={schemaVersion=1,entries={}},
     dpsCapture=interrupted})
 DPS.Init(Adapter({[B]=5}),{})
-local resumed = interrupted.personalBest[provenKey]
-    and interrupted.personalBest[provenKey].dummy
-assert(resumed and Signature(resumed.echoes)==Signature(provenFinal)
+local resumed = interrupted.personalBest[Key(provenSource)]
+    and interrupted.personalBest[Key(provenSource)].dummy
+assert(resumed and Signature(resumed.echoes)==Signature(provenSource)
     and interrupted.lockedMigrationSource==nil,
-    "interrupted source was not restored and transformed exactly once")
+    "interrupted source was not restored exactly")
 local resumedOnce = Signature(interrupted)
 DPS.Init(Adapter({[A]=99}),{})
 assert(Signature(interrupted)==resumedOnce,
@@ -165,14 +190,40 @@ local shared = NewRow("Shared", "shared@ebonhold", provenSource, {
 })
 local sharedDb = EmptyDps()
 sharedDb.personalBest[shared.fingerprint]={dummy=shared}
+sharedDb.buildBest[shared.fingerprint]={dummy=shared}
 sharedDb.characterBest.dummy[shared.ownerKey]=shared
 DPS = LoadDps({loadoutEvidence={schemaVersion=1,entries={}},dpsCapture=sharedDb})
+DPS.MigrateLegacyLeaderboard()
+local sharedBefore = Signature(shared)
 DPS.Init(Adapter({[C]=4}),{})
-assert(sharedDb.personalBest[provenKey]
-    and sharedDb.personalBest[provenKey].dummy==shared
-    and sharedDb.characterBest.dummy[shared.ownerKey]==shared
-    and Signature(shared.echoes)==Signature(provenFinal),
-    "one row shared by two stores was subtracted more than once")
+assert(sharedDb.personalBest[Key(provenSource)]
+    and sharedDb.personalBest[Key(provenSource)].dummy==shared,
+    "shared personal keyed alias changed")
+assert(sharedDb.buildBest[Key(provenSource)]
+    and sharedDb.buildBest[Key(provenSource)].dummy==shared,
+    "shared build keyed alias changed")
+assert(sharedDb.characterBest.dummy[shared.ownerKey]==shared,
+    "shared character alias changed")
+assert(Signature(shared)==sharedBefore,
+    "shared row identity changed")
+
+-- Conflicting inline and direct-reference locked evidence is content ambiguity,
+-- not authority. The row and its keyed store must remain byte-for-byte stable.
+local conflicting = NewRow("Conflicting", "conflicting@otherrealm",
+    provenSource, {lockedEchoes=Echoes(A,1)})
+local conflictDb = EmptyDps()
+conflictDb.personalBest[conflicting.fingerprint]={dummy=conflicting}
+local conflictRoot = {loadoutEvidence={schemaVersion=1,entries={}},
+    dpsCapture=conflictDb}
+DPS = LoadDps(conflictRoot)
+Nexus.LoadoutEvidence.Init(conflictRoot)
+DPS.MigrateLegacyLeaderboard()
+conflicting.lockedEvidenceKey = assert(Nexus.LoadoutEvidence.Intern(Echoes(B,1)))
+local conflictBefore = Signature(conflicting)
+DPS.Init(Adapter({[C]=4}),{})
+assert(Signature(conflicting)==conflictBefore
+    and conflictDb.personalBest[Key(provenSource)].dummy==conflicting,
+    "conflicting inline/reference evidence authorized correction")
 
 -- Completed v1 is ambiguous without a direct immutable pre-state relationship.
 local ambiguous = NewRow("Ambiguous", "ambiguous@otherrealm", Echoes(B,1))
@@ -185,8 +236,8 @@ DPS.Init(Adapter({[A]=1}),{})
 assert(Signature(ambiguousDb)==ambiguousBefore,
     "completed-v1 ambiguous inverse was reconstructed")
 
--- A direct self-verifying pre-state plus exact empty row baseline proves that
--- old v1 removed an unrelated A. Recover only this linked row.
+-- A direct pre-state reference plus an exact empty row baseline still does not
+-- prove when either field was associated with the row. Completed v1 is kept.
 local preState = Echoes(A,1,B,1)
 local recoverable = NewRow("Recoverable", "recoverable@otherrealm",
     Echoes(B,1), {lockedEchoes={}})
@@ -200,12 +251,11 @@ local preReference = assert(Nexus.LoadoutEvidence.Intern(preState))
 recoverable.evidenceKey = preReference
 local stablePeer = NewRow("Stable", "stable@otherrealm", Echoes(C,1))
 recoverDb.characterBest.dummy[stablePeer.ownerKey]=stablePeer
+local recoverableBefore = Signature(recoverable)
 local stableBefore = Signature(stablePeer)
 DPS.Init(Adapter({[C]=7}),{})
-assert(Signature(recoverable.echoes)==Signature(preState)
-    and recoverable.fingerprint==Key(preState)
-    and recoverable.loadoutHash==DPS.GetEchoHash(preState),
-    "completed-v1 exact direct pre-state did not recover its linked row")
+assert(Signature(recoverable)==recoverableBefore,
+    "completed-v1 direct reference was treated as historical provenance")
 assert(Signature(stablePeer)==stableBefore,
     "completed-v1 recovery changed an unrelated peer row")
 local recoveredOnce = Signature(recoverDb)
@@ -213,8 +263,7 @@ DPS.Init(Adapter({[A]=99}),{})
 assert(Signature(recoverDb)==recoveredOnce,
     "repeated init changed an exact completed-v1 recovery")
 
--- A completed row already equal to its exact row-specific correction is
--- unaffected even when an old direct pre-state reference survives.
+-- A completed row already equal to a plausible correction is likewise stable.
 local legitimatePre = Echoes(A,2,B,1)
 local legitimate = NewRow("Legitimate", "legitimate@otherrealm",
     Echoes(A,1,B,1), {lockedEchoes=Echoes(A,1)})
@@ -294,4 +343,4 @@ assert(Signature(futureRoot)==futureBefore,
     "future-schema/read-only state was mutated")
 Nexus.BuildCatalog = previousCatalog
 
-print("locked migration uses exact row authority -- OK")
+print("locked migration fails closed without historical provenance -- OK")

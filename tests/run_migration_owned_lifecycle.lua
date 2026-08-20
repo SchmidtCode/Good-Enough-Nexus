@@ -5,7 +5,6 @@ dofile("core/DpsCapture.lua")
 
 local Codec = Nexus.Codec
 local oldKey = "200100x2,200200x1"
-local newKey = "200100x1,200200x1"
 local sourceRow = {
     dps=25000000, duration=65, ts=50000, player="Boganic", level=80,
     class="MAGE", fingerprint=oldKey,
@@ -30,8 +29,8 @@ NexusDB={communityBuilds={},dpsCapture=FreshDpsDb()}
 local lockedReady = false
 local adapter = {
     LockedOwned=function()
-        -- Readiness still gates the pass, but this current-login set is not
-        -- historical authority for sourceRow. Its own lockedEchoes are.
+        -- Readiness still gates the pass, but neither this current-login set
+        -- nor sourceRow's unproven lockedEchoes is historical authority.
         return {synced=lockedReady,bySpell=lockedReady and {[299999]=1} or {}}
     end,
     Owned=function() return {synced=true,bySpell={},byFamily={}} end,
@@ -46,10 +45,9 @@ lockedReady=true
 DPS.Init(adapter,{})
 assert(NexusDB.dpsCapture.lockedMigrationVersion==1,
     "successful locked migration did not persist its version")
-assert(not NexusDB.dpsCapture.personalBest[oldKey]
-    and NexusDB.dpsCapture.personalBest[newKey]
-    and NexusDB.dpsCapture.personalBest[newKey].dummy.echoes[1].count==1,
-    "locked baseline was not subtracted exactly once")
+assert(NexusDB.dpsCapture.personalBest[oldKey]
+    and NexusDB.dpsCapture.personalBest[oldKey].dummy.echoes[1].count==2,
+    "unproven locked baseline changed historical data")
 local once=Codec.JSONEncode(NexusDB.dpsCapture)
 DPS.Init(adapter,{})
 assert(Codec.JSONEncode(NexusDB.dpsCapture)==once,
@@ -59,9 +57,9 @@ assert(Codec.JSONEncode(NexusDB.dpsCapture)==once,
 -- immutable source must win, so retrying cannot subtract the baseline twice.
 local original=FreshDpsDb()
 local interrupted=FreshDpsDb()
-interrupted.personalBest={ [newKey]={dummy={
+interrupted.personalBest={ ["200100x1,200200x1"]={dummy={
     dps=sourceRow.dps,duration=65,ts=50000,player="Boganic",level=80,
-    class="MAGE",fingerprint=newKey,
+    class="MAGE",fingerprint="200100x1,200200x1",
     echoes={{spellId=200100,count=1},{spellId=200200,count=1}},
     lockedEchoes={{spellId=200100,count=1}},
 }}}
@@ -74,11 +72,11 @@ NexusDB.dpsCapture=interrupted
 dofile("core/DpsCapture.lua")
 DPS=Nexus.DpsCapture
 DPS.Init(adapter,{})
-local retried=NexusDB.dpsCapture.personalBest[newKey]
+local retried=NexusDB.dpsCapture.personalBest[oldKey]
 assert(retried and retried.dummy.echoes[1].spellId==200100
-    and retried.dummy.echoes[1].count==1
+    and retried.dummy.echoes[1].count==2
     and NexusDB.dpsCapture.lockedMigrationSource==nil,
-    "interrupted migration did not restore and recompute from its source")
+    "interrupted migration did not restore its immutable source exactly")
 local retryOnce=Codec.JSONEncode(NexusDB.dpsCapture)
 dofile("core/DpsCapture.lua")
 Nexus.DpsCapture.Init(adapter,{})

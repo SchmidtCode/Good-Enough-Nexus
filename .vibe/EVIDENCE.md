@@ -2,6 +2,15 @@
 
 Record concise command/result receipts here. A skipped or unavailable command is not a pass.
 
+## Stage 46.1 independent review repair
+
+- Candidate: local `babffcbf3b30eba6990475841f4a73c3046bb96d` against exact parent `3965b107574d4a394e0672cb130eab7e4694e7b5`; GitHub remained read-only.
+- Expected red: `node tools/run-lua.js tests/run_locked_migration_authority.lua` failed at `tests/run_locked_migration_authority.lua:133` with `late current-state backfill became historical migration authority` after a public `GetDpsBoard` backfill/retry lifecycle.
+- Independent review: standards found conflicting inline/reference evidence was not fail-closed; spec found late backfill provenance, unproven completed-v1 pre-state association, and keyed-store alias corruption. Repair policy is preservation because current durable fields cannot prove historical association.
+- Focused/mapped green: both WP1 runners plus all mapped DPS, Sync, integration, package, workflow, and security tests passed after removing automatic row transformation/recovery.
+- Fast: the first two attempts disclosed missing child-process Node/module environment; with the existing bundled Node and module path inherited, Fast passed `19/19`.
+- Full exactly once on frozen code/test bytes: `18` blocking checks passed, Lua `209/209`, Lua 5.1 parse `282/282`, and the explicitly authorization-gated SavedVariables backup test was the sole skip (`261.642s`).
+
 ## Bootstrap
 
 - Generated project-aware Vibe state with package 0.1.0+codex.20260812081901, state schema 1.0, and prompt catalog 1.1.0.
