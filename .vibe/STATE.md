@@ -8,9 +8,9 @@
 
 - Stage: 47
 - Checkpoint: 47.1
-- Status: IN_REVIEW
+- Status: DONE
 - Branch: `refactor/test19-wp2-wp5`
-- Candidate product/test head: `781165b484a2c7fdd5100fbef457e40138840de3` (`47.1: close canonical authority full-suite regressions`)
+- Validated head: `69001d8c902a3372deeac057ac337db215ffaece`; product/test head `781165b484a2c7fdd5100fbef457e40138840de3`
 - Worktree: `.test19-wp2-wp5-worktree`
 - Base: published WP1 head `03870e75254848c941dcd3534a9c79a90a644fe3`
 
@@ -32,7 +32,7 @@ Make durable owner claims require exact realm-qualified transport identity while
 - [x] Realm-less transport remains unverified and never becomes durable ownership through `SamePlayer()`.
 - [x] `SameTransportSender()` remains the envelope anti-spoofing owner and `SamePlayer()` remains presentation-only.
 - [x] Two verified same-name/different-realm records coexist across reload without ownership drift.
-- [ ] Focused owner/transport tests, mapped tests, Lua 5.1 parse, Fast, required review/Full, and diff checks pass.
+- [x] Focused owner/transport tests, mapped tests, Lua 5.1 parse, Fast, required review/Full, and diff checks pass.
 
 ## Evidence
 
@@ -57,6 +57,9 @@ Make durable owner claims require exact realm-qualified transport identity while
 
 ## Work log
 
+- Stage 47 consolidation corrected plan-marker drift: checkpoints 45.1 and 47.1 were `DONE` in their bodies but lacked dispatcher-readable heading markers. The 47.1 mismatch falsely routed past dep-blocked 47.2-47.5 toward Stage 48, while 45.1 remained a stale parallel-ready candidate. Both headings now match their completed state; the pointer remains at 47.1 so normal advance selects 47.2, with no stage transition or archive.
+- Checkpoint 47.1 hygiene CLEAN: the bounded authority surface has no correctness/security issue, safe quick win, or actionable debt. The only repeated tombstone predicate is not worth declaration-order churn; product/test bytes remain frozen. Staged-artifact policy checked `364` paths with `0` violations, and range/working diff checks pass.
+- Checkpoint 47.1 final review PASS: repeat Spec/Standards and adversarial provenance audits accepted the repaired range, and the one replacement Full at exact head `69001d8` passed all 18 blocking checks with Lua `210/210`, Lua 5.1 parse `283/283`, integration `70/70`, and one explicit nonblocking manual SavedVariables skip. Checkpoint 47.1 is DONE pending its required bounded hygiene pass.
 - Checkpoint 47.1 Full triage repaired 21 stale authority fixtures without weakening their negative controls, restored source-proven immutable bundled loadout responses, and fixed the DPS exact-owner rekey cache invalidation. The formerly failing matrix passes `21/21`, focused authority/compatibility/reconciler/bundled tests pass, and replacement Fast passes `64/64`; product/test bytes are frozen for repeat review.
 - Checkpoint 47.1 Spec and Standards reviews accepted the frozen `6034a56` range with no findings, but its single Full attempt failed at `189/210` Lua runners. All other 17 blocking checks passed and the one manual SavedVariables check skipped explicitly. The 21 failures are being triaged as older unmapped fixtures that still encode pre-#28 short-name ownership; no replacement candidate is frozen yet.
 - Checkpoint 47.1 implementation established exact transport-to-owner authority, isolated non-authoritative owner claims, hardened build/DPS/tombstone/claim paths, updated realm-aware fixtures, passed focused/mapped/Fast validation, and froze the candidate for independent review without running Full.
@@ -142,8 +145,8 @@ Make durable owner claims require exact realm-qualified transport identity while
 
 ## Last completed loop
 
-- Checkpoint 47.1 Full triage completed, the formerly failing matrix and replacement Fast passed, and the repaired bytes moved to repeat independent review.
+- Checkpoint 47.1 checkpoint hygiene completed CLEAN without changing product/test bytes.
 
 ## Recommended next action
 
-- Commit the frozen checkpoint 47.1 repair, repeat independent Spec/Standards review, then give the accepted replacement candidate one Full attempt.
+- Advance to checkpoint 47.2/#41 and prevent unverified DPS evidence from regaining local edit/delete ownership through presentation-name matching.

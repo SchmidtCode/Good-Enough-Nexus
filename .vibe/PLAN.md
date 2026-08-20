@@ -91,7 +91,7 @@ depends_on: [43.1]
 - Goal: make every manifest-controlled security download URI pass one shared fail-closed policy before use, then re-establish exact-head PR evidence.
 - Decision: use one checkpoint because the defect, fixtures, local security gates, publication, and terminal CI reconciliation form one bounded repair.
 
-### 45.1 — Validate every security-manifest download URI before use
+### (DONE) 45.1 — Validate every security-manifest download URI before use
 
 - Status: `DONE`
 - Objective:
@@ -153,9 +153,9 @@ depends_on: [43.1]
 - Decision: transport-envelope equality, presentation-name equality, durable ownership, and legacy-evidence preservation remain separate contracts.
 - Decision: implement the authority owner before its Community, Saved Build, persistence, migration, and public-presentation consumers.
 
-### 47.1 — Establish the canonical durable-owner bridge (#28)
+### (DONE) 47.1 — Establish the canonical durable-owner bridge (#28)
 
-- Status: `IN_REVIEW`
+- Status: `DONE`
 - Objective:
   - Make durable owner claims require an exact realm-qualified transport identity while retaining separate envelope and presentation comparators.
 - Deliverables:
@@ -169,7 +169,7 @@ depends_on: [43.1]
   - [x] Realm-less transport remains unverified and never becomes durable ownership through `SamePlayer()`.
   - [x] `SameTransportSender()` remains the envelope anti-spoofing owner and `SamePlayer()` remains presentation-only.
   - [x] Two verified same-name/different-realm records coexist across reload without ownership drift.
-  - [ ] Focused owner/transport tests, mapped tests, Lua 5.1 parse, Fast, required review/Full, and diff checks pass.
+  - [x] Focused owner/transport tests, mapped tests, Lua 5.1 parse, Fast, required review/Full, and diff checks pass.
 - Demo commands:
   - `luajit tests/run_sync_owner_claims.lua && luajit tests/run_sync_transport_owner.lua`
   - `luajit tests/run_canonical_owner_authority.lua`
