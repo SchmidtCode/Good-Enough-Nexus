@@ -177,11 +177,11 @@ depends_on: [43.1]
 - Evidence:
   - Expected-red/green authority matrix, compact gate summaries, and independent Spec/Standards review.
 
-### 47.2 — Make DPS-to-Community ownership authority-first (#41)
+### (DONE) 47.2 — Make DPS-to-Community ownership authority-first (#41)
 
 depends_on: [47.1]
 
-- Status: `IN_PROGRESS`
+- Status: `DONE`
 - Objective:
   - Prevent DPS-derived Community builds from acquiring local ownership through short-name resemblance or unverified metadata.
 - Deliverables:
@@ -193,7 +193,7 @@ depends_on: [47.1]
   - [x] Realm-less and same-short-name remote records receive no owner actions.
   - [x] Later promotion occurs only through the checkpoint 47.1 authority bridge.
   - [x] Current-session local capture and ordinary public display remain functional.
-  - [ ] Focused Community/DPS tests, mapped tests, Fast, required review/Full, and diff checks pass.
+  - [x] Focused Community/DPS tests, mapped tests, Fast, required review/Full, and diff checks pass.
 - Demo commands:
   - `luajit tests/run_community_dps_eligibility.lua && luajit tests/run_record_identity_integrity.lua`
   - `luajit tests/run_community_owner_authority.lua`

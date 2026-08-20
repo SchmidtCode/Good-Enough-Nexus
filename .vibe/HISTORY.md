@@ -4,6 +4,7 @@ This file is non-authoritative. Archive completed checkpoints, resolved issues, 
 
 ## Completed checkpoints
 
+- Stage 47.2 made DPS-to-Community ownership authority-first, centralized durable build and DPS authority consumption across mutation/projection/Sync egress, preserved exact promotion and narrow local/bundled compatibility, repaired two stale positive Full fixtures, and passed focused/Fast/Full plus final Spec/Standards/adversarial review and hygiene.
 - Stage 38 established reproducible tracked Lua 5.1 tooling, deterministic Fast/Full/Package/Security profiles, VibeRun role/state integration, staged-artifact/static/security policy, exact-head GitHub Actions, and clean local review/publication receipts.
 - Stage 39 reconciled PR #13 onto PR #10 base `d0681b6`, hardened current-base routing/diff/manual-smoke boundaries, and completed exact-head local review without product changes.
 - Stage 40 refreshed the draft infrastructure branch, repaired cross-platform workflow policy defects found by CI, and stopped at green exact-head Quality Gate/Release Policy with zero reviews or threads.

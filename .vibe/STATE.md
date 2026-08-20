@@ -8,7 +8,7 @@
 
 - Stage: 47
 - Checkpoint: 47.2
-- Status: IN_PROGRESS
+- Status: DONE
 - Branch: `refactor/test19-wp2-wp5`
 - Starting head: `4eaf7131e09f6a57ae84514291e70916cb4fcea6`; checkpoint 47.1 product/test head `781165b484a2c7fdd5100fbef457e40138840de3`
 - Worktree: `.test19-wp2-wp5-worktree`
@@ -30,7 +30,7 @@ Prevent DPS-derived Community builds from acquiring local ownership through shor
 - [x] Realm-less and same-short-name remote records receive no owner actions.
 - [x] Later promotion occurs only through the checkpoint 47.1 authority bridge.
 - [x] Current-session local capture and ordinary public display remain functional.
-- [ ] Focused Community/DPS tests, mapped tests, Fast, required review/Full, and diff checks pass.
+- [x] Focused Community/DPS tests, mapped tests, Fast, required review/Full, and diff checks pass.
 
 ## Evidence
 
@@ -55,6 +55,9 @@ Prevent DPS-derived Community builds from acquiring local ownership through shor
 
 ## Work log
 
+- Checkpoint 47.2 hygiene CLEAN: bounded inspection found one shared durable build authority owner, one provenance-aware DPS authority owner, one explicit immutable-bundled coherence bridge, no weakened negative control, no duplicate policy worth churn, no debug/TODO artifact, and no safe quick win or actionable debt. Product/test bytes remain frozen at `8c05b81`; range and working diff checks pass, and only final Vibe receipts changed after Full.
+- Checkpoint 47.2 final exact-head review PASS at `8c05b81`: Spec, Standards, and adversarial/hygiene axes found no blocker across Community ownership, projections/My Builds, DPS ingress/egress, Sync relay/delete/response, reload, or exact promotion. Ten selected public runners passed; negative alias/provenance/realm/verification/collision controls remain strict, legitimate remote/local/bundled compatibility remains intact, and no safe quick win or correctness cleanup belongs in this checkpoint. Checkpoint 47.2 is DONE pending dispatcher-required hygiene acknowledgement.
+- Checkpoint 47.2 replacement Full PASS at exact clean fixture-repair head `8c05b81`: 18 blocking checks passed, zero failed, zero unavailable, and the explicit manual SavedVariables backup runner was the sole nonblocking skip in `303.712s`. The complete Lua suite passed `211/211`, Lua 5.1 parse passed `284/284`, integration passed `70/70`, and hostile Sync plus policy/package/privacy/module/upvalue/diff checks passed. Product bytes remain frozen at reviewed commit `5beef30`; final exact-head Spec/Standards/adversarial review is pending.
 - ISSUE-47.2-F1 triage resolved both Full failures without changing production. Release mesh positive rows now prove canonical owner/realm through exact qualified transport, and only the live projection corpus's intended local rows declare coherent verified local ownership; DPS projection rows remain unchanged. The original failures reproduced deterministically, the repaired runners pass repeatedly, Fast passed `74/74`, and three independent fixture/causality reviews pass. Replacement Full remains pending on the frozen fixture-repair commit.
 - Checkpoint 47.2 first Full at exact repair commit `5beef30` passed 17 blocking checks, failed the Lua-suite check at `209/211`, had zero unavailable checks, and retained the one explicit manual skip. The two failures are bounded stale positive fixtures: release mesh rows lacked exact transport owner evidence, and the live projection My Builds corpus lacked durable verified realm ownership. All other 209 Lua runners, Lua parse `284/284`, integration `70/70`, hostile Sync, policy, and diff checks passed. ISSUE-47.2-F1 owns fixture-only repair and replacement validation; production bytes remain frozen.
 - ISSUE-47.2-R4 triage resolved the duplicated Sync build-authority boundary. Summary/full/response/delete egress now consumes the shared durable Identity verdict, source-proven bundled rows use a separate coherence-only bridge, and directly verified ingress no longer retains false relay provenance. The public eight-variant laundering matrix and surrounding focused suites pass; replacement Fast passed `72/72`, repeat Spec/Standards/adversarial review passed, and Full remains unrun as the checkpoint gate.
