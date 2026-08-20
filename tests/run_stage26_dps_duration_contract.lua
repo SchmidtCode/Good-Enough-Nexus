@@ -153,7 +153,8 @@ local function StoredRow(category, duration, player, fp)
     return {
         fingerprint=fp,loadoutHash=hash,echoes=echoes,category=category,
         dps=250000,duration=duration,ts=30000,player=player,
-        level=80,class="MAGE",ownerVerified=true,
+        level=80,class="MAGE",ownerKey=player:lower() .. "@ebonhold",
+        realm="ebonhold",ownerVerified=true,
     }
 end
 NexusDB = {communityBuilds={},syncTombstones={},dpsCapture={

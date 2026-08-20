@@ -79,7 +79,9 @@ local function StoredRow(player, duration, score, verified)
     return {
         fingerprint=fingerprint,loadoutHash=loadoutHash,echoes=echoes,
         category="dummy",dps=score,duration=duration,ts=30000,
-        player=player,level=80,class="MAGE",ownerVerified=verified,
+        player=player,level=80,class="MAGE",
+        ownerKey=player:lower() .. "@ebonhold",realm="ebonhold",
+        ownerVerified=verified,
     }
 end
 
@@ -135,7 +137,7 @@ Check(complete == true and offered == 2,
 local outbound = type(DPS.OutboundStats) == "function"
     and DPS.OutboundStats() or {}
 local expectedOutbound = {
-    considered=10,eligible=8,offered_direct=1,offered_relay=1,
+    considered=10,eligible=7,offered_direct=1,offered_relay=1,
     duration=1,score=1,schema=1,owner_sender=1,
     relay_authorization=1,integrity=1,outside_request=1,
     duplicate_not_better=1,
@@ -194,8 +196,8 @@ local selectedBucket = DPS.SyncBucket("dummy", "direct")
 local peerBuckets, selectedRows = {}, 0
 for index=1,#localBuckets do peerBuckets[index] = "peer-different" end
 peerBuckets[selectedBucket] = localBuckets[selectedBucket]
-for playerKey in pairs(NexusDB.dpsCapture.characterBest.dummy) do
-    if DPS.SyncBucket("dummy", playerKey) == selectedBucket then
+for _, row in pairs(NexusDB.dpsCapture.characterBest.dummy) do
+    if DPS.SyncBucket("dummy", row.player) == selectedBucket then
         selectedRows = selectedRows + 1
     end
 end
@@ -240,6 +242,11 @@ local stale = Variant({
     fingerprint=nil,loadoutHash=nil,echoes=nil,category=nil,dps=nil,
     duration=nil,ts=nil,player=nil,level=nil,class=nil,
 })
+stale.protocolVersion, stale.fingerprint, stale.loadoutHash = nil, nil, nil
+stale.echoes, stale.category, stale.dps = nil, nil, nil
+stale.duration, stale.ts, stale.player = nil, nil, nil
+stale.level, stale.class, stale.ownerKey, stale.realm = nil, nil, nil, nil
+stale.ownerVerified = nil
 Check(DPS.ReceiveRecord(stale,"Inbound-Ebonhold") == false,
     "stale inbound row was not rejected")
 Check(Nexus.Revisions.Get(revisionKind) == revisionAccepted
@@ -327,11 +334,11 @@ local _, deferredComplete, _, deferredWhy = DPS.BroadcastAllBuildBests(
 local afterDeferred = DPS.OutboundStats()
 local pendingRows = afterDeferred.eligible - beforeDeferred.eligible
 Check(deferredComplete == false and deferredWhy == "sync queue full"
-        and pendingRows == 9
+        and pendingRows == 8
         and afterDeferred.queue_deferred
             == beforeDeferred.queue_deferred + 1,
     "deferred response did not retain exactly its eligible pending rows")
-NexusDB.dpsCapture.characterBest.dummy.badauthority.ownerVerified = true
+NexusDB.dpsCapture.characterBest.dummy["badauthority@ebonhold"].ownerVerified = true
 Nexus.Revisions.Advance(Nexus.Revisions.DPS_CHANGED, {
     scope="metadata",category="dummy",player="authority",
 })

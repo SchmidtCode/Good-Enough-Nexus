@@ -298,6 +298,18 @@ function Controller.New(options)
         return dps.VerifiedOwnerKey(record)
     end
 
+    local function ApplyVerifiedBuildOwner(build, ownerKey, author)
+        build.ownerKey = ownerKey
+        build.ownerVerified = true
+        build.claimedOwnerKey = nil
+        build.relaySender = nil
+        build.author = author
+        build.player = nil
+        build.realm = ownerKey:match("@(.+)$")
+        build.o, build.p, build.r = nil, nil, nil
+        build.isMine = ownerKey == CurrentVerifiedOwnerKey()
+    end
+
     function M.BindAdapter(adapter)
         Adapter = adapter
     end
@@ -1339,14 +1351,7 @@ function Controller.New(options)
             local promoteOwner = existingOwner == nil
             local presentationChanged = false
             if promoteOwner then
-                explicitExisting.ownerKey = recordOwner
-                explicitExisting.ownerVerified = true
-                explicitExisting.claimedOwnerKey = nil
-                explicitExisting.relaySender = nil
-                explicitExisting.author = player
-                explicitExisting.realm = recordOwner:match("@(.+)$")
-                explicitExisting.isMine = recordOwner
-                    == CurrentVerifiedOwnerKey()
+                ApplyVerifiedBuildOwner(explicitExisting, recordOwner, player)
                 if explicitExisting.autoDps == true and explicitClass then
                     local verifiedTitle = (CLASS_LABEL[explicitClass]
                         or explicitClass) .. " Record Loadout"
@@ -1378,13 +1383,7 @@ function Controller.New(options)
                 explicitExisting.needsFullBuild = false
                 explicitExisting.tombstoned = nil
                 explicitExisting.autoDps = true
-                explicitExisting.author = explicitExisting.author or player
-                explicitExisting.ownerKey = recordOwner
-                explicitExisting.ownerVerified = true
-                explicitExisting.claimedOwnerKey = nil
-                explicitExisting.relaySender = nil
-                explicitExisting.isMine = recordOwner
-                    == CurrentVerifiedOwnerKey()
+                ApplyVerifiedBuildOwner(explicitExisting, recordOwner, player)
                 explicitExisting.class = explicitClass or explicitExisting.class
                     or InferBuildClass(copied) or "UNKNOWN"
                 if explicitExisting.title == "Loadout pending" then
@@ -1462,14 +1461,7 @@ function Controller.New(options)
             local changed = false
             if recordOwner and not Identity.VerifiedOwnerKey(ownAutoBuild) then
                 if OwnerEvidenceKey(ownAutoBuild) ~= recordOwner then return nil end
-                ownAutoBuild.ownerKey = recordOwner
-                ownAutoBuild.ownerVerified = true
-                ownAutoBuild.claimedOwnerKey = nil
-                ownAutoBuild.relaySender = nil
-                ownAutoBuild.author = player
-                ownAutoBuild.realm = recordOwner:match("@(.+)$")
-                ownAutoBuild.isMine = recordOwner
-                    == CurrentVerifiedOwnerKey()
+                ApplyVerifiedBuildOwner(ownAutoBuild, recordOwner, player)
                 changed = true
             end
             if recordOwner and explicitClass

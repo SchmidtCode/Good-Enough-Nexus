@@ -55,6 +55,9 @@ Prevent DPS-derived Community builds from acquiring local ownership through shor
 
 ## Work log
 
+- Checkpoint 47.2 third replacement Fast passed `72/72` with no failed, unavailable, or skipped checks after ISSUE-47.2-R3. Strict Vibe and diff checks pass; the final repair bytes are ready to freeze for repeat Spec/Standards/adversarial review, with Full still unrun.
+- ISSUE-47.2-R3 triage resolved the final frozen-review findings. Exact promotion now atomically replaces every durable/compact identity component; non-string durable realms fail closed; and direct, response, build-best, and local-bucket DPS egress all consume the shared provenance-aware verified-owner verdict. The expected-red authority runner plus 32 surrounding Community/catalog/identity/DPS/Sync/security/integration runners pass. Two older diagnostic fixtures gained the canonical owner/realm evidence their positive rows claim; their negative assertions remain intact. Replacement Fast remains pending and Full remains unrun.
+- Checkpoint 47.2 final repeat review FAIL at frozen `2349147`: Spec, Standards, and adversarial public probes found three bounded gaps. Exact promotion retained compact/player contradictions while stamping authority; durable realm validation accepted non-strings through coercion; and DPS direct/response/bucket producers copied raw verified flags while dropping retained claim/relay provenance. Full was not run; ISSUE-47.2-R3 owns the complete repair.
 - Checkpoint 47.2 second replacement Fast passed `72/72` with no failed, unavailable, or skipped checks after ISSUE-47.2-R2. The expanded public authority matrix and strict Vibe/diff checks pass; repaired code/test bytes are ready to freeze for repeat Spec/Standards/adversarial review, with Full still unrun.
 - ISSUE-47.2-R2 triage resolved the four repeat-review blockers at their owning boundaries. Durable Community ownership rejects every compact/durable alias conflict; catalog summaries preserve all authority inputs; DPS tuple validation checks every owner/player/realm alias; verified DPS authority separately rejects retained claim/relay provenance; exact promotion replaces stale qualified identity. The expanded authority runner and 27 surrounding Community/catalog/identity/DPS/Sync/security/integration runners pass; replacement Fast remains pending.
 - Checkpoint 47.2 repeat review FAIL at `0e407da`: Spec passed, while Standards/adversarial probes found mixed compact/durable aliases erased by summaries or preferred inconsistently, plus DPS producer authority accepting realm-qualified author and retained-provenance conflicts. Full was not run; the checkpoint returned to implementation under ISSUE-47.2-R2.
@@ -153,8 +156,8 @@ Prevent DPS-derived Community builds from acquiring local ownership through shor
 
 ## Last completed loop
 
-- Checkpoint 47.2 repaired all repeat-review authority findings and passed the second replacement Fast `72/72`; the exact code/test delta is ready for repeat independent review without Full.
+- Checkpoint 47.2 implementation passed replacement Fast `72/72` after ISSUE-47.2-R3 and is ready for repeat independent review; Full remains unrun.
 
 ## Recommended next action
 
-- Freeze the exact repair delta and repeat independent Spec/Standards/adversarial review before the checkpoint's single Full.
+- Freeze the final repair bytes, then repeat independent Spec/Standards/adversarial review before the single required Full.

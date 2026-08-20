@@ -176,6 +176,13 @@ assert(not Community.IsOwnBuild({author="Twin", ownerKey="twin@realma",
 assert(not Community.IsOwnBuild({author="Twin-RealmB",
         ownerKey="twin@realma", ownerVerified=true, isMine=true}),
     "realm-qualified author conflict collapsed into local authority")
+local nonStringRealm = {
+    author="Twin", ownerKey="twin@123", ownerVerified=true,
+    realm=123, isMine=true,
+}
+assert(Nexus.Identity.VerifiedOwnerKey(nonStringRealm) == nil
+        and not Nexus.Identity.LocalOwnsRecord(nonStringRealm, "twin@123"),
+    "non-string durable realm metadata gained canonical owner authority")
 for _, mixed in ipairs({
     {author="Twin", ownerKey="twin@realma", o="twin@realmb",
         ownerVerified=true, isMine=true},
@@ -294,6 +301,12 @@ assert(qualifiedRow.ownerVerified == false and qualifiedRow.ownerKey == nil
             and qualifiedBuild.isMine ~= true
             and not Community.IsOwnBuild(qualifiedBuild),
     "qualified-author conflict was stamped as verified Community authority")
+qualifiedBuild.o = "twin@realmb"
+qualifiedBuild.p = "Other"
+qualifiedBuild.r = "RealmB"
+qualifiedBuild.player = "Other"
+assert(Nexus.BuildCatalog.Put(qualifiedBuild),
+    "explicit promotion alias control was not persisted")
 
 -- Later exact evidence may promote the same retained page, but it must replace
 -- every stale identity component rather than only flipping the verified flag.
@@ -311,9 +324,44 @@ assert(promotedQualified.ownerVerified == true
         and promotedQualified.ownerKey == "twin@realma"
         and promotedQualified.author == "Twin-RealmA"
         and promotedQualified.realm == "realma"
+        and promotedQualified.player == nil
+        and promotedQualified.o == nil and promotedQualified.p == nil
+        and promotedQualified.r == nil
         and promotedQualified.isMine == true
+        and Nexus.Identity.VerifiedOwnerKey(promotedQualified)
+            == "twin@realma"
         and Community.IsOwnBuild(promotedQualified),
     "qualified exact promotion retained contradictory identity metadata")
+
+-- Fingerprint-based promotion follows the same atomic identity normalization
+-- as the explicit build-ID path.
+local reuseEchoes = {{spellId=720021, quality=2, stacks=1}}
+local reuseId, reuseBuild = Community.EnsureDpsBuildForEchoes(
+    reuseEchoes, "dummy", {
+        player="Twin", class="MAGE", realm="RealmA",
+        ownerVerified=false, relaySender="Twin-RealmA",
+    })
+assert(reuseId and reuseBuild and reuseBuild.ownerVerified == false,
+    "fingerprint promotion control was not retained as ambient evidence")
+reuseBuild.o = "twin@realmb"
+reuseBuild.p = "Twin"
+reuseBuild.r = "RealmB"
+assert(Nexus.BuildCatalog.Put(reuseBuild),
+    "fingerprint promotion alias control was not persisted")
+local reusedId, promotedReuse = Community.EnsureDpsBuildForEchoes(
+    reuseEchoes, "dummy", {
+        player="Twin", class="MAGE", ownerKey="twin@realma",
+        realm="RealmA", ownerVerified=true,
+    })
+assert(reusedId == reuseId and promotedReuse
+        and promotedReuse.ownerVerified == true
+        and promotedReuse.ownerKey == "twin@realma"
+        and promotedReuse.player == nil
+        and promotedReuse.o == nil and promotedReuse.p == nil
+        and promotedReuse.r == nil
+        and Nexus.Identity.VerifiedOwnerKey(promotedReuse) == "twin@realma"
+        and Community.IsOwnBuild(promotedReuse),
+    "fingerprint exact promotion retained contradictory identity metadata")
 
 for index, provenance in ipairs({
     {relaySender="Relay-RealmB"},
@@ -440,5 +488,64 @@ assert(nilId and nilBuild and nilBuild.ownerVerified == false
         and nilBuild.isMine ~= true
         and not Community.IsOwnBuild(nilBuild),
     "nil verification was treated as canonical local Community authority")
+
+-- Every DPS egress owner consumes the same provenance-aware authority verdict.
+-- Neither direct sends nor derived response candidates may erase retained
+-- claim/relay evidence and re-emit it as verified owner traffic.
+Reset("Twin", "RealmA")
+Nexus.Sync.Init(Nexus.Codec, Adapter)
+local outboundEchoes = {{spellId=720030, quality=2, stacks=1}}
+local outboundFingerprint = DPS.GetEchoKey(outboundEchoes)
+local outboundBase = {
+    protocolVersion=7, fingerprint=outboundFingerprint,
+    loadoutHash=DPS.GetEchoHash(outboundEchoes), echoes=outboundEchoes,
+    category="dummy", dps=29000000, duration=65, ts=now + 1,
+    player="Twin", level=80, class="MAGE", ownerKey="twin@realma",
+    realm="realma", ownerVerified=true, buildId="provenance-build",
+}
+for _, provenance in ipairs({
+    {relaySender="Relay-RealmB"},
+    {claimedOwnerKey="twin@realmb"},
+}) do
+    local record = {}
+    for key, value in pairs(outboundBase) do record[key] = value end
+    for key, value in pairs(provenance) do record[key] = value end
+    assert(DPS.VerifiedOwnerKey(record) == nil,
+        "outbound provenance control unexpectedly retained verified authority")
+    local sent, why = Nexus.Sync.BroadcastDpsRecord(record)
+    assert(sent == false and why == "owner_sender",
+        "DPS direct egress stripped retained provenance into owner authority")
+end
+
+local storedProvenance = {}
+for key, value in pairs(outboundBase) do storedProvenance[key] = value end
+storedProvenance.relaySender = "Relay-RealmB"
+NexusDB.dpsCapture.characterBest.dummy["twin@realma"] = storedProvenance
+local bucket = assert(DPS.SyncBucket("dummy", "Twin"))
+assert(not DPS.LocalOwnsDpsBucket(bucket),
+    "retained DPS provenance regained local bucket ownership")
+assert(Nexus.BuildCatalog.Put({
+    id="provenance-build", title="Provenance", author="Twin",
+    ownerKey="twin@realma", ownerVerified=true, class="MAGE",
+    echoes=outboundEchoes, fingerprint=outboundFingerprint,
+    fingerprintHash=DPS.GetEchoHash(outboundEchoes),
+    postedAt=1, lastModified=1,
+}), "DPS provenance build control was not stored")
+local copied = 0
+DPS.Init(Adapter, {
+    BroadcastDpsRecord=function()
+        copied = copied + 1
+        return true
+    end,
+})
+assert(not DPS.BroadcastBestForBuild("provenance-build") and copied == 0,
+    "build-best egress stripped retained DPS provenance")
+local offered, complete, _, _, _, _, _, claimSafe =
+    DPS.BroadcastAllBuildBests("0", bucket, {}, 100)
+assert(offered == 0 and complete == true and copied == 0
+        and claimSafe == false,
+    string.format("response candidate egress stripped retained DPS provenance: offered=%s complete=%s copied=%s claimSafe=%s",
+        tostring(offered), tostring(complete), tostring(copied),
+        tostring(claimSafe)))
 
 print("Community owner authority -- OK")

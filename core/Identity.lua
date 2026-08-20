@@ -231,6 +231,7 @@ end
 
 local function ExactOwnerRealm(ownerKey, realm)
     if realm == nil then return true end
+    if type(realm) ~= "string" then return false end
     local name = ownerKey and ownerKey:match("^([^@]+)@") or nil
     return name ~= nil and Identity.CanonicalOwnerKey(
         Identity.OwnerKey(name, realm)) == ownerKey

@@ -1915,7 +1915,8 @@ function DPS.BroadcastBestForBuild(buildId)
         for _, row in pairs(store[category] or {}) do
             if row and row.buildId == buildId
                 and (tonumber(row.dps) or 0) > 0
-                and DPS.IsDurationEligible(category, row.duration) then
+                and DPS.IsDurationEligible(category, row.duration)
+                and DPS.VerifiedOwnerKey(row) ~= nil then
                 local record = {
                     protocolVersion = PROTOCOL_VERSION, fingerprint = row.fingerprint or key,
                     loadoutHash = row.loadoutHash or build.fingerprintHash or EchoHashFromKey(key),
@@ -2018,6 +2019,8 @@ function DPS.BroadcastAllBuildBests(peerHash, onlyBucket, progress, maxItems,
                     local bucket = DpsBucket(category,
                         type(row) == "table" and row.player or playerKey)
                     local skipReason
+                    local verifiedOwner = type(row) == "table"
+                        and DPS.VerifiedOwnerKey(row) or nil
                     if onlyBucket and bucket ~= onlyBucket then
                         skipReason = "outside_bucket"
                     elseif not legacyPeer
@@ -2030,6 +2033,9 @@ function DPS.BroadcastAllBuildBests(peerHash, onlyBucket, progress, maxItems,
                         skipReason = "score"
                     elseif not DPS.IsDurationEligible(category, row.duration) then
                         skipReason = "duration"
+                    elseif not verifiedOwner then
+                        state.claimSafe = false
+                        skipReason = "relay_authorization"
                     elseif not (Sync and Sync.BroadcastDpsRecord) then
                         skipReason = "other"
                     end
@@ -2055,15 +2061,15 @@ function DPS.BroadcastAllBuildBests(peerHash, onlyBucket, progress, maxItems,
                                 player=row.player or "?",
                                 level=tonumber(row.level) or 0,
                                 buildId=row.buildId, class=row.class,
-                                ownerKey=row.ownerKey, realm=row.realm,
-                                ownerVerified=row.ownerVerified == true,
+                                ownerKey=verifiedOwner, realm=row.realm,
+                                ownerVerified=true,
                                 echoes=StoredEchoes(row, false),
                                 lockedEchoes=StoredEchoes(row, true),
                                 -- Only a row this client received directly from
                                 -- its named owner may cross the response-only
                                 -- relay path. Legacy/locally injected rows keep
                                 -- the old owner-only behavior.
-                                _originVerified=row.ownerVerified == true,
+                                _originVerified=true,
                             },
                         }
                         state.pending = (tonumber(state.pending) or 0) + 1
@@ -2649,8 +2655,7 @@ function DPS.LocalOwnsDpsBucket(bucket)
     local row = store.dummy
         and (store.dummy[playerKey] or store.dummy[legacyKey])
     if type(row) == "table"
-        and row.ownerVerified == true
-        and Identity.CanonicalOwnerKey(row.ownerKey) == playerKey
+        and DPS.VerifiedOwnerKey(row) == playerKey
         and (tonumber(row.dps) or 0) > 0
         and DPS.IsDurationEligible("dummy", row.duration)
         and DpsBucket("dummy", me) == bucket then
@@ -2658,8 +2663,7 @@ function DPS.LocalOwnsDpsBucket(bucket)
     end
     row = store.lk and (store.lk[playerKey] or store.lk[legacyKey])
     if type(row) == "table"
-        and row.ownerVerified == true
-        and Identity.CanonicalOwnerKey(row.ownerKey) == playerKey
+        and DPS.VerifiedOwnerKey(row) == playerKey
         and (tonumber(row.dps) or 0) > 0
         and DPS.IsDurationEligible("lk", row.duration)
         and DpsBucket("lk", me) == bucket then

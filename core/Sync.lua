@@ -2090,10 +2090,14 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
             and D.HasCanonicalOwnerIdentity(record) == true) then
         return false, "owner_sender"
     end
+    if record.claimedOwnerKey ~= nil or record.relaySender ~= nil then
+        return false, "owner_sender"
+    end
     local computed = D and D.GetEchoKey and D.GetEchoKey(record.echoes) or nil
-    local directOwner = record.ownerVerified == true
-        and CurrentOwnerKey() ~= nil
-        and Identity.CanonicalOwnerKey(record.ownerKey) == CurrentOwnerKey()
+    local verifiedOwner = type(D.VerifiedOwnerKey) == "function"
+        and D.VerifiedOwnerKey(record) or nil
+    local directOwner = CurrentOwnerKey() ~= nil
+        and verifiedOwner == CurrentOwnerKey()
     local relayContext
     if not directOwner then
         if not responseMode then return false, "owner_sender" end
