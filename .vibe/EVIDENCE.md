@@ -16,6 +16,7 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Follow-up review FAIL: restoration preceded legacy reconciliation only after `LockedOwned().synced`; an unsynced restart could return first and let `DPS.Init` reconcile partial rows. The final boundary requires restoration and rollback-source retirement before readiness, with only the v1 stamp delayed.
 - Unsynced-restart red/green: the fixture failed with `unsynced restart did not restore and retire its immutable source`; after source-first rollback, both WP1 runners pass with zero partial evidence touches, no premature version stamp, represented revision advance, authoritative retry completion, and reload idempotence.
 - Final source-first candidate: Fast passed `19/19`; required Full on the final code/test bytes passed `18` blocking checks, Lua `209/209`, Lua 5.1 parse `282/282`, and only the explicit manual SavedVariables backup skip (`257.001s`).
+- Final independent review PASS at `981a2572a5678d19896c1110e3d83af3ec43e423`: Spec confirms rollback restoration/retirement precedes readiness and every partial-row side effect; Standards confirms repository policy and Vibe truth agree. No correctness, security, or checkpoint-hygiene finding remains; WP1 stops locally without publication.
 
 ## Bootstrap
 

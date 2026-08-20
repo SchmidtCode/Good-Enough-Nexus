@@ -122,9 +122,9 @@ depends_on: [43.1]
 - Decision: restore an interrupted immutable source before any legacy migration or other side effect; preserve completed-v1 rows without a durable historical-association bridge.
 - Decision: orphan evidence, similarity, current identity, and present ownership never authorize reconstruction; future-owned storage remains read-only.
 
-### 46.1 — Fail closed when historical provenance is unavailable
+### (DONE) 46.1 — Fail closed when historical provenance is unavailable
 
-- Status: `IN_REVIEW`
+- Status: `DONE`
 - Objective:
   - Make locked-baseline migration preserve every historical DPS row because the current durable schema cannot distinguish capture-time history from later current-state backfill.
 - Deliverables:
@@ -145,4 +145,4 @@ depends_on: [43.1]
   - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Fast -BaseRef 3965b107574d4a394e0672cb130eab7e4694e7b5`
   - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Full -BaseRef 3965b107574d4a394e0672cb130eab7e4694e7b5`
 - Evidence:
-  - Expected-red/focused-green authority matrix, compact Fast/Full summaries, and final exact-scope/commit receipt.
+  - Expected-red/focused-green authority matrix, compact Fast/Full summaries, independent Spec/Standards PASS, and final exact-scope/commit receipt.

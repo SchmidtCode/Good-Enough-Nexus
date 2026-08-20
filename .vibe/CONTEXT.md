@@ -17,6 +17,11 @@
 - Security bootstrap validates ZIP/tar entries and exact executable paths before extraction, accepts only hash-locked wheels, and removes bootstrap/download/extraction roots on success or failure.
 - Stage 43 commits the formal candidate before Full, runs Full locally exactly once, proves a disposable fresh checkout, then refreshes PR #13/issue #12 and stops without merge.
 
+## Key Decisions (2026-08-20)
+
+- WP1 treats inline and referenced locked evidence as content integrity only, because current-state backfill can attach both after the historical pull; the durable schema has no provenance bridge that authorizes subtraction or completed-v1 reversal.
+- A surviving `lockedMigrationSource` is restored and retired before readiness gating or legacy reconciliation. The v1 completion stamp still waits for authoritative locked readiness; represented restoration alone owns its revision advance.
+
 ## Gotchas
 
 - Windows Git cannot represent tab/newline index names; use raw-byte parser fixtures locally and real disposable index fixtures on supporting platforms.
@@ -26,6 +31,7 @@
 - Schema-valid state can still be semantically stale; verify status beneath the exact checkpoint heading and confirm fresh-checkout dispatcher truth at Stage 43.
 - A commit cannot contain its own SHA; terminal Vibe truth names branch `HEAD` plus the exact base, then a fresh checkout verifies the resolved SHA and stop route without an ignored receipt.
 - Do not mutate the formal candidate's code/tooling bytes after its single local Full; later Vibe/GitHub receipts must remain documentation/state-only and receive their own exact-head CI.
+- For locked migration, checking readiness before rollback restoration exposes partial rows to later init/getter work even if the migration function itself returns. Source-first means before readiness and before any legacy/evidence/hash/backfill path.
 
 ## Hot Files
 
@@ -34,6 +40,7 @@
 - Workflow/gate: `.github/workflows/quality-gate.yml`, `tools/Invoke-QualityGate.ps1`, `tools/Write-ValidationSummary.js`.
 - Path policy: `tools/GitPathRecords.ps1`, `tools/ArtifactPathPolicy.ps1`, `tools/Get-ChangedTestPlan.ps1`, `tools/Test-StagedArtifacts.ps1`.
 - Vibe authority: `AGENTS.md`, `.vibe/STATE.md`, active `.vibe/PLAN.md`, this file, and append-only `.vibe/EVIDENCE.md`.
+- Stage 46 WP1: `core/DpsCapture.lua`, `tests/run_locked_migration_authority.lua`, and `tests/run_migration_owned_lifecycle.lua`.
 
 ## Agent Notes
 
