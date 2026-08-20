@@ -179,6 +179,19 @@ function Identity.OwnerKey(name, realm)
     return player and normalizedRealm and (player .. "@" .. normalizedRealm) or nil
 end
 
+-- Durable ownership may be derived from transport only when the actual sender
+-- carries its own realm. A short sender is valid presentation/envelope input,
+-- but it cannot borrow the local realm or become owner authority.
+function Identity.CanonicalOwnerFromTransport(sender)
+    if not ValidPlayer(sender) then return nil end
+    local name, realm = sender:match("^([^-]+)%-(.+)$")
+    if not name or not realm then return nil end
+    local player = Identity.PlayerKey(name, true)
+    local normalizedRealm = RealmKey(realm, false)
+    return player and normalizedRealm
+        and (player .. "@" .. normalizedRealm) or nil
+end
+
 function Identity.CanonicalOwnerKey(value)
     if type(value) ~= "string" or #value > 177 then return nil end
     local name, realm = value:match("^([^@]+)@([^@]+)$")
@@ -188,6 +201,12 @@ function Identity.CanonicalOwnerKey(value)
     end
     local player, normalizedRealm = Identity.PlayerKey(name), RealmKey(realm, false)
     return player and normalizedRealm and (player .. "@" .. normalizedRealm) or nil
+end
+
+function Identity.TransportOwns(ownerKey, actualSender)
+    local claimed = Identity.CanonicalOwnerKey(ownerKey)
+    local transport = Identity.CanonicalOwnerFromTransport(actualSender)
+    return claimed ~= nil and transport ~= nil and claimed == transport
 end
 
 function Identity.OwnerKeyMatchesAuthor(ownerKey, author)

@@ -1442,6 +1442,28 @@ local function ValidWireEchoList(source)
     return entries > 0 and entries == maxIndex
 end
 
+-- Canonical DPS ownership is one identity tuple. A separately persisted realm
+-- may be absent for older rows, but when present it must describe the same
+-- name@realm as ownerKey; conflicting metadata is never claim/send authority.
+function DPS.HasCanonicalOwnerIdentity(record)
+    if type(record) ~= "table" then return false end
+    local player = tostring(record.p or record.player or "")
+    local ownerKey = Identity.CanonicalOwnerKey(record.o or record.ownerKey)
+    local realm = record.r
+    if realm == nil then realm = record.realm end
+    if not ownerKey or ownerKey:match("@unknown$")
+        or not Identity.ValidPlayer(player)
+        or not Identity.OwnerKeyMatchesAuthor(ownerKey, player) then
+        return false
+    end
+    if realm == nil then return true, ownerKey end
+    if type(realm) ~= "string" or #realm > 96
+        or realm:find("[%c|%s]") then return false end
+    local realmOwner = Identity.CanonicalOwnerKey(
+        Identity.OwnerKey(player, realm))
+    return realmOwner == ownerKey, ownerKey
+end
+
 -- The response election may suppress every equivalent peer, so its cached
 -- safety bit is deliberately stricter than the digest's score eligibility.
 -- It must prove this client can serialize and authoritatively send every row
@@ -1457,15 +1479,8 @@ local function DpsResponseClaimInfo(category, playerKey, row)
     local dps, stamp, level = tonumber(row.dps), tonumber(row.ts),
         tonumber(row.level)
     local nowTs = (time and time()) or 0
-    local realm = row.realm
-    local ownerValid = row.ownerKey ~= nil
-        and Identity.OwnerKeyMatchesAuthor(row.ownerKey, player)
-    local realmValid = realm == nil or (type(realm) == "string"
-        and #realm <= 96 and not realm:find("[%c|%s]")
-        and Identity.OwnerKey(player, realm) ~= nil)
-    local me = (UnitName and UnitName("player")) or nil
+    local ownerValid = DPS.HasCanonicalOwnerIdentity(row)
     local authorityValid = row.ownerVerified == true
-        or (me and Identity.SamePlayer(player, me))
     local safe = authorityValid and Identity.ValidPlayer(player)
         and #player <= 64
         and CharacterKey(player, row.ownerKey, row.realm) == tostring(playerKey)
@@ -1477,7 +1492,7 @@ local function DpsResponseClaimInfo(category, playerKey, row)
         and level == math.floor(level) and NormalizeClass(row.class) ~= nil
         and fingerprint ~= nil and fingerprint == row.fingerprint
         and loadoutHash ~= nil and EchoHashFromKey(fingerprint) == loadoutHash
-        and ownerValid and realmValid
+        and ownerValid
     return safe, safe and CharacterKey(player, row.ownerKey, row.realm) or nil
 end
 
@@ -1875,6 +1890,7 @@ function DPS.BroadcastBestForBuild(buildId)
                     duration = tonumber(row.duration) or 0, ts = tonumber(row.ts) or 0,
                     player = row.player or "?", level = tonumber(row.level) or 0, buildId = buildId,
                     class = row.class, ownerKey = row.ownerKey, realm = row.realm,
+                    ownerVerified = row.ownerVerified == true,
                     echoes = StoredEchoes(row, false) or BuildSnapshot(build),
                     lockedEchoes = StoredEchoes(row, true),
                 }
@@ -2007,6 +2023,7 @@ function DPS.BroadcastAllBuildBests(peerHash, onlyBucket, progress, maxItems,
                                 level=tonumber(row.level) or 0,
                                 buildId=row.buildId, class=row.class,
                                 ownerKey=row.ownerKey, realm=row.realm,
+                                ownerVerified=row.ownerVerified == true,
                                 echoes=StoredEchoes(row, false),
                                 lockedEchoes=StoredEchoes(row, true),
                                 -- Only a row this client received directly from
@@ -2550,7 +2567,7 @@ local function CommitSession(category)
                 duration = elapsed, ts = stamp, player = player,
                 level = level, buildId = buildId, lockedEchoes = lockedSnap,
                 class = localClass, ownerKey = personalRow.ownerKey,
-                realm = personalRow.realm,
+                realm = personalRow.realm, ownerVerified = true,
             })
         end
     end
@@ -2599,7 +2616,8 @@ function DPS.LocalOwnsDpsBucket(bucket)
     local row = store.dummy
         and (store.dummy[playerKey] or store.dummy[legacyKey])
     if type(row) == "table"
-        and Identity.SamePlayer(row.player, me)
+        and row.ownerVerified == true
+        and Identity.CanonicalOwnerKey(row.ownerKey) == playerKey
         and (tonumber(row.dps) or 0) > 0
         and DPS.IsDurationEligible("dummy", row.duration)
         and DpsBucket("dummy", me) == bucket then
@@ -2607,7 +2625,8 @@ function DPS.LocalOwnsDpsBucket(bucket)
     end
     row = store.lk and (store.lk[playerKey] or store.lk[legacyKey])
     if type(row) == "table"
-        and Identity.SamePlayer(row.player, me)
+        and row.ownerVerified == true
+        and Identity.CanonicalOwnerKey(row.ownerKey) == playerKey
         and (tonumber(row.dps) or 0) > 0
         and DPS.IsDurationEligible("lk", row.duration)
         and DpsBucket("lk", me) == bucket then
@@ -2714,10 +2733,26 @@ local function ReceiveRecord(record, transportSender, relayed)
         return RejectReceive("storage"), "storage"
     end
 
+    local directSender = not relayed and transportSender ~= nil
+        and Identity.SamePlayer(player, transportSender)
+    local directOwner = directSender
+        and Identity.TransportOwns(canonicalOwner, transportSender)
+    local transportOwner = directSender
+        and Identity.CanonicalOwnerFromTransport(transportSender) or nil
+    local transportRealm = transportOwner
+        and transportOwner:match("@(.+)$") or nil
+    local storageOwner, storageRealm
+    if directOwner then
+        storageOwner, storageRealm = canonicalOwner, realm or ownerRealm
+    elseif directSender then
+        storageOwner, storageRealm = transportOwner, transportRealm
+    else
+        storageOwner, storageRealm = canonicalOwner, realm or ownerRealm
+    end
+
     MigrateLegacyLeaderboard()
     local bucket = CharacterBestStore()[category]
-    local characterKey = CharacterKey(player, canonicalOwner,
-        realm or ownerRealm)
+    local characterKey = CharacterKey(player, storageOwner, storageRealm)
     local existing = bucket[characterKey]
     local existingKey = characterKey
     local legacyKey = PlayerKey(player)
@@ -2736,22 +2771,24 @@ local function ReceiveRecord(record, transportSender, relayed)
         return RejectReceive("schema")
     end
     local incomingLocked = NormalizeEchoes(rawLocked)
-    local directOwner = not relayed and transportSender ~= nil
-        and Identity.SamePlayer(player, transportSender)
     local legacyLocal = not relayed and transportSender == nil
     local row = {
         dps = math.floor(dps), level = level, ts = ts, duration = duration,
         player = player,
         class = playerClass and tostring(playerClass):upper() or nil,
-        ownerKey = canonicalOwner,
-        realm = realm and Identity.OwnerKey(player, realm):match("@(.+)$")
-            or ownerRealm,
+        ownerKey = directOwner and canonicalOwner
+            or (relayed or legacyLocal) and canonicalOwner or nil,
+        realm = directOwner and (realm and Identity.OwnerKey(player, realm):match("@(.+)$")
+                or ownerRealm)
+            or directSender and transportRealm
+            or (relayed or legacyLocal) and (realm and Identity.OwnerKey(player, realm):match("@(.+)$")
+                or ownerRealm) or nil,
         buildId = record.b or record.buildId,
         echoes = echoes, fingerprint = fingerprint, loadoutHash = hash or EchoHashFromKey(fingerprint),
         lockedEchoes = incomingLocked,
         protocolVersion = PROTOCOL_VERSION,
         ownerVerified = directOwner and true or false,
-        relaySender = relayed and Identity.DisplayPlayer(transportSender) or nil,
+        relaySender = not directOwner and transportSender or nil,
     }
     -- A relayed row may fill an empty slot, but it never overwrites an existing
     -- row. The established nil-sender compatibility path may still replace a
@@ -2779,12 +2816,12 @@ local function ReceiveRecord(record, transportSender, relayed)
                 existing.class = normalizedClass
                 enriched = true
             end
-            if ownerKey and not existing.ownerKey then
+            if directOwner and canonicalOwner and not existing.ownerKey then
                 existing.ownerKey = canonicalOwner
                 enriched = true
             end
-            if realm and not existing.realm then
-                existing.realm = tostring(realm):lower()
+            if row.realm and not existing.realm then
+                existing.realm = row.realm
                 enriched = true
             end
             if incomingLocked and not StoredEchoes(existing, true) then

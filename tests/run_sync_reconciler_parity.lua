@@ -61,8 +61,12 @@ local function NewHarness(overrides)
         buildCandidateSnapshot=function(hash)
             Count("candidateSnapshot")
             assert(hash == deltaHash, "candidate snapshot uses delta hash")
-            return overrides.snapshot
-                or {revision=1, candidates={{id="overlay-only"}}}
+            if overrides.snapshot then return overrides.snapshot end
+            local claimSafeByBucket = {}
+            for bucket = 1, buckets do claimSafeByBucket[bucket] = true end
+            return {revision=1,complete=true,
+                candidates={{id="overlay-only"}},
+                claimSafeByBucket=claimSafeByBucket}
         end,
         snapshotCurrent=function()
             Count("snapshotCurrent")
@@ -123,6 +127,12 @@ local function NewHarness(overrides)
         end or nil,
         supportsRequestContext=function()
             return overrides.supportsRequestContext == true
+        end,
+        localOwnsDpsBucket=function()
+            return overrides.localOwnsDpsBucket ~= false
+        end,
+        dpsBucketClaimInfo=function()
+            return overrides.dpsClaimSafe == true
         end,
         noteSyncStat=function(name, amount)
             state.syncStats[name] = (state.syncStats[name] or 0)
@@ -271,6 +281,37 @@ claims.HandleBucketClaim({responder="Other", requester="Alice",
     requestId="claimable", kind="B", bucket=1, hash="11"})
 AssertEqual(claims.Counts().responses, 0,
     "current claimable bucket accepts matching peer claim")
+
+local unsafeClaim = NewHarness({snapshot={revision=1,complete=true,
+    candidates={{id="unverified"}},claimSafeByBucket={[1]=false}}})
+assert(unsafeClaim.ScheduleRequest({requester="Alice",requestId="unsafe",
+    peerBuildHash=oneBucketMismatch,peerDpsHash=ZeroHash(8)}))
+unsafeClaim.Process(1)
+unsafeClaim.HandleBucketClaim({responder="Other",requester="Alice",
+    requestId="unsafe",kind="B",bucket=1,hash="11"})
+AssertEqual(unsafeClaim.Counts().responses, 1,
+    "relay-ineligible snapshot rejects matching peer suppression")
+
+local pendingClaim = NewHarness({snapshot={revision=1,complete=false,
+    candidates={},claimSafeByBucket={[1]=true}}})
+assert(pendingClaim.ScheduleRequest({requester="Alice",requestId="pending",
+    peerBuildHash=oneBucketMismatch,peerDpsHash=ZeroHash(8)}))
+pendingClaim.Process(1)
+pendingClaim.HandleBucketClaim({responder="Other",requester="Alice",
+    requestId="pending",kind="B",bucket=1,hash="11"})
+AssertEqual(pendingClaim.Counts().responses, 1,
+    "incomplete snapshot rejects early peer suppression")
+
+local unsafeDpsHash = "21,0,0,0,0,0,0,0"
+local unsafeDps = NewHarness({dpsHash=unsafeDpsHash,
+    supportsRequestContext=true,localOwnsDpsBucket=false,dpsClaimSafe=false})
+assert(unsafeDps.ScheduleRequest({requester="Alice",requestId="dps-unsafe",
+    peerBuildHash=currentWire,peerDpsHash=ZeroHash(8)}))
+unsafeDps.Process(1)
+unsafeDps.HandleBucketClaim({responder="Other",requester="Alice",
+    requestId="dps-unsafe",kind="D",bucket=1,hash="21"})
+AssertEqual(unsafeDps.Counts().responses, 1,
+    "unverified DPS bucket rejects matching peer suppression")
 
 -- A stale immutable candidate is reset instead of trusting its old hash.
 local stale, staleState = NewHarness()

@@ -32,9 +32,12 @@ for index = 1, 40 do
     }
 end
 for index = 1, 500 do
+    local localOwner = index % 2 ~= 0
     tombstones[string.format("gone-%04d", index)] = {
         stamp=2000 + index,
         author=index % 2 == 0 and "Remote" or "Local-Realm",
+        ownerKey=localOwner and "local@realm" or "remote@realm",
+        ownerVerified=true,
     }
 end
 
@@ -86,12 +89,11 @@ local C = Nexus.SyncInternals.Compatibility.New({
     getBuildRevision=function() return buildRevision end,
     getDpsCapture=function() return dps end,
     getTombstones=function() return tombstones end,
-    samePeer=function(left, right)
-        local function Key(value)
-            return (tostring(value or ""):match("^([^%-]+)") or ""):lower()
-        end
-        return Key(left) ~= "" and Key(left) == Key(right)
+    localOwnsTomb=function(tombstone)
+        return tombstone.ownerVerified == true
+            and tombstone.ownerKey == "local@realm"
     end,
+    relayEligible=function(build) return build.relayBlocked ~= true end,
     myName=function() return "Local" end,
     now=function() return 123.5 end,
     getCodec=function() return Nexus.Codec end,

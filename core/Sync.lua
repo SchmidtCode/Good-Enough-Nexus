@@ -151,7 +151,8 @@ local Operation = {
         accepted=true,rejected=true,
     },
 }
-local Now, MyName
+local Now, MyName, CurrentTransportSender, IsLocalTransportSender
+local RelayEligible
 local recentBuildBroadcast = {}
 local BUILD_BROADCAST_DEDUPE = 2
 local Responder = {}
@@ -218,7 +219,7 @@ local function AllowsRemoteRevision(author, stamp, buildId)
 end
 
 local function NormalizePeerName(name)
-    return Identity.PlayerKey(name) or ""
+    return Identity.PlayerKey(name, true) or ""
 end
 
 local function SamePeer(a, b)
@@ -302,7 +303,7 @@ end
 
 function Responder.ContextRequestId(context)
     if type(context) ~= "table" then return nil end
-    if SamePeer(context.requester, MyName()) then return context.requestId end
+    if IsLocalTransportSender(context.requester) then return context.requestId end
     -- A valid context addressed elsewhere is accepted as ambient storage input,
     -- but it receives one bounded unrelated outcome against the local request.
     return "c1-foreign"
@@ -360,7 +361,8 @@ function Sync.WorkState()
     local transport = Transport.Snapshot()
     local requestTransport = Transport.RequestSnapshot(MyName(),
         session.requestId)
-    local requestIncoming = Inbound.RequestCounts(MyName(), session.requestId)
+    local requestIncoming = Inbound.RequestCounts(
+        CurrentTransportSender(), session.requestId)
     return Diagnostics.ProjectWorkState({
         transport=transport,
         reconciliation=Reconciler.Counts(),
@@ -404,6 +406,68 @@ function Sync.LogStats() return Diagnostics.LogStats() end
 
 Now = function() return (GetTime and GetTime()) or 0 end
 MyName = function() return (UnitName and UnitName("player")) or "?" end
+
+local function CurrentOwnerKey()
+    local realm = GetNormalizedRealmName and GetNormalizedRealmName()
+    if not realm or realm == "" then
+        realm = GetRealmName and GetRealmName()
+    end
+    if not realm or realm == "" then return nil end
+    local ownerKey = Identity.OwnerKey(MyName(), realm)
+    if ownerKey and not ownerKey:match("@unknown$") then return ownerKey end
+    return nil
+end
+
+CurrentTransportSender = function()
+    local realm = GetNormalizedRealmName and GetNormalizedRealmName()
+    if not realm or realm == "" then realm = GetRealmName and GetRealmName() end
+    realm = type(realm) == "string" and realm:gsub("%s+", "") or nil
+    local full = realm and (tostring(MyName()) .. "-" .. realm) or nil
+    return Identity.PlayerKey(full, true) and full or MyName()
+end
+
+IsLocalTransportSender = function(sender)
+    local transportOwner = Identity.CanonicalOwnerFromTransport(sender)
+    local localOwner = CurrentOwnerKey()
+    return transportOwner ~= nil and localOwner ~= nil
+        and transportOwner == localOwner
+end
+
+local function IsExactLocalOwner(record)
+    local localOwner = CurrentOwnerKey()
+    return type(record) == "table" and record.isMine == true
+        and record.ownerVerified ~= false
+        and localOwner ~= nil
+        and Identity.CanonicalOwnerKey(record.ownerKey) == localOwner
+end
+
+local function TrustedStoredOwnerKey(record, source)
+    if type(record) ~= "table" then return nil end
+    if record.ownerVerified == true or source == "bundled"
+        or IsExactLocalOwner(record) then
+        return Identity.CanonicalOwnerKey(record.ownerKey)
+    end
+    return nil
+end
+
+-- Exact owner traffic may replace evidence that was retained without durable
+-- authority. The claimed key is evidence only: it can constrain a later
+-- promotion, but never grants relay, edit, or delete authority by itself.
+local function CanPromoteStoredOwner(record, ownerKey)
+    if type(record) ~= "table" or record.ownerVerified == true then
+        return false
+    end
+    local incomingOwner = Identity.CanonicalOwnerKey(ownerKey)
+    if not incomingOwner then return false end
+
+    local claimedOwner = Identity.CanonicalOwnerKey(
+        record.claimedOwnerKey or record.ownerKey)
+    if claimedOwner then return claimedOwner == incomingOwner end
+
+    -- Older retained rows that lost their claim remain ambiguous. Do not infer
+    -- an owner's realm from a short author or from an unrelated relay sender.
+    return false
+end
 
 function Operation.Key(kind, id, version)
     return tostring(kind or "operation") .. ":" .. tostring(id or "")
@@ -616,7 +680,13 @@ Compatibility = CompatibilityFactory.New({
         return Nexus and Nexus.DpsCapture
     end,
     getTombstones=function() return tombstones end,
-    samePeer=SamePeer,
+    localOwnsTomb=function(tomb)
+        local localOwner = CurrentOwnerKey()
+        return type(tomb) == "table" and tomb.ownerVerified == true
+            and localOwner ~= nil
+            and Identity.CanonicalOwnerKey(tomb.ownerKey) == localOwner
+    end,
+    relayEligible=function(build) return RelayEligible(build) end,
     myName=MyName,
     now=Now,
     getCodec=function() return Codec end,
@@ -634,6 +704,15 @@ Compatibility = CompatibilityFactory.New({
 local BuildBucket = Compatibility.BuildBucket
 local TombStamp = Compatibility.TombStamp
 local TombAuthor = Compatibility.TombAuthor
+local function TombOwnerKey(value)
+    return type(value) == "table"
+        and Identity.CanonicalOwnerKey(value.ownerKey) or nil
+end
+local function LocalOwnsTomb(value)
+    local localOwner = CurrentOwnerKey()
+    return type(value) == "table" and value.ownerVerified == true
+        and localOwner ~= nil and TombOwnerKey(value) == localOwner
+end
 local HashText = Compatibility.HashText
 local BuildFingerprint = Compatibility.BuildFingerprint
 local CatalogToken = Compatibility.CatalogToken
@@ -856,6 +935,15 @@ Reconciler = ReconcilerFactory.New({
         return dps.ResponseBucketClaimInfo(bucket)
     end,
     samePeer=SamePeer,
+    isLocalPeer=IsLocalTransportSender,
+    isSelfRequest=function(sender)
+        return IsLocalTransportSender(sender)
+            or (Identity.CanonicalOwnerFromTransport(sender) == nil
+                and SamePeer(sender, MyName()))
+    end,
+    transportOwnsOwner=function(ownerKey, sender)
+        return Identity.TransportOwns(ownerKey, sender)
+    end,
     catalogGet=CatalogGet,
     prepareBuild=function(build, responseMode, responseContext)
         return Responder.PrepareBuild(build, responseMode, responseContext)
@@ -1018,9 +1106,12 @@ function Sync.NoteTransportNotice(text)
 end
 
 
-local function RelayEligible(build)
-    return type(build) == "table"
-        and build.ownerVerified ~= false
+RelayEligible = function(build)
+    local ownerKey = type(build) == "table"
+        and Identity.CanonicalOwnerKey(build.ownerKey) or nil
+    return ownerKey ~= nil
+        and OwnerKeyMatchesAuthor(ownerKey, build.author)
+        and (build.ownerVerified == true or IsExactLocalOwner(build))
         and not (build.legacyRecovered == true
             and build.ownerVerified ~= true)
 end
@@ -1228,7 +1319,7 @@ PendingDeleteCount = function()
     local count = 0
     for id in pairs(pendingDeletes) do
         local tomb = tombstones[id]
-        if tomb and SamePeer(TombAuthor(tomb), MyName()) then
+        if LocalOwnsTomb(tomb) then
             count = count + 1
         end
     end
@@ -1258,7 +1349,7 @@ function Operation.DiscoverPendingDeletes(budget)
         inspected = inspected + 1
         if type(tomb) == "table" and tomb.pending
             and pendingDeletes[id] == nil
-            and SamePeer(TombAuthor(tomb), MyName()) then
+            and LocalOwnsTomb(tomb) then
             pendingDeletes[id] = true
             admitted, available = admitted + 1, available - 1
         end
@@ -1285,7 +1376,7 @@ local function PumpPendingDeletes(elapsed)
             and current >= status.expiresAt then
             ClearPendingDelete(id, tomb)
             Operation.Transition(status, "expired", "delete retry expired")
-        elseif SamePeer(TombAuthor(tomb), MyName())
+        elseif LocalOwnsTomb(tomb)
             and (not selectedId or tostring(id) < tostring(selectedId)) then
             selectedId, selectedTomb, selectedStatus = id, tomb, status
         end
@@ -1346,21 +1437,26 @@ local function StoreSummary(data, transportSender, context)
         return false, false
     end
     data = validated
-    if not SamePeer(data.a, transportSender) then
+    if not Identity.TransportOwns(data.o, transportSender) then
         Responder.NoteContextOutcome(context, "rejected", "ownership")
         return false, false
     end
     local id = tostring(data.id)
     local recoveryRequestId = type(context) == "table"
-        and SamePeer(context.requester, MyName()) and context.requestId or nil
+        and IsLocalTransportSender(context.requester)
+        and context.requestId or nil
     local old, oldSource = CatalogGet(id)
     if old and old.isMine then
         Responder.NoteContextOutcome(context, "rejected", "ownership")
         return false, false
     end
-    if old and not SamePeer(old.author, data.a) then
-        Responder.NoteContextOutcome(context, "rejected", "ownership")
-        return false, false
+    if old then
+        local oldOwner = TrustedStoredOwnerKey(old, oldSource)
+        if not CanPromoteStoredOwner(old, data.o) and (not oldOwner
+            or oldOwner ~= Identity.CanonicalOwnerKey(data.o)) then
+            Responder.NoteContextOutcome(context, "rejected", "ownership")
+            return false, false
+        end
     end
     local stamp = tonumber(data.m) or 0
     local pending = Session.PendingReplacement(id)
@@ -1391,17 +1487,17 @@ local function StoreSummary(data, transportSender, context)
         return true, false
     end
     local tomb = tombstones[id]
-    if tomb and stamp <= TombStamp(tomb) then
-        LogEvent("RX","skip summary '%s': tombstoned", tostring(data.t))
-        Responder.NoteContextOutcome(context, "rejected", "tombstone")
-        return true, false
-    end
-    if tomb and (TombAuthor(tomb) == ""
-        or not SamePeer(TombAuthor(tomb), data.a)) then
+    if tomb and (not TombOwnerKey(tomb)
+        or TombOwnerKey(tomb) ~= Identity.CanonicalOwnerKey(data.o)) then
         LogEvent("RX", "REJECT summary resurrection of '%s': tombstone belongs to %s",
             tostring(id), tostring(TombAuthor(tomb)))
         Responder.NoteContextOutcome(context, "rejected", "ownership")
         return false, false
+    end
+    if tomb and stamp <= TombStamp(tomb) then
+        LogEvent("RX","skip summary '%s': tombstoned", tostring(data.t))
+        Responder.NoteContextOutcome(context, "rejected", "tombstone")
+        return true, false
     end
     local oldStamp = old and (tonumber(old.lastModified) or tonumber(old.postedAt) or 0) or nil
     if oldStamp and stamp < oldStamp then
@@ -1882,7 +1978,11 @@ function Responder.ValidatePreparedDps(payload, originVerified)
     local computed = D and D.GetEchoKey and D.GetEchoKey(payload.e) or nil
     local computedHash = D and D.GetEchoHash and D.GetEchoHash(payload.e)
         or nil
-    local directOwner = SamePeer(player, MyName())
+    local canonicalOwner = D and type(D.HasCanonicalOwnerIdentity) == "function"
+        and D.HasCanonicalOwnerIdentity(payload) == true
+    local directOwner = originVerified == true
+        and CurrentOwnerKey() ~= nil
+        and Identity.CanonicalOwnerKey(payload.o) == CurrentOwnerKey()
     local relayContext = payload.x
     local relayValid = not directOwner and originVerified == true
         and ValidDpsRelayContext({n=relayContext and relayContext.n,
@@ -1896,7 +1996,7 @@ function Responder.ValidatePreparedDps(payload, originVerified)
         and player ~= "" and #player <= 64 and not player:find("[%c|]")
         and (payload.c == "dummy" or payload.c == "lk")
         and (directOwner or relayValid)
-        and OwnerKeyMatchesAuthor(payload.o, player)
+        and canonicalOwner
         and computed and computed == payload.f
         and payload.h and (not computedHash or payload.h == computedHash)
 end
@@ -1984,8 +2084,14 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
         or player == "" or #player > 64 or player:find("[%c|]") then
         return false, "schema"
     end
+    if not (D and type(D.HasCanonicalOwnerIdentity) == "function"
+            and D.HasCanonicalOwnerIdentity(record) == true) then
+        return false, "owner_sender"
+    end
     local computed = D and D.GetEchoKey and D.GetEchoKey(record.echoes) or nil
-    local directOwner = SamePeer(player, MyName())
+    local directOwner = record.ownerVerified == true
+        and CurrentOwnerKey() ~= nil
+        and Identity.CanonicalOwnerKey(record.ownerKey) == CurrentOwnerKey()
     local relayContext
     if not directOwner then
         if not responseMode then return false, "owner_sender" end
@@ -2008,9 +2114,6 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
     local envelopeContext = type(responseContext) == "table"
         and Responder.RequestContext(responseContext.requester,
             responseContext.requestId, responseContext.bucket) or nil
-    if not OwnerKeyMatchesAuthor(record.ownerKey, player) then
-        return false, "owner_sender"
-    end
     if not computed or computed ~= record.fingerprint then
         return false, "integrity"
     end
@@ -2062,7 +2165,8 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
         Reconciler.NoteStat("chunkMessagesBuilt", #messages)
     end
     prepared = {messages=messages, payload=payload,context=envelopeContext,
-        originVerified=record._originVerified == true}
+        originVerified=record.ownerVerified == true
+            or record._originVerified == true}
     local wireCost = PreparedWireCost(prepared, responseMode, false)
     local budgetWhy = ResponseBudgetReason(wireCost, responseBudget)
     if budgetWhy then
@@ -2116,7 +2220,13 @@ function Sync.BroadcastDelete(build)
         MAX_BUILD_ID_BYTES) then return false end
     local id = tostring(build.id)
     local author = tostring(build.author or MyName())
-    if not SamePeer(author, MyName()) then return false end
+    local localOwner = CurrentOwnerKey()
+    if not localOwner
+        or Identity.CanonicalOwnerKey(build.ownerKey) ~= localOwner
+        or not (build.ownerVerified == true
+            or (build.isMine == true and build.ownerVerified ~= false)) then
+        return false
+    end
     local existing = tombstones[id]
     local existingVersion = existing and (tostring(TombStamp(existing))
         .. ":" .. TombAuthor(existing)) or ""
@@ -2124,7 +2234,7 @@ function Sync.BroadcastDelete(build)
         existingVersion) or nil
     local active = existingKey and Operation.activeDeletes[existingKey] or nil
     if active and active.terminal ~= true
-        and SamePeer(active.owner, author) then
+        and existing and LocalOwnsTomb(existing) then
         Operation.latestDelete = active
         return true, "already queued", Operation.Copy(active)
     end
@@ -2136,9 +2246,10 @@ function Sync.BroadcastDelete(build)
             or previous.outcome == "reset"
             or previous.outcome == "rejected")
     local tomb = retryable and existing
-        and SamePeer(TombAuthor(existing), author)
+        and LocalOwnsTomb(existing)
         and tostring(previous.version) == existingVersion and existing or {
             stamp=tonumber((time and time()) or 0) or 0,author=author,
+            ownerKey=localOwner,ownerVerified=true,
         }
     local tombStored, tombStoreWhy = CatalogSetTombstone(id, tomb)
     if tombStored == false then
@@ -2192,15 +2303,18 @@ end
 -- Incoming
 ------------------------------------------------------------------------
 
-local function ShouldStore(id, lastMod, author)
+local function ShouldStore(id, lastMod, author, ownerKey, transportSender)
     if not AllowsRemoteRevision(author, lastMod, id) then
         return false, "retention floor"
     end
     local tomb = tombstones[id]
-    if tomb and (tonumber(lastMod) or 0) <= TombStamp(tomb) then return false, "deleted" end
-    if tomb and (TombAuthor(tomb) == ""
-        or not SamePeer(TombAuthor(tomb), author)) then
+    if tomb and (not TombOwnerKey(tomb)
+        or TombOwnerKey(tomb) ~= Identity.CanonicalOwnerKey(ownerKey)
+        or not Identity.TransportOwns(TombOwnerKey(tomb), transportSender)) then
         return false, "tombstone owner"
+    end
+    if tomb and (tonumber(lastMod) or 0) <= TombStamp(tomb) then
+        return false, "deleted"
     end
     local existing = CatalogGet(id)
     local known = seenRemoteIds[id]
@@ -2235,6 +2349,7 @@ local function StoreReceivedBuild(payload, ownerVerified, relaySender,
         id=payload.id, title=payload.title, description=payload.description,
         author=payload.author,
         ownerKey=ownerVerified and payload.ownerKey or nil,
+        claimedOwnerKey=not ownerVerified and payload.ownerKey or nil,
         class=payload.class, echoes=payload.echoes,
         postedAt=payload.postedAt, lastModified=payload.lastModified, isMine=mine,
         autoDps=payload.autoDps, fingerprint=fingerprint,
@@ -2260,11 +2375,13 @@ local function StoreReceivedBuild(payload, ownerVerified, relaySender,
 end
 
 local function CommitReceivedBuild(payload, transportSender, context)
-    local directOwner = SamePeer(payload.author, transportSender)
+    local directOwner = Identity.TransportOwns(
+        payload.ownerKey, transportSender)
     local existing, existingSource = CatalogGet(payload.id)
     local previousRemoteStamp = seenRemoteIds[payload.id]
-    local replacingUnverified = existing and existing.ownerVerified == false
-        and directOwner and SamePeer(existing.author, payload.author)
+    local payloadOwner = Identity.CanonicalOwnerKey(payload.ownerKey)
+    local replacingUnverified = existing and directOwner
+        and CanPromoteStoredOwner(existing, payloadOwner)
     local pending = Session.PendingReplacement(payload.id)
     local matchedReplacement = false
     local replacementFingerprint = BuildFingerprint(payload)
@@ -2315,12 +2432,22 @@ local function CommitReceivedBuild(payload, transportSender, context)
             matchedReplacement = true
         end
     end
+    if existing and not existing.isMine and not replacingUnverified then
+        local existingOwner = TrustedStoredOwnerKey(existing, existingSource)
+        if not existingOwner or existingOwner ~= payloadOwner then
+            LogEvent("RX", "REJECT owner change for '%s'", tostring(payload.id))
+            PeerObserve("receiver_commit", {id=payload.id,
+                peer=transportSender,outcome="rejected",reason="owner change"})
+            Responder.NoteContextOutcome(context, "rejected", "ownership")
+            return false
+        end
+    end
     local allowed, why
     if replacingUnverified then
         allowed, why = true, "owner-verified"
     else
         allowed, why = ShouldStore(payload.id, payload.lastModified,
-            payload.author)
+            payload.author, payload.ownerKey, transportSender)
     end
     if not allowed then
         if why == "deleted" then
@@ -2345,7 +2472,7 @@ local function CommitReceivedBuild(payload, transportSender, context)
         PeerObserve("receiver_commit", {id=payload.id,peer=transportSender,
             outcome=why == "deleted" and "tombstoned" or "duplicate",
             reason=why})
-        return true
+        return why ~= "tombstone owner"
     end
     if existing and not directOwner then
         LogEvent("RX", "REJECT relayed overwrite of '%s' from %s",
@@ -2360,13 +2487,6 @@ local function CommitReceivedBuild(payload, transportSender, context)
             tostring(payload.id))
         PeerObserve("receiver_commit", {id=payload.id,peer=transportSender,
             outcome="rejected",reason="local owner"})
-        Responder.NoteContextOutcome(context, "rejected", "ownership")
-        return false
-    end
-    if existing and not SamePeer(existing.author, payload.author) then
-        LogEvent("RX", "REJECT owner change for '%s'", tostring(payload.id))
-        PeerObserve("receiver_commit", {id=payload.id,peer=transportSender,
-            outcome="rejected",reason="owner change"})
         Responder.NoteContextOutcome(context, "rejected", "ownership")
         return false
     end
@@ -2434,7 +2554,7 @@ local function HandleClaim(responder, requester, requestId, buildHash, dpsHash)
         buildHash=buildHash, dpsHash=dpsHash,
     })
     if handled then return true end
-    if SamePeer(requester, MyName()) and Session
+    if IsLocalTransportSender(requester) and Session
         and type(Session.NotePeerClaim) == "function" then
         return Session.NotePeerClaim(requestId, buildHash, dpsHash)
     end
@@ -2447,7 +2567,7 @@ local function HandleBucketClaim(responder, requester, requestId, kind, bucket, 
         kind=kind, bucket=bucket, hash=bucketHash,
     })
     if handled then return true end
-    if SamePeer(requester, MyName()) then
+    if IsLocalTransportSender(requester) then
         if Session.AcceptsResponse(requestId) then return true end
         Session.NoteOutcome(requestId, "unrelated", "request_auth")
     end
@@ -2471,7 +2591,7 @@ local function ProcessPendingResponses(elapsed)
 end
 
 local function HandleDelete(sender, buildId, stamp, originAuthor, context)
-    local existing = CatalogGet(buildId)
+    local existing, existingSource = CatalogGet(buildId)
     -- originAuthor is an optional 5th field; treat empty string same as nil
     local author = tostring((originAuthor and originAuthor ~= "")
         and originAuthor or sender or "")
@@ -2481,9 +2601,15 @@ local function HandleDelete(sender, buildId, stamp, originAuthor, context)
             tostring(buildId), tostring(sender))
         return false
     end
-    local tomb = { stamp=tonumber(stamp) or 0, author=author }
     local prior = tombstones[buildId]
-    if prior and TombStamp(prior) >= tomb.stamp then
+    if prior and (not TombOwnerKey(prior)
+        or not Identity.TransportOwns(TombOwnerKey(prior), sender)) then
+        Responder.NoteContextOutcome(context, "rejected", "ownership")
+        LogEvent("RX", "REJECT tombstone claim for '%s' from %s",
+            tostring(buildId), tostring(sender))
+        return false
+    end
+    if prior and TombStamp(prior) >= (tonumber(stamp) or 0) then
         Responder.NoteContextOutcome(context, "duplicate", "stale")
         return true
     end
@@ -2499,12 +2625,24 @@ local function HandleDelete(sender, buildId, stamp, originAuthor, context)
             tostring(existing.title), tostring(sender))
         return false
     end
-    if not SamePeer(existing.author, sender) then
+    local senderOwner = Identity.CanonicalOwnerFromTransport(sender)
+    local existingOwner = TrustedStoredOwnerKey(existing, existingSource)
+    if not existingOwner
+        and CanPromoteStoredOwner(existing, senderOwner) then
+        existingOwner = senderOwner
+    end
+    if not existingOwner
+        or not Identity.TransportOwns(existingOwner, sender) then
         Responder.NoteContextOutcome(context, "rejected", "ownership")
         LogEvent("RX","REJECT delete of '%s': origin %s is not the author (%s)",
             tostring(existing.title), author, tostring(existing.author))
         return false
     end
+    local tomb = {
+        stamp=tonumber(stamp) or 0,author=author,
+        ownerKey=existingOwner,
+        ownerVerified=true,
+    }
     local tombStored = CatalogSetTombstone(buildId, tomb)
     if tombStored == false then
         stats.storageRejected = (stats.storageRejected or 0) + 1
@@ -2614,7 +2752,7 @@ Inbound = InboundFactory.New({
     end,
     noteInbound=function(description)
         if type(description) == "table" and description.requester
-            and not SamePeer(description.requester, MyName()) then
+            and not IsLocalTransportSender(description.requester) then
             return false
         end
         local requestId = type(description) == "table"
@@ -2650,7 +2788,7 @@ Inbound = InboundFactory.New({
     handleLoadoutClaim=function(description)
         local handled = Reconciler.HandleLoadoutClaim(description)
         if handled then return true end
-        if SamePeer(description.requester, MyName())
+        if IsLocalTransportSender(description.requester)
             and description.requestId ~= nil then
             if Session.AcceptsResponse(description.requestId) then return true end
             Session.NoteOutcome(description.requestId, "unrelated", "request_auth")
@@ -2664,7 +2802,8 @@ Inbound = InboundFactory.New({
             and (record.p or record.player) or nil
         local category = type(record) == "table"
             and (record.c or record.category) or nil
-        local directOwner = SamePeer(player, sender)
+        local directOwner = Identity.TransportOwns(
+            type(record) == "table" and (record.o or record.ownerKey), sender)
         local marked = Responder.SupportsRequestContext(context and context.i)
         -- Old protocol-7 responders can echo the marked request in relay JSON
         -- but cannot add the Stage 36.3 envelope suffix.  Preserve that
@@ -2672,7 +2811,7 @@ Inbound = InboundFactory.New({
         -- x and envelope exactly before they can affect request progress.
         local envelopeMatches = envelopeContext == nil
             or (marked and type(envelopeContext) == "table"
-                and SamePeer(context.n, envelopeContext.requester)
+                and SameTransportSender(context.n, envelopeContext.requester)
                 and tostring(context.i) == tostring(envelopeContext.requestId)
                 and tonumber(context.b) == tonumber(envelopeContext.bucket))
         local valid
@@ -2684,7 +2823,7 @@ Inbound = InboundFactory.New({
         else
             valid = Session.AcceptsResponse(context and context.i)
                 and type(context) == "table"
-                and SamePeer(context.n, MyName())
+                and IsLocalTransportSender(context.n)
                 and envelopeMatches
                 and ValidDpsRelayContext({n=context.n,i=context.i,b=context.b,
                     c=category}, player)
@@ -2731,8 +2870,13 @@ Inbound = InboundFactory.New({
         PeerObserve("dps_commit", {peer=sender,outcome="accepted",
             category=record.c or record.category,
             relay=relayed and true or false})
-        -- Mesh redistribution retains the established accepted-record path.
-        if not relayed then Sync.BroadcastDpsRecord(record) end
+        -- Never reuse payload-supplied authority hints for automatic egress.
+        -- Only an exact transport-to-owner bridge may enter the established
+        -- direct-owner redistribution path.
+        if not relayed and Identity.TransportOwns(
+                record.o or record.ownerKey, sender) then
+            Sync.BroadcastDpsRecord(record)
+        end
         local buildId = record.b or record.buildId
         local build = buildId and CatalogGet(buildId)
         if build and type(build.echoes) == "table" and #build.echoes > 0 then
@@ -2769,6 +2913,14 @@ Session = SessionFactory.New({
     now=Now,
     myName=MyName,
     normalizePeerName=NormalizePeerName,
+    shortPeerName=function(name)
+        return Identity.PlayerKey(name) or ""
+    end,
+    isLocalPeer=function(sender)
+        return IsLocalTransportSender(sender)
+            or (Identity.CanonicalOwnerFromTransport(sender) == nil
+                and SamePeer(sender, MyName()))
+    end,
     bumpSync=BumpSync,
     log=LogEvent,
     validIdentifier=function(buildId)
@@ -2831,7 +2983,8 @@ function Sync.GetLeaderboardSyncStatus()
     local transport = Transport.Snapshot()
     local requestTransport = Transport.RequestSnapshot(MyName(),
         session.requestId)
-    local requestIncoming = Inbound.RequestCounts(MyName(), session.requestId)
+    local requestIncoming = Inbound.RequestCounts(
+        CurrentTransportSender(), session.requestId)
     local work = Diagnostics.ProjectSyncWork({
         transport=transport,
         reconciliation=Reconciler.Counts(),

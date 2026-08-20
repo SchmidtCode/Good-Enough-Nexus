@@ -39,6 +39,7 @@ local baseRecord = {
     protocolVersion=7,fingerprint=fingerprint,loadoutHash=loadoutHash,
     echoes=echoes,category="dummy",dps=250000,duration=30,ts=40000,
     player="LocalOwner",level=80,class="MAGE",
+    ownerKey="localowner@ebonhold",realm="ebonhold",ownerVerified=true,
 }
 local function Variant(changes)
     local out = {}
@@ -60,10 +61,12 @@ CheckOutboundReason("invalid_category", {category="other"})
 CheckOutboundReason("schema", {level=0})
 CheckOutboundReason("owner_sender", {player="RemoteOwner"})
 CheckOutboundReason("relay_authorization", {
-    player="RemoteRelay",_originVerified=false,
+    player="RemoteRelay",ownerKey="remoterelay@ebonhold",
+    ownerVerified=false,_originVerified=false,
 }, true, {requester="Requester",requestId="diagnostic",bucket=1})
 CheckOutboundReason("outside_request", {
-    player="RemoteOutside",_originVerified=true,
+    player="RemoteOutside",ownerKey="remoteoutside@ebonhold",
+    ownerVerified=false,_originVerified=true,
 }, true, nil)
 CheckOutboundReason("integrity", {fingerprint="different"})
 local firstDirect, firstWhy = Sync.BroadcastDpsRecord(Variant())
@@ -219,23 +222,25 @@ local revisionBefore = Nexus.Revisions.Get(revisionKind)
 local inbound = {
     v=7,f=fingerprint,h=loadoutHash,e=echoes,c="dummy",d=350000,u=30,
     t=41000,p="Inbound",l=80,k="MAGE",
+    o="inbound@ebonhold",r="ebonhold",
 }
-Check(DPS.ReceiveRecord(inbound,"Inbound") == true,
+Check(DPS.ReceiveRecord(inbound,"Inbound-Ebonhold") == true,
     "valid current inbound row was not accepted")
 local revisionAccepted = Nexus.Revisions.Get(revisionKind)
 local digestAccepted = DPS.GetSyncHash()
 Check(revisionAccepted == revisionBefore + 1
         and digestAccepted ~= digestBefore,
     "accepted row did not advance one DPS revision and digest")
-Check(DPS.ReceiveRecord(inbound,"Inbound") == false,
+Check(DPS.ReceiveRecord(inbound,"Inbound-Ebonhold") == false,
     "exact duplicate inbound row was not rejected")
 local stale = Variant({
     v=7,protocolVersion=nil,f=fingerprint,h=loadoutHash,e=echoes,
     c="dummy",d=340000,u=30,t=40000,p="Inbound",l=80,k="MAGE",
+    o="inbound@ebonhold",r="ebonhold",
     fingerprint=nil,loadoutHash=nil,echoes=nil,category=nil,dps=nil,
     duration=nil,ts=nil,player=nil,level=nil,class=nil,
 })
-Check(DPS.ReceiveRecord(stale,"Inbound") == false,
+Check(DPS.ReceiveRecord(stale,"Inbound-Ebonhold") == false,
     "stale inbound row was not rejected")
 Check(Nexus.Revisions.Get(revisionKind) == revisionAccepted
         and DPS.GetSyncHash() == digestAccepted,

@@ -136,7 +136,7 @@ local compact = {
     d=36030000,u=65,t=49000,p=provisionalOwner,l=80,k="MAGE",
     o=provisionalOwner:lower() .. "@ebonhold",r="ebonhold",
 }
-assert(DPS.ReceiveRecord(compact, provisionalOwner),
+assert(DPS.ReceiveRecord(compact, provisionalOwner .. "-Ebonhold"),
     "direct-owner seed was rejected")
 local _, provisionalDpsHash = Sync.GetCompatibilityHashes()
 local dpsBucket = assert(NonzeroBucket(provisionalDpsHash),
@@ -163,7 +163,7 @@ compact = {
     d=36030000,u=65,t=49000,p=owner,l=80,k="MAGE",
     o=owner:lower() .. "@ebonhold",r="ebonhold",
 }
-assert(DPS.ReceiveRecord(compact, owner),
+assert(DPS.ReceiveRecord(compact, owner .. "-Ebonhold"),
     "ranked direct-owner seed was rejected")
 local seedBuildHash, seedDpsHash = Sync.GetCompatibilityHashes()
 dpsBucket = assert(NonzeroBucket(seedDpsHash),
@@ -580,7 +580,8 @@ local function SeedRecordSet(localName, records)
         communityBuilds={},syncTombstones={},dpsCapture={},
     })
     for _, item in ipairs(records) do
-        local sender = item.verified and item.record.p or nil
+        local sender = item.verified
+            and (item.record.p .. "-Ebonhold") or nil
         assert(seedDps.ReceiveRecord(item.record, sender),
             "multi-record seed was rejected")
     end

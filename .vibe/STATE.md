@@ -6,33 +6,33 @@
 
 ## Current focus
 
-- Stage: 46
-- Checkpoint: 46.1
-- Status: DONE
-- Branch: `bugfix/test19-wp1-issue39`
-- Candidate head: reviewed implementation `981a2572a5678d19896c1110e3d83af3ec43e423` plus local receipt-only Vibe head; all changes remain unpushed
-- Worktree: `.wp1-issue39-worktree`
-- Base: `origin/refactor/nexus-1.20-test17` at `3965b107574d4a394e0672cb130eab7e4694e7b5`
+- Stage: 47
+- Checkpoint: 47.1
+- Status: IN_REVIEW
+- Branch: `refactor/test19-wp2-wp5`
+- Candidate head: checkpoint 47.1 implementation candidate; exact commit recorded after the pending local checkpoint commit
+- Worktree: `.test19-wp2-wp5-worktree`
+- Base: published WP1 head `03870e75254848c941dcd3534a9c79a90a644fe3`
 
 ## Objective (current checkpoint)
 
-Prevent locked-baseline migration from applying unproven evidence to historical DPS rows, including across interrupted-restart ordering.
+Make durable owner claims require exact realm-qualified transport identity while keeping transport-envelope and presentation-name comparisons separate.
 
 ## Deliverables (current checkpoint)
 
-- Focused `tests/run_locked_migration_authority.lua` coverage for preservation, login order, restart, future-schema, and no-churn behavior.
-- `tests/run_migration_owned_lifecycle.lua` retained for authoritative wait, immutable interruption source, retry, and idempotence without current-character guessing.
-- One fail-closed `core/DpsCapture.lua` migration owner that restores an immutable interrupted source before any side-effecting migration work and otherwise preserves historical rows.
-- Focused mapped DPS tests plus Lua 5.1 parse, Fast, required Full, diff/scope review, and explicitly staged local follow-up commits.
+- One canonical-owner API in `core/Identity.lua` with explicit verified/unverified results.
+- Sync ingress/egress adoption at durable ownership boundaries without changing protocol 7.
+- Focused same-name cross-realm, realm-less, reload, relay, and owner-action coverage.
+- Expected-red, focused green, mapped tests, Lua 5.1 parse, Fast, required review/Full, and exact-scope receipts.
 
 ## Acceptance (current checkpoint)
 
-- [x] Expected red proves a remote row loses a locally locked ordinary Echo under the old lifecycle.
-- [x] Pre-v1 and interrupted migration preserve every historical row, restoring and retiring a surviving immutable source before readiness gating or any partial live row side effect.
-- [x] Completed-v1 rows remain unchanged because direct references and strict-subset relationships prove content consistency, not historical association.
-- [x] Login order, late current-state backfill, restart/retry/idempotence, future-schema/read-only, no-lock, and Sync fingerprint stability regressions pass.
-- [x] Mapped DPS tests, related board/evidence/migration tests, Lua 5.1 parse, Fast, required Full, and `git diff --check` pass on exact final repaired code/test bytes.
-- [x] Reviewed WP1 paths are staged explicitly into local repair commit(s); no GitHub, package, install, Test18, live addon, or SavedVariables mutation occurs.
+- [x] An exact `name@realm` sender can establish only that canonical owner.
+- [x] A same-name sender from another realm cannot claim, edit, delete, relay as owner, or replace that record.
+- [x] Realm-less transport remains unverified and never becomes durable ownership through `SamePlayer()`.
+- [x] `SameTransportSender()` remains the envelope anti-spoofing owner and `SamePlayer()` remains presentation-only.
+- [x] Two verified same-name/different-realm records coexist across reload without ownership drift.
+- [ ] Focused owner/transport tests, mapped tests, Lua 5.1 parse, Fast, required review/Full, and diff checks pass.
 
 ## Evidence
 
@@ -57,6 +57,8 @@ Prevent locked-baseline migration from applying unproven evidence to historical 
 
 ## Work log
 
+- Checkpoint 47.1 implementation established exact transport-to-owner authority, isolated non-authoritative owner claims, hardened build/DPS/tombstone/claim paths, updated realm-aware fixtures, passed focused/mapped/Fast validation, and froze the candidate for independent review without running Full.
+- New human direction authorized one autonomous local WP2-WP5 Test19 effort. A clean isolated worktree was created at the exact published WP1 head, and Stages 47-49 now preserve the authoritative package order through eleven bounded checkpoints.
 - Stage 46.1 final checkpoint hygiene CLEAN: bounded review of `core/DpsCapture.lua` and the two repaired migration runners found no redundant policy owner, unsafe compatibility branch, speculative abstraction, correctness/security issue, or actionable deferred debt; product/test bytes remain frozen at `981a257`.
 - Stage 46.1 final review PASS: independent Spec and Standards axes accepted source-first unsynced rollback, fail-closed preservation, readiness retry, revision ownership, validation, and Vibe truth with no remaining finding or hygiene signal.
 - Stage 46.1 final source-first implementation restores/retires rollback before readiness, leaves only the version stamp gated, preserves authoritative retry/reload behavior, and froze the final validated bytes for review.
@@ -96,7 +98,7 @@ Prevent locked-baseline migration from applying unproven evidence to historical 
 
 ## Workflow state
 
-- [x] RUN_STOPPED
+- [ ] RUN_STOPPED
 - [ ] RUN_CONTEXT_CAPTURE
 - [x] STAGE_DESIGNED
 - [x] MAINTENANCE_CYCLE_DONE
@@ -105,7 +107,7 @@ Prevent locked-baseline migration from applying unproven evidence to historical 
 
 ## Active issues
 
-- None.
+- #28 — canonical ownership authority.
 
 ## Blockers
 
@@ -113,12 +115,17 @@ Prevent locked-baseline migration from applying unproven evidence to historical 
 
 ## Deferred work
 
+- #49 remains the next narrow prerelease blocker after the already-proven Test19 correctness/data/migration/Sync package sequence; its future scope is a fail-closed OrbService guard only, never Orb automation.
+- #50 remains a later Snapshot/Designed contract audit; it is not permission to manufacture a code change when current behavior is already correct.
 - LuaLS, Luacheck, and StyLua remain advisory-unavailable and are not represented as passes.
 - Native test.17 and all install/live/release activity remain outside this infrastructure workflow.
 - Release Policy run `31957168563` failed once at `tests/run_startup_catalog_cost.lua:103` before unchanged product/runtime-test bytes passed replacement run `31957769870`; the nondeterministic LuaJIT result remains disclosed for independent review.
 
 ## Decisions
 
+- Execute WP2, WP3, WP4, and WP5 as one sustained local effort but preserve their dependency order and a separate implementation/review/hygiene/commit boundary for every checkpoint.
+- Treat the master-chat order as authoritative: WP2 is #28/#41/#42, WP3 is #30/#37 then #19 acceptance, WP4 is #43/#44/#20/#35, and WP5 is #23/#26.
+- Preserve the published WP1 branch/worktree, publication worktree, Test18 worktree, dirty root, and unrelated hotfix worktree; only `.test19-wp2-wp5-worktree` may receive these changes.
 - Inline and referenced locked evidence prove content integrity but not historical provenance because current-state backfill can create both; absent a durable provenance bridge, automatic subtraction is forbidden.
 - An interrupted migration restores `lockedMigrationSource` exactly before completing the fail-closed version stamp; completed-v1 rows are not automatically reversed from direct references or subset relationships.
 - Source restoration and rollback-source retirement precede both readiness gating and `MigrateLegacyLeaderboard` so partial live rows cannot leak evidence or revision side effects.
@@ -133,8 +140,8 @@ Prevent locked-baseline migration from applying unproven evidence to historical 
 
 ## Last completed loop
 
-- Stage 46.1 final adversarial review passed `981a257`; the plan is exhausted at the requested local WP1 conclusion.
+- Checkpoint 47.1 implementation completed and moved to independent Spec/Standards review on frozen product/test bytes.
 
 ## Recommended next action
 
-- Stop at the clean local WP1 independent-review conclusion; do not publish or advance to WP2 without new authorization.
+- Commit the frozen checkpoint 47.1 candidate, run independent Spec/Standards review, then execute the single required Full only after review accepts the bytes.
