@@ -10,7 +10,7 @@
 - Checkpoint: 47.1
 - Status: IN_REVIEW
 - Branch: `refactor/test19-wp2-wp5`
-- Candidate head: replacement checkpoint 47.1 candidate; exact commit recorded after the pending local repair commit
+- Candidate product/test head: `781165b484a2c7fdd5100fbef457e40138840de3` (`47.1: close canonical authority full-suite regressions`)
 - Worktree: `.test19-wp2-wp5-worktree`
 - Base: published WP1 head `03870e75254848c941dcd3534a9c79a90a644fe3`
 
