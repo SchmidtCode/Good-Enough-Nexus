@@ -10,7 +10,7 @@
 - Checkpoint: 47.1
 - Status: IN_REVIEW
 - Branch: `refactor/test19-wp2-wp5`
-- Candidate head: checkpoint 47.1 implementation candidate; exact commit recorded after the pending local checkpoint commit
+- Candidate head: `5ceb11e69c3d9f24102b6c2b03608583af39e0c1` (`47.1: enforce canonical transport owner authority`)
 - Worktree: `.test19-wp2-wp5-worktree`
 - Base: published WP1 head `03870e75254848c941dcd3534a9c79a90a644fe3`
 
