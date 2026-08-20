@@ -1083,8 +1083,12 @@ end
 
 local function PreparedWireCost(prepared, responseMode, countChunks)
     if type(prepared) ~= "table" then return WireCost(nil) end
-    if type(prepared.wireCost) ~= "table" then
-        prepared.wireCost = WireCost(prepared.messages)
+    local firstMeasurement = type(prepared.wireCost) ~= "table"
+    -- The cache object is caller-visible when admission is deferred. Always
+    -- derive budget accounting from the integrity-bound messages rather than
+    -- trusting a retained or caller-modified scalar summary.
+    prepared.wireCost = WireCost(prepared.messages)
+    if firstMeasurement then
         if responseMode then
             if countChunks then
                 Reconciler.NoteStat("chunkMessagesBuilt",
@@ -2113,7 +2117,7 @@ end
 -- cache can never supply authority or arbitrary wire bytes on a later retry.
 local preparedDpsProofs = setmetatable({}, {__mode="k"})
 
-local function PreparedDpsProof(prepared)
+local function PreparedDpsProof(prepared, responseMode)
     if type(prepared) ~= "table" or type(prepared.messages) ~= "table"
         or type(prepared.payload) ~= "table" then return nil end
     local messages = {}
@@ -2126,9 +2130,22 @@ local function PreparedDpsProof(prepared)
         prepared.context or false)
     if not okPayload or not okContext then return nil end
     return table.concat({
+        responseMode and "1" or "0",
         prepared.originVerified == true and "1" or "0",
         payload, context, tostring(#messages), table.concat(messages, "\0"),
     }, "\1")
+end
+
+local function SamePreparedDpsContext(preparedContext, responseContext)
+    local current = type(responseContext) == "table"
+        and Responder.RequestContext(responseContext.requester,
+            responseContext.requestId, responseContext.bucket) or nil
+    if preparedContext == nil or current == nil then
+        return preparedContext == nil and current == nil
+    end
+    return preparedContext.requester == current.requester
+        and preparedContext.requestId == current.requestId
+        and preparedContext.bucket == current.bucket
 end
 
 local function CurrentPreparedDpsAuthority(record, payload, responseMode,
@@ -2142,8 +2159,12 @@ local function CurrentPreparedDpsAuthority(record, payload, responseMode,
     end
     local verifiedOwner = D.VerifiedOwnerKey(record)
     if not verifiedOwner then return false, "relay_authorization" end
+    local category = record.category
+    if category ~= "dummy" and category ~= "lk" then
+        return false, "stale prepared DPS"
+    end
     local current = D.GetCharacterBest(
-        record.category, record.player, verifiedOwner)
+        category, record.player, verifiedOwner)
     if type(current) ~= "table"
         or D.VerifiedOwnerKey(current) ~= verifiedOwner then
         return false, "stale prepared DPS"
@@ -2152,6 +2173,10 @@ local function CurrentPreparedDpsAuthority(record, payload, responseMode,
     local loadoutHash = current.loadoutHash
         or (type(D.GetEchoHash) == "function"
             and D.GetEchoHash(current.echoes) or nil)
+    local currentBuildId = VerifiedDpsBuildId(
+        verifiedOwner, fingerprint, current.buildId)
+    local currentLocked = D.GetEchoKey(current.lockedEchoes) or "0"
+    local payloadLocked = D.GetEchoKey(payload.lk) or "0"
     local currentOwner = CurrentOwnerKey()
     local directOwner = currentOwner ~= nil and verifiedOwner == currentOwner
     if not directOwner then
@@ -2165,7 +2190,7 @@ local function CurrentPreparedDpsAuthority(record, payload, responseMode,
                 and responseContext.requestId or nil,
             b=type(responseContext) == "table"
                 and responseContext.bucket or nil,
-            c=current.category,
+            c=category,
         }
         local wireRelay = payload.x
         if not ValidDpsRelayContext(relay, current.player) then
@@ -2181,7 +2206,9 @@ local function CurrentPreparedDpsAuthority(record, payload, responseMode,
     if Identity.CanonicalOwnerKey(payload.o) ~= verifiedOwner
         or tostring(payload.f or "") ~= tostring(fingerprint or "")
         or tostring(payload.h or "") ~= tostring(loadoutHash or "")
-        or tostring(payload.c or "") ~= tostring(current.category or "")
+        or payload.b ~= currentBuildId
+        or payloadLocked ~= currentLocked
+        or payload.c ~= category
         or tostring(payload.p or "") ~= tostring(current.player or "")
         or tonumber(payload.d) ~= math.floor(tonumber(current.dps) or -1)
         or tonumber(payload.u) ~= tonumber(current.duration)
@@ -2211,7 +2238,9 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
     if prepared ~= nil then
         local expectedProof = preparedDpsProofs[prepared]
         if expectedProof == nil
-            or PreparedDpsProof(prepared) ~= expectedProof then
+            or PreparedDpsProof(prepared, responseMode) ~= expectedProof
+            or not SamePreparedDpsContext(prepared.context,
+                responseContext) then
             return false, "relay_authorization"
         end
     end
@@ -2219,10 +2248,10 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
         and prepared.payload.b ~= nil
         and not VerifiedDpsBuildId(prepared.payload.o,
             prepared.payload.f, prepared.payload.b) then
-        -- A deferred payload is only a serialization cache. Catalog authority
-        -- may change while it waits for queue/wire budget, so rebuild it from
-        -- the durable row and drop any relationship that is no longer valid.
-        prepared = nil
+        -- Never fall through and rebuild from the caller-held record: the
+        -- durable row or its owner authority may have changed while this cache
+        -- waited. A later candidate scan can serialize current evidence anew.
+        return false, "stale prepared DPS"
     end
     if prepared ~= nil then
         if type(prepared) ~= "table" or type(prepared.messages) ~= "table"
@@ -2391,7 +2420,7 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
     prepared = {messages=messages, payload=payload,context=envelopeContext,
         originVerified=directOwner
             or (verifiedOwner ~= nil and record._originVerified == true)}
-    preparedDpsProofs[prepared] = PreparedDpsProof(prepared)
+    preparedDpsProofs[prepared] = PreparedDpsProof(prepared, responseMode)
     local wireCost = PreparedWireCost(prepared, responseMode, false)
     local budgetWhy = ResponseBudgetReason(wireCost, responseBudget)
     if budgetWhy then

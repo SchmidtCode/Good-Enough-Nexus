@@ -592,6 +592,182 @@ local revokedAdmitted, revokedWhy = Sync.BroadcastDpsRecord(
 assert(revokedAdmitted == false and revokedWhy == "relay_authorization",
     "EXPECTED RED: prepared DPS cache restored revoked owner authority")
 
+local retryableRelay = DeepCopy(verboseRecord)
+retryableRelay.ownerVerified = true
+retryableRelay._originVerified = true
+local relayDeferred, relayDeferredWhy, relayPrepared =
+    Sync.BroadcastDpsRecord(retryableRelay, nil, true, preparedContext,
+        {chunks=0,bytes=0,seconds=0,transfers=0})
+assert(relayDeferred == false and relayDeferredWhy == "response wire budget"
+    and type(relayPrepared) == "table",
+    "verified relay did not expose a retryable prepared response")
+local relayRetried, relayRetryWhy = Sync.BroadcastDpsRecord(
+    retryableRelay, relayPrepared, true, preparedContext,
+    {chunks=64,bytes=16384,seconds=75,transfers=8})
+assert(relayRetried == true and relayRetryWhy == nil,
+    "verified relay could not reuse its unchanged prepared response")
+
+local costDeferred, costDeferredWhy, costPrepared =
+    Sync.BroadcastDpsRecord(retryableRelay, nil, true, preparedContext,
+        {chunks=0,bytes=0,seconds=0,transfers=0})
+assert(costDeferred == false and costDeferredWhy == "response wire budget"
+    and type(costPrepared) == "table",
+    "verified relay did not expose a prepared cost-control response")
+costPrepared.wireCost = {chunks=0,bytes=0,seconds=0,transfers=0}
+local costBypassed, costBypassWhy = Sync.BroadcastDpsRecord(
+    retryableRelay, costPrepared, true, preparedContext,
+    {chunks=0,bytes=0,seconds=0,transfers=0})
+assert(costBypassed == false and costBypassWhy == "response wire budget",
+    "EXPECTED RED: prepared DPS cache bypassed its wire budget")
+
+local durableRows = NexusDB.dpsCapture.characterBest.dummy
+local durableRecord = durableRows[verboseRecord.ownerKey]
+assert(type(durableRecord) == "table",
+    "prepared-response fixture could not locate its durable owner row")
+local Catalog = Nexus.BuildCatalog
+local function PutRelatedBuild(id)
+    assert(Catalog.Put({
+        id=id,title=id,author=owner,ownerKey=verboseRecord.ownerKey,
+        ownerVerified=true,realm=verboseRecord.realm,isMine=false,
+        class="MAGE",postedAt=49000,lastModified=49000,
+        echoes=DeepCopy(echoes),fingerprint=fingerprint,
+    }), "prepared-response relation fixture could not store " .. id)
+end
+local relationA = "fanout-prepared-relation-a"
+local relationB = "fanout-prepared-relation-b"
+PutRelatedBuild(relationA)
+PutRelatedBuild(relationB)
+local originalBuildId = durableRecord.buildId
+durableRecord.buildId = relationA
+local relationRecord = DeepCopy(retryableRelay)
+relationRecord.buildId = relationA
+local relationDeferred, relationDeferredWhy, relationPrepared =
+    Sync.BroadcastDpsRecord(relationRecord, nil, true, preparedContext,
+        {chunks=0,bytes=0,seconds=0,transfers=0})
+assert(relationDeferred == false
+    and relationDeferredWhy == "response wire budget"
+    and type(relationPrepared) == "table"
+    and relationPrepared.payload.b == relationA,
+    "verified relation did not reach prepared-response deferral")
+durableRecord.buildId = relationB
+local staleRelationSent, staleRelationWhy = Sync.BroadcastDpsRecord(
+    relationRecord, relationPrepared, true, preparedContext,
+    {chunks=64,bytes=16384,seconds=75,transfers=8})
+assert(staleRelationSent == false and staleRelationWhy == "stale prepared DPS",
+    "EXPECTED RED: prepared DPS cache retained a stale build association")
+durableRecord.buildId = originalBuildId
+
+local lockedA = {{spellId=360399,count=1}}
+local lockedB = {{spellId=360399,count=2}}
+local originalLocked = durableRecord.lockedEchoes
+durableRecord.lockedEchoes = DeepCopy(lockedA)
+local lockedRecord = DeepCopy(retryableRelay)
+lockedRecord.lockedEchoes = DeepCopy(lockedA)
+local lockedDeferred, lockedDeferredWhy, lockedPrepared =
+    Sync.BroadcastDpsRecord(lockedRecord, nil, true, preparedContext,
+        {chunks=0,bytes=0,seconds=0,transfers=0})
+assert(lockedDeferred == false and lockedDeferredWhy == "response wire budget"
+    and type(lockedPrepared) == "table",
+    "locked-evidence response did not reach prepared deferral")
+durableRecord.lockedEchoes = DeepCopy(lockedB)
+local staleLockedSent, staleLockedWhy = Sync.BroadcastDpsRecord(
+    lockedRecord, lockedPrepared, true, preparedContext,
+    {chunks=64,bytes=16384,seconds=75,transfers=8})
+assert(staleLockedSent == false and staleLockedWhy == "stale prepared DPS",
+    "EXPECTED RED: prepared DPS cache retained stale locked evidence")
+durableRecord.lockedEchoes = originalLocked
+
+durableRecord.buildId = relationA
+durableRecord.ownerVerified = true
+local removedRecord = DeepCopy(retryableRelay)
+removedRecord.buildId = relationA
+local removedDeferred, removedDeferredWhy, removedPrepared =
+    Sync.BroadcastDpsRecord(removedRecord, nil, true, preparedContext,
+        {chunks=0,bytes=0,seconds=0,transfers=0})
+assert(removedDeferred == false
+    and removedDeferredWhy == "response wire budget"
+    and type(removedPrepared) == "table"
+    and removedPrepared.payload.b == relationA,
+    "removal control did not reach prepared-response deferral")
+durableRecord.ownerVerified = false
+assert(Catalog.RemoveOverlay(relationA),
+    "removal control could not remove the prepared relation")
+local removedRetried, removedRetryWhy = Sync.BroadcastDpsRecord(
+    removedRecord, removedPrepared, true, preparedContext,
+    {chunks=64,bytes=16384,seconds=75,transfers=8})
+assert(removedRetried == false and removedRetryWhy == "stale prepared DPS",
+    "EXPECTED RED: invalid relation rebuilt from a stale caller DPS record")
+durableRecord.ownerVerified = true
+durableRecord.buildId = originalBuildId
+
+Sync = Boot(owner, DeepCopy(seedDb))
+local retryableDirect = DeepCopy(verboseRecord)
+retryableDirect.ownerVerified = true
+local directDeferred, directDeferredWhy, directPrepared =
+    Sync.BroadcastDpsRecord(retryableDirect, nil, true, nil,
+        {chunks=0,bytes=0,seconds=0,transfers=0})
+assert(directDeferred == false and directDeferredWhy == "response wire budget"
+    and type(directPrepared) == "table",
+    "direct owner did not expose a retryable prepared response")
+local directRetried, directRetryWhy = Sync.BroadcastDpsRecord(
+    retryableDirect, directPrepared, true, nil,
+    {chunks=64,bytes=16384,seconds=75,transfers=8})
+assert(directRetried == true and directRetryWhy == nil,
+    "direct owner could not reuse its unchanged prepared response")
+
+local directContextA = {
+    requester=REQUESTER,requestId="c1-direct-prepared-a",bucket=dpsBucket,
+}
+local directContextB = {
+    requester=REQUESTER,requestId="c1-direct-prepared-b",bucket=dpsBucket,
+}
+local contextDeferred, contextDeferredWhy, contextPrepared =
+    Sync.BroadcastDpsRecord(retryableDirect, nil, true, directContextA,
+        {chunks=0,bytes=0,seconds=0,transfers=0})
+assert(contextDeferred == false
+    and contextDeferredWhy == "response wire budget"
+    and type(contextPrepared) == "table",
+    "direct response did not expose its context-bound prepared cache")
+local changedContextSent, changedContextWhy = Sync.BroadcastDpsRecord(
+    retryableDirect, contextPrepared, true, directContextB,
+    {chunks=64,bytes=16384,seconds=75,transfers=8})
+assert(changedContextSent == false and changedContextWhy == "relay_authorization",
+    "EXPECTED RED: direct prepared DPS cache changed response association")
+local exactContextSent, exactContextWhy = Sync.BroadcastDpsRecord(
+    retryableDirect, contextPrepared, true, directContextA,
+    {chunks=64,bytes=16384,seconds=75,transfers=8})
+assert(exactContextSent == true and exactContextWhy == nil,
+    "direct prepared DPS cache rejected its exact response association")
+
+local responseDeferred, responseDeferredWhy, responsePrepared =
+    Sync.BroadcastDpsRecord(retryableDirect, nil, true, directContextA,
+        {chunks=0,bytes=0,seconds=0,transfers=0})
+assert(responseDeferred == false
+    and responseDeferredWhy == "response wire budget"
+    and type(responsePrepared) == "table",
+    "direct response did not expose its mode-bound prepared cache")
+local responseBecameDirect, responseBecameDirectWhy = Sync.BroadcastDpsRecord(
+    retryableDirect, responsePrepared, false, nil,
+    {chunks=64,bytes=16384,seconds=75,transfers=8})
+assert(responseBecameDirect == false
+    and responseBecameDirectWhy == "relay_authorization",
+    "EXPECTED RED: response prepared DPS cache became a direct broadcast")
+
+local broadcastDeferred, broadcastDeferredWhy, broadcastPrepared =
+    Sync.BroadcastDpsRecord(retryableDirect, nil, false, nil,
+        {chunks=0,bytes=0,seconds=0,transfers=0})
+assert(broadcastDeferred == false
+    and broadcastDeferredWhy == "response wire budget"
+    and type(broadcastPrepared) == "table",
+    "direct broadcast did not expose its mode-bound prepared cache")
+local broadcastBecameResponse, broadcastBecameResponseWhy =
+    Sync.BroadcastDpsRecord(retryableDirect, broadcastPrepared, true,
+        directContextA,
+        {chunks=64,bytes=16384,seconds=75,transfers=8})
+assert(broadcastBecameResponse == false
+    and broadcastBecameResponseWhy == "relay_authorization",
+    "EXPECTED RED: direct prepared DPS cache became a response")
+
 -- The ranked seed can move to another bucket when its player identity changes.
 -- Reorder the final cohorts by the exact final bucket delay, and explicitly
 -- retain the direct owner in both populations.
