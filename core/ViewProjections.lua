@@ -286,8 +286,14 @@ local function PlayerKey(value)
     return tostring(value or "?"):lower():gsub("%s+", "")
 end
 
+local function CharacterKey(row)
+    if type(row) ~= "table" then return "?@unknown" end
+    return tostring(row.characterKey or row.ownerKey
+        or (PlayerKey(row.player) .. "@" .. tostring(row.realm or "unknown"))):lower()
+end
+
 local function RecordKey(row)
-    return PlayerKey(row and row.player)
+    return CharacterKey(row)
         .. "|" .. TypedIdentity(row and (row.fingerprint or row.buildId))
 end
 
@@ -307,7 +313,7 @@ local function CombinedRows()
     for _, row in ipairs(dummy) do
         dummyByKey[RecordKey(row)] = row
         if row.buildId then
-            dummyByBuild[PlayerKey(row.player) .. "|"
+            dummyByBuild[CharacterKey(row) .. "|"
                 .. TypedIdentity(row.buildId)] = row
         end
     end
@@ -315,7 +321,7 @@ local function CombinedRows()
     for _, lrow in ipairs(lk) do
         local drow = dummyByKey[RecordKey(lrow)]
         if not drow and lrow.buildId then
-            drow = dummyByBuild[PlayerKey(lrow.player)
+            drow = dummyByBuild[CharacterKey(lrow)
                 .. "|" .. TypedIdentity(lrow.buildId)]
         end
         if drow then
@@ -323,6 +329,9 @@ local function CombinedRows()
                 + (tonumber(lrow.dps) or 0)) / 2
             out[#out + 1] = {
                 player=lrow.player, dps=average, average=average,
+                displayPlayer=lrow.displayPlayer,
+                characterKey=CharacterKey(lrow), ownerKey=lrow.ownerKey,
+                realm=lrow.realm, realmAssumed=lrow.realmAssumed,
                 dummyDps=drow.dps, lkDps=lrow.dps,
                 dummyDuration=drow.duration, lkDuration=lrow.duration,
                 level=math.max(tonumber(drow.level) or 0,
@@ -336,6 +345,17 @@ local function CombinedRows()
                 build=lrow.build or drow.build,
             }
         end
+    end
+    local nameCounts = {}
+    for _, row in ipairs(out) do
+        local key = PlayerKey(row.player)
+        nameCounts[key] = (nameCounts[key] or 0) + 1
+    end
+    for _, row in ipairs(out) do
+        local key = PlayerKey(row.player)
+        row.displayPlayer = nameCounts[key] > 1
+            and (tostring(row.player or "?") .. "-" .. tostring(row.realm or "unknown"))
+            or row.player
     end
     counters.leaderboard.sorts = counters.leaderboard.sorts + 1
     table.sort(out, function(left, right)
@@ -355,7 +375,7 @@ local function LeaderboardProjection(filters)
         local classMatch = filters.classFilter == "ALL"
             or class == filters.classFilter
         local searchMatch = filters.search == ""
-            or tostring(row.player or ""):lower():find(filters.search, 1, true)
+            or tostring(row.displayPlayer or row.player or ""):lower():find(filters.search, 1, true)
             or tostring(build.title or ""):lower():find(filters.search, 1, true)
             or tostring(build.author or ""):lower():find(filters.search, 1, true)
         if classMatch and searchMatch then out[#out + 1] = DeepCopy(row) end

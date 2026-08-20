@@ -721,8 +721,16 @@ end
 -- this run's gains, the active loadout's convergence toward the ideal
 -- wishlist, and the loadout's specific missing echoes (what "close to
 -- ideal" actually means, not just a percentage).
+local NO_WISHLIST = {}
 local function BuildProgress(plan, owned, slots, catalog, wishlistOverride, previewBuildId)
-    local wl = wishlistOverride or Adapter.Wishlist()
+    -- The sentinel means the caller already resolved that there is no wishlist.
+    -- This avoids re-reading the full server-slot payload just to rediscover nil.
+    local wl = wishlistOverride
+    if wl == NO_WISHLIST then
+        wl = nil
+    elseif wl == nil then
+        wl = Adapter.Wishlist(slots)
+    end
     local lockOnlyFamilies = LockOnlyFamilies(plan, wl)
     local runStacks, wishTotal, wishlistMissing, toLock =
         WishlistProgress(plan, owned, catalog, lockOnlyFamilies, wl)
@@ -828,7 +836,7 @@ local function BuildProgress(plan, owned, slots, catalog, wishlistOverride, prev
 end
 
 
-local function BuildPanelProgress(activePlan, owned, slots, catalog)
+local function BuildPanelProgress(activePlan, owned, slots, catalog, activeWishlist)
     local C = Nexus.CommunityBuilds
     local build = C and C.GetSelectedBuildForPanel and C.GetSelectedBuildForPanel()
     if build and type(build.echoes) == "table" and #build.echoes > 0 then
@@ -836,7 +844,8 @@ local function BuildPanelProgress(activePlan, owned, slots, catalog)
         local previewPlan = Strategy.Compile(catalog, wl, Store.Settings())
         return BuildProgress(previewPlan, owned, slots, catalog, wl, build.id)
     end
-    return BuildProgress(activePlan, owned, slots, catalog)
+    return BuildProgress(activePlan, owned, slots, catalog,
+        activeWishlist or NO_WISHLIST)
 end
 
 local function CopyDisplay(value, seen)
@@ -931,21 +940,21 @@ end
 -- showing stale leveling-era content the rest of the time, which breaks
 -- both "check status at level 80" and "alt-tab between characters".
 -- All args may be nil; WishlistProgress/LoadoutCoverage are null-safe.
-local function RenderIdlePanel(plan, owned, slots, catalog)
+local function RenderIdlePanel(plan, owned, slots, catalog, wishlist)
     local settings = Store.Settings()
     local okAuto = AutoAllowed()
     RenderPanel({
         status = statusLine,
         cards = {},
         recommendation = "",
-        progress = BuildPanelProgress(plan, owned, slots, catalog),
+        progress = BuildPanelProgress(plan, owned, slots, catalog, wishlist),
         level = Adapter.Level(),
         auto = autoEnabled,
         version = Nexus.VERSION,
     })
 end
 
-local function StepArm(level, plan, owned, slots, disabledLevers)
+local function StepArm(level, plan, owned, slots, disabledLevers, catalog, wishlist)
     local settings = Store.Settings()
     -- (a) Loadout selection is owned by the stock Echo Journal. Each saved
     -- loadout has its own Nexus wishlist association, so automatically choosing
@@ -965,7 +974,7 @@ local function StepArm(level, plan, owned, slots, disabledLevers)
             and Adapter.TomeMutationPaused()) then
         if (GetTime() - lastLeverSendAt) <= 0.5 then
             RequestStepAt(lastLeverSendAt + 0.5)
-            RenderIdlePanel(plan, owned, slots, Adapter.Catalog())
+            RenderIdlePanel(plan, owned, slots, catalog, wishlist)
             return
         end
         local optOut = settings.leverOptOut or {}
@@ -1010,7 +1019,7 @@ local function StepArm(level, plan, owned, slots, disabledLevers)
             end
         end
     end
-    RenderIdlePanel(plan, owned, slots, Adapter.Catalog())
+    RenderIdlePanel(plan, owned, slots, catalog, wishlist)
 end
 
 local function WatchRerollHold(board)
@@ -1430,14 +1439,14 @@ local function LogText_AutoLock()
     return table.concat(out, "\n")
 end
 
-local function StepRun(level, plan, slots, owned, flags, disabledLevers)
+local function StepRun(level, plan, slots, owned, flags, disabledLevers, catalog, wishlist)
     local settings = Store.Settings()
-    local catalog = Adapter.Catalog()
     local board = Adapter.Board()
     if not board then
         SetStatus("waiting for board")
         RenderPanel({ status = statusLine, cards = {}, recommendation = "",
-            progress = BuildProgress(plan, owned, slots, catalog),
+            progress = BuildProgress(plan, owned, slots, catalog,
+                wishlist or NO_WISHLIST),
             auto = AutoAllowed() and settings.autoPick,
             version = Nexus.VERSION })
         return
@@ -1666,7 +1675,7 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
     RenderPanel({
         status = statusLine,
         cards = cardLines,
-        progress = BuildPanelProgress(plan, owned, slots, catalog),
+        progress = BuildPanelProgress(plan, owned, slots, catalog, wishlist),
         level = level,
         recommendation = recommendation,
         auto = autoEnabled,
@@ -1749,8 +1758,8 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
     end
 end
 
-local function StepSave(level, plan, slots, owned)
-    RenderIdlePanel(plan, owned, slots, Adapter.Catalog())
+local function StepSave(level, plan, slots, owned, catalog, wishlist)
+    RenderIdlePanel(plan, owned, slots, catalog, wishlist)
     local settings = Store.Settings()
     if not settings.autoSave or savedThisVisit then return end
     -- A level-80 character can load with owned data that looks like a
@@ -1768,7 +1777,6 @@ local function StepSave(level, plan, slots, owned)
     end
     if not slots then SetStatus("waiting for slot data"); return end
     if not owned.synced then SetStatus("waiting for owned-state sync"); return end
-    local catalog = Adapter.Catalog()
     local incumbent = ActiveSlotRow(slots)
     if incumbent then
         local incumbentCounts = FamilyCountsFromEchoes(incumbent.echoes, catalog)
@@ -1805,7 +1813,7 @@ local function StepSave(level, plan, slots, owned)
             end
             -- The saved loadout is the in-progress form of its associated
             -- wishlist, so keep both names aligned whenever Nexus overwrites it.
-            local wl = Adapter.Wishlist()
+            local wl = wishlist
             local saveName = wl and tostring(wl.name or "") or ""
             if saveName == "" then saveName = incumbent.name or "Nexus" end
             local saved = Adapter.Save(incumbent.slot, saveName)
@@ -1843,7 +1851,7 @@ local function StepSave(level, plan, slots, owned)
                 }
             end
         else
-            local wl = Adapter.Wishlist()
+            local wl = wishlist
             local wlName = wl and ((wl.name ~= "" and wl.name) or "your build") or "your build"
             -- Translate the raw Ratchet detail into something readable
             local readableDetail
@@ -2007,7 +2015,13 @@ local function Step()
         RenderIdlePanel(nil, nil, nil, nil)
         return
     end
-    local wishlist = Adapter.Wishlist()
+    local slots
+    if Nexus.Performance and type(Nexus.Performance.Measure) == "function" then
+        slots = Nexus.Performance.Measure("adapter.slots", Adapter.Slots)
+    else
+        slots = Adapter.Slots()
+    end
+    local wishlist = Adapter.Wishlist(slots or false)
     if not quickStartChecked then
         quickStartChecked = true
         if Nexus.QuickStart then
@@ -2015,7 +2029,6 @@ local function Step()
         end
     end
     local plan = Strategy.Compile(catalog, WishlistWithLockTargets(wishlist, catalog), Store.Settings())
-    local slots = Adapter.Slots()
     local owned = Adapter.Owned()
     local flags = EffectiveFlags()
     local disabledLevers = Adapter.DisabledLevers()
@@ -2123,12 +2136,12 @@ local function Step()
     end
 
     if level == 1 then
-        StepArm(level, plan, owned, slots, disabledLevers)
+        StepArm(level, plan, owned, slots, disabledLevers, catalog, wishlist)
         if plan.advisorOnly then
             SetStatus("No wishlist set -- advisor only")
         end
     elseif level >= 2 and level < 80 then
-        StepRun(level, plan, slots, owned, flags, disabledLevers)
+        StepRun(level, plan, slots, owned, flags, disabledLevers, catalog, wishlist)
     elseif level == 80 then
         -- A run is complete when the current rolled loadout reaches the
         -- server's 79-Echo capacity. Do not use an arbitrary no-board delay:
@@ -2136,11 +2149,11 @@ local function Step()
         -- Locked Echoes are not included in owned.total.
         local rolledTotal = tonumber(owned and owned.total) or 0
         if owned and owned.synced and rolledTotal >= 79 then
-            StepSave(level, plan, slots, owned)
+            StepSave(level, plan, slots, owned, catalog, wishlist)
         else
             local board = Adapter.Board()
             if board then
-                StepRun(level, plan, slots, owned, flags, disabledLevers)
+                StepRun(level, plan, slots, owned, flags, disabledLevers, catalog, wishlist)
             elseif Adapter.InFlight() then
                 SetStatus("finishing final Echo selections")
             else
@@ -2156,10 +2169,10 @@ end
 
 local function JournalData()
     local catalog = Adapter.Catalog()
-    local wishlist = Adapter.Wishlist()
+    local slots = Adapter.Slots()
+    local wishlist = Adapter.Wishlist(slots or false)
     local plan = Strategy.Compile(catalog, WishlistWithLockTargets(wishlist, catalog), Store.Settings())
     local owned = Adapter.Owned()
-    local slots = Adapter.Slots()
     local flags = EffectiveFlags()
     local disabledLevers = Adapter.DisabledLevers()
     local sections = {}
@@ -3225,7 +3238,13 @@ EH:SetScript("OnUpdate", function(_, elapsed)
     local now = GetTime()
     local isDirty = boardDirty or slotsDirty or dataDirty
     local deadlineDue = nextStepAt ~= nil and now >= nextStepAt
-    local fallbackDue = (now - lastFullStepAt) >= FALLBACK_RECOMPUTE
+    -- Missed-invalidation recovery is useful only while automation can still
+    -- act on a live run. Manual mode and completed level-80 characters are
+    -- fully event/deadline driven and must not rebuild an unchanged slot set.
+    local level = Adapter.Level()
+    local fallbackActive = autoEnabled and level >= 1 and level < 80
+    local fallbackDue = fallbackActive
+        and (now - lastFullStepAt) >= FALLBACK_RECOMPUTE
     if not (forceStep or isDirty or deadlineDue or fallbackDue) then
         recomputeStats.skipped = recomputeStats.skipped + 1
         return

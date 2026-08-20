@@ -77,10 +77,16 @@ local function PlayerKey(v)
     return tostring(v or "?"):lower():gsub("%s+", "")
 end
 
+local function CharacterKey(row)
+    if type(row) ~= "table" then return "?@unknown" end
+    return tostring(row.characterKey or row.ownerKey
+        or (PlayerKey(row.player) .. "@" .. tostring(row.realm or "unknown"))):lower()
+end
+
 local function RecordKey(row)
     if not row then return "" end
     local identity = row.fingerprint or row.buildId
-    return PlayerKey(row.player) .. "|" .. type(identity) .. ":"
+    return CharacterKey(row) .. "|" .. type(identity) .. ":"
         .. tostring(identity or "")
 end
 
@@ -97,7 +103,7 @@ local function CombinedRows()
     for _, row in ipairs(dummy) do
         dummyByKey[RecordKey(row)] = row
         if row.buildId then
-            dummyByBuild[PlayerKey(row.player).."|"..type(row.buildId)
+            dummyByBuild[CharacterKey(row).."|"..type(row.buildId)
                 ..":"..tostring(row.buildId)] = row
         end
     end
@@ -105,13 +111,16 @@ local function CombinedRows()
     for _, lrow in ipairs(lk) do
         local drow = dummyByKey[RecordKey(lrow)]
         if not drow and lrow.buildId then
-            drow = dummyByBuild[PlayerKey(lrow.player).."|"..type(lrow.buildId)
+            drow = dummyByBuild[CharacterKey(lrow).."|"..type(lrow.buildId)
                 ..":"..tostring(lrow.buildId)]
         end
         if drow then
             local avg = ((tonumber(drow.dps) or 0) + (tonumber(lrow.dps) or 0)) / 2
             out[#out+1] = {
-                player=lrow.player, dps=avg, average=avg, dummyDps=drow.dps, lkDps=lrow.dps,
+                player=lrow.player, displayPlayer=lrow.displayPlayer,
+                characterKey=CharacterKey(lrow), ownerKey=lrow.ownerKey,
+                realm=lrow.realm, realmAssumed=lrow.realmAssumed,
+                dps=avg, average=avg, dummyDps=drow.dps, lkDps=lrow.dps,
                 dummyDuration=drow.duration, lkDuration=lrow.duration,
                 level=math.max(tonumber(drow.level) or 0, tonumber(lrow.level) or 0),
                 ts=math.min(tonumber(drow.ts) or 0, tonumber(lrow.ts) or 0),
@@ -120,6 +129,17 @@ local function CombinedRows()
                 buildId=lrow.buildId or drow.buildId, build=lrow.build or drow.build,
             }
         end
+    end
+    local nameCounts = {}
+    for _, row in ipairs(out) do
+        local key = PlayerKey(row.player)
+        nameCounts[key] = (nameCounts[key] or 0) + 1
+    end
+    for _, row in ipairs(out) do
+        local key = PlayerKey(row.player)
+        row.displayPlayer = nameCounts[key] > 1
+            and (tostring(row.player or "?") .. "-" .. tostring(row.realm or "unknown"))
+            or row.player
     end
     table.sort(out,function(a,b)
         if a.average ~= b.average then return a.average > b.average end
@@ -145,7 +165,7 @@ local function Rows()
         local class = tostring(build.class or row.class or "UNKNOWN"):upper()
         local classOk = classFilter == "ALL" or class == classFilter
         local searchOk = query == ""
-            or tostring(row.player or ""):lower():find(query,1,true)
+            or tostring(row.displayPlayer or row.player or ""):lower():find(query,1,true)
             or tostring(build.title or ""):lower():find(query,1,true)
             or tostring(build.author or ""):lower():find(query,1,true)
         if classOk and searchOk then out[#out+1] = row end
@@ -279,7 +299,7 @@ local function EnsureDetail(parent)
         local b = row.build or {}
         M.Hide()
         Nexus.WishlistEditor.OpenForCandidate({
-            title = b.title or (row.player and (tostring(row.player) .. "'s Loadout")) or "Leaderboard Build",
+            title = b.title or (row.player and (tostring(row.displayPlayer or row.player) .. "'s Loadout")) or "Leaderboard Build",
             echoes = echoes,
         })
     end)
@@ -301,7 +321,7 @@ local function RenderDetail(row)
     detail.empty:Hide()
     for _,x in ipairs({detail.title,detail.owner,detail.record,detail.desc,detail.echoTitle,detail.more,detail.copy,detail.open}) do x:Show() end
     local b=row.build or {}; local c=CLASS_COLOR[tostring(b.class or ""):upper()] or {1,1,1}
-    detail.title:SetText(b.title or "Record Loadout"); detail.title:SetTextColor(c[1],c[2],c[3]); detail.owner:SetText("by "..tostring(b.author or row.player or "?"))
+    detail.title:SetText(b.title or "Record Loadout"); detail.title:SetTextColor(c[1],c[2],c[3]); detail.owner:SetText("by "..tostring(row.displayPlayer or b.author or row.player or "?"))
     if row.category=="combined" then
         detail.record:SetText("|cff4dff80Average "..DpsText(row.average).." DPS|r\nDummy "..DpsText(row.dummyDps).."  •  Lich King "..DpsText(row.lkDps))
     else
@@ -351,7 +371,7 @@ local function BindRows(reason)
             local c=CLASS_COLOR[class] or {0.8,0.8,0.8}
             r.rank:SetText(index<=3 and "|cffffd200"..index.."|r" or tostring(index))
             r.icon:SetTexture(CLASS_ICON[class] or "Interface\\Icons\\INV_Misc_QuestionMark")
-            r.player:SetText(tostring(row.player or "?"))
+            r.player:SetText(tostring(row.displayPlayer or row.player or "?"))
             r.player:SetTextColor(c[1],c[2],c[3])
             r.build:SetText(tostring((row.build or {}).title or "Record Loadout"))
             if category=="combined" then

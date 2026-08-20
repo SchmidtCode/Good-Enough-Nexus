@@ -13,7 +13,9 @@ Nexus.Performance = Performance
 local PATH_ORDER = {
     "automation.step",
     "decision.policy",
+    "adapter.slots",
     "sync.update",
+    "sync.incoming",
     "dps.update",
     "community.refresh",
     "leaderboard.refresh",
@@ -194,6 +196,7 @@ function Performance.InstallDefaults()
     local targets = {
         {"decision.policy", Nexus.Policy, "Decide"},
         {"sync.update", Nexus.Sync, "OnUpdate"},
+        {"sync.incoming", Nexus.Sync, "HandleIncoming"},
         {"dps.update", Nexus.DpsCapture, "OnUpdate"},
         {"community.refresh", Nexus.CommunityBuilds, "Refresh"},
         {"leaderboard.refresh", Nexus.Leaderboard, "RefreshData"},

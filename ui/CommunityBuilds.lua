@@ -347,7 +347,7 @@ local function DpsBoardRows(category)
         local classMatch = not classFilter
             or (build.class or row.class or ""):upper() == classFilter
         local searchMatch = search == ""
-            or tostring(row.player or ""):lower():find(search, 1, true)
+            or tostring(row.displayPlayer or row.player or ""):lower():find(search, 1, true)
             or tostring(build.title or ""):lower():find(search, 1, true)
             or tostring(build.author or ""):lower():find(search, 1, true)
         if classMatch and searchMatch then out[#out + 1] = row end

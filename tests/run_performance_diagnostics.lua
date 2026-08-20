@@ -4,8 +4,8 @@ local H = dofile("tests/harness.lua")
 local Performance = Nexus.Performance
 
 local definitions = Performance.Definitions()
-assert(#definitions == 8 and definitions[1] == "automation.step"
-    and definitions[8] == "overlay.refresh",
+assert(#definitions == 10 and definitions[1] == "automation.step"
+    and definitions[10] == "overlay.refresh",
     "performance path registry is not fixed and ordered")
 
 Performance.Reset()
@@ -179,6 +179,7 @@ H.FireEvent("ADDON_LOADED", "Nexus")
 H.FireEvent("SPELLS_CHANGED")
 H.FireEvent("PLAYER_ENTERING_WORLD")
 H.Advance(1)
+Nexus.Sync.HandleIncoming("bad", "Peer")
 
 local malformedDecision = Nexus.Policy.Decide(nil)
 assert(type(malformedDecision) == "table" and malformedDecision.type == "wait"
@@ -190,8 +191,8 @@ assert(Nexus.CommunityBuilds.Refresh("community") == "community"
     and optionalCalls.community == 1 and optionalCalls.leaderboard == 1
     and optionalCalls.overlay == 1,
     "installed optional UI instrumentation changed callback behavior")
-for _, name in ipairs({"automation.step", "decision.policy", "sync.update",
-    "dps.update", "community.refresh", "leaderboard.refresh",
+for _, name in ipairs({"automation.step", "decision.policy", "adapter.slots",
+    "sync.update", "sync.incoming", "dps.update", "community.refresh", "leaderboard.refresh",
     "panel.render", "overlay.refresh"}) do
     assert(Performance.Stats(name).count > 0,
         "real instrumentation did not observe " .. name)
@@ -246,7 +247,10 @@ assert(exportText:find("NEXUS_DIAGNOSTIC_LOG_5", 1, true)
     and exportText:find("END|boards=1", 1, true)
     and performanceRows == #Performance.Definitions()
     and exportText == exportTextAgain,
-    "aggregate-only export section is missing or prior export sections changed")
+    "aggregate-only export section is missing or prior export sections changed: rows="
+        .. tostring(performanceRows) .. "/" .. tostring(#Performance.Definitions())
+        .. " stable=" .. tostring(exportText == exportTextAgain)
+        .. " paths=" .. tostring(exportText:find("|automation.step", 1, true) ~= nil))
 assert(NexusDB.performance == nil and NexusDB.performanceHistory == nil,
     "performance diagnostics leaked into SavedVariables")
 print("real hot paths, log view, reset isolation, export, SavedVariables safety -- OK")

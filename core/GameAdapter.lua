@@ -47,7 +47,11 @@ local tomeMutationPausedUntil = 0
 -- the session (per-action, like the client itself); never a whole-loop stall
 local latchSince, deadLatch = {}, {}
 local slotsRetryAt, slotsRetries = nil, 0
-local slotsRefreshAt = 0
+-- A slot refresh is scheduled only after a concrete local/server action.
+-- Periodically requesting the entire SS-540 payload made an unchanged account
+-- rebuild every saved and designed Echo slot every five seconds.
+local slotsRefreshAt = nil
+local slotWriteCalling = false
 local lastAutoAcceptState, lastRivalState = nil, nil
 
 local CORRECTED_CLASS_MASKS = {
@@ -666,9 +670,9 @@ function A.WishlistKey(echoes)
     return WishlistIdentity(echoes)
 end
 
-function A.GetWishlistCandidates()
-    local slots = A.Slots()
-    if not slots then return {} end
+function A.GetWishlistCandidates(slots)
+    if slots == nil then slots = A.Slots() end
+    if type(slots) ~= "table" then return {} end
     local maxSlots = slots.maxSlots or 5
     local out = {}
     for slotId, row in pairs(slots.bySlot or {}) do
@@ -718,7 +722,7 @@ function A.GetWishlistCandidates()
     return out
 end
 
-local function ResolveAssociation(loadoutSlot)
+local function ResolveAssociation(loadoutSlot, slots)
     loadoutSlot = tonumber(loadoutSlot)
     if not loadoutSlot then return nil end
     local state = Store and Store.State and Store.State()
@@ -731,7 +735,7 @@ local function ResolveAssociation(loadoutSlot)
     -- recycled server slot can never resurrect an unrelated historical name.
     if type(saved) == "number" or type(saved) == "string" then
         local wanted = tonumber(saved)
-        for _, c in ipairs(A.GetWishlistCandidates()) do
+        for _, c in ipairs(A.GetWishlistCandidates(slots)) do
             if tonumber(c.slot) == wanted then
                 links[loadoutSlot] = { slot = c.slot, key = c.key, name = c.name }
                 return c
@@ -745,7 +749,7 @@ local function ResolveAssociation(loadoutSlot)
         return nil
     end
 
-    local candidates = A.GetWishlistCandidates()
+    local candidates = A.GetWishlistCandidates(slots)
     local wantedKey = saved.key
     if wantedKey and wantedKey ~= "" then
         for _, c in ipairs(candidates) do
@@ -802,11 +806,11 @@ end
 -- wishlist target so Nexus can guide their very first 1-80 run. This is a
 -- temporary account-local association and is replaced naturally once the
 -- player has a real Saved Build selected.
-local function ResolveFirstRunWishlist()
+local function ResolveFirstRunWishlist(slots)
     local state = Store and Store.State and Store.State()
     local saved = state and state.firstRunWishlist
     if type(saved) ~= "table" then return nil end
-    local candidates = A.GetWishlistCandidates()
+    local candidates = A.GetWishlistCandidates(slots)
     local wantedKey, wantedName = tostring(saved.key or ""), tostring(saved.name or "")
     if wantedKey ~= "" then
         for _, c in ipairs(candidates) do
@@ -829,8 +833,8 @@ local function ResolveFirstRunWishlist()
     return nil
 end
 
-function A.GetFirstRunWishlist()
-    return ResolveFirstRunWishlist()
+function A.GetFirstRunWishlist(slots)
+    return ResolveFirstRunWishlist(slots)
 end
 
 function A.SetFirstRunWishlist(wishlistSlot)
@@ -865,16 +869,17 @@ end
 
 local function IsPopulatedLoadout(loadoutSlot, slots)
     loadoutSlot = tonumber(loadoutSlot)
-    slots = slots or A.Slots()
-    local row = slots and slots.bySlot and loadoutSlot and slots.bySlot[loadoutSlot]
+    if slots == nil then slots = A.Slots() end
+    local row = type(slots) == "table" and slots.bySlot
+        and loadoutSlot and slots.bySlot[loadoutSlot]
     return row and type(row.echoes) == "table" and #row.echoes > 0 and true or false
 end
 
-function A.GetLoadoutWishlist(loadoutSlot)
+function A.GetLoadoutWishlist(loadoutSlot, slots)
     -- An association on an empty numbered slot is stale metadata, not a usable
     -- build. Never expose it to the panel/UI as though the player can swap to it.
-    if not IsPopulatedLoadout(loadoutSlot) then return nil end
-    return ResolveAssociation(loadoutSlot)
+    if not IsPopulatedLoadout(loadoutSlot, slots) then return nil end
+    return ResolveAssociation(loadoutSlot, slots)
 end
 
 function A.GetLoadoutWishlistSlot(loadoutSlot)
@@ -989,13 +994,13 @@ function A.ClearLoadoutWishlist(loadoutSlot)
     return true
 end
 
-function A.Wishlist()
+function A.Wishlist(slots)
     A._wishlistNote = nil
-    local slots = A.Slots()
+    if slots == nil then slots = A.Slots() end
     local activeSlot = slots and tonumber(slots.activeSlot) or 0
     local maxSlots = slots and (tonumber(slots.maxSlots) or 5) or 5
     if activeSlot < 1 or activeSlot > maxSlots then
-        local starter = ResolveFirstRunWishlist()
+        local starter = ResolveFirstRunWishlist(slots)
         if starter then
             A._wishlistNote = "First-run wishlist target"
             return EchoesToWishlist(starter.echoes, starter.name,
@@ -1004,7 +1009,7 @@ function A.Wishlist()
         A._wishlistNote = "Choose or create a wishlist to begin your first run."
         return nil
     end
-    local linked = ResolveAssociation(activeSlot)
+    local linked = ResolveAssociation(activeSlot, slots)
     if linked then
         return EchoesToWishlist(linked.echoes, linked.name,
             "loadout-association", false, linked.slot)
@@ -1026,7 +1031,7 @@ function A.GetLoadoutCandidates()
         -- Only populated server loadouts are real switch targets. A stale
         -- association on an empty slot must never make Nexus present it as one.
         if IsPopulatedLoadout(slot, slots) then
-            local linked = ResolveAssociation(slot)
+            local linked = ResolveAssociation(slot, slots)
             out[#out + 1] = {
                 slot = slot,
                 name = row and tostring(row.name or "") or "",
@@ -1089,10 +1094,7 @@ end
 
 -- NOTE: this is a READ (asks the server to re-send slot data), so it has
 -- its own throttle and deliberately does NOT touch lastBuildOpAt.
--- Sharing that guard was a real bug (2026-07-24): the background loop
--- calls this every ~5s, and the write guard is 3s, so a manual Save /
--- Activate / UploadWishlist was refused with "spacing" roughly 60% of
--- the time. Reads must never block writes.
+-- Reads must never block Save / Activate / UploadWishlist writes.
 local lastSlotRequestAt = -10
 function A.RequestSlots()
     local svc = PS()
@@ -1102,6 +1104,11 @@ function A.RequestSlots()
         return true
     end
     return false
+end
+
+local function ScheduleSlotRefresh(delay)
+    local due = GetTime() + math.max(0, tonumber(delay) or 0)
+    if not slotsRefreshAt or due < slotsRefreshAt then slotsRefreshAt = due end
 end
 
 ------------------------------------------------------------------------
@@ -1475,7 +1482,9 @@ function A.Activate(slot)
     if level ~= 1 and level ~= 80 then return false, "not level 1/80" end
     if (GetTime() - lastBuildOpAt) < 3 then return false, "spacing" end
     local svc = PS()
+    slotWriteCalling = true
     local ok = svc and SafeCall(svc.ActivateServerBuildSlot, slot)
+    slotWriteCalling = false
     if ok then
         lastBuildOpAt = GetTime()
         A._pendingWishlistSlot = tonumber(slot) or slot
@@ -1491,7 +1500,9 @@ function A.Save(slot, name)
     if (UnitLevel("player") or 0) ~= 80 then return false, "not level 80" end
     if (GetTime() - lastBuildOpAt) < 3 then return false, "spacing" end
     local svc = PS()
+    slotWriteCalling = true
     local ok = svc and SafeCall(svc.SaveServerBuildSlot, slot, name)
+    slotWriteCalling = false
     if ok then lastBuildOpAt = GetTime(); return true end
     return false, "refused"
 end
@@ -1563,8 +1574,10 @@ function A.UploadWishlist(slot, name, echoes)
     for _, e in pairs(byFamily) do clean[#clean + 1] = e end
     table.sort(clean, function(a, b) return a.spellId < b.spellId end)
     if #clean == 0 then return false, "no valid echoes" end
+    slotWriteCalling = true
     local ok = svc and SafeCall(svc.UploadServerBuildSlot,
         tonumber(slot) or 0, tostring(name or "Nexus"), clean)
+    slotWriteCalling = false
     if ok then
         lastBuildOpAt = GetTime()
         -- the slot cache is now stale; re-request like Save/seed does
@@ -1800,6 +1813,19 @@ local function InstallHooks()
                 end)
             end
         end
+        -- Native Echo Journal writes do not pass through A.Activate/Save/
+        -- UploadWishlist. Follow those concrete actions with one settled slot
+        -- request instead of continuously polling an unchanged SS-540 payload.
+        for _, name in ipairs({ "ActivateServerBuildSlot", "SaveServerBuildSlot",
+            "UploadServerBuildSlot", "DeleteServerBuildSlot" }) do
+            if type(svc[name]) == "function" then
+                hooksecurefunc(svc, name, function()
+                    pcall(function()
+                        if not slotWriteCalling then ScheduleSlotRefresh(0.5) end
+                    end)
+                end)
+            end
+        end
         hooksInstalled = true
     end
 end
@@ -1867,13 +1893,12 @@ function A.Poll()
         and (GetTime() - ownedRequestAt) > 5 and ownedRetries < 5 then
         A.RequestGranted()
     end
-    -- Keep the active Echo Wishlist selection fresh. The player can switch
-    -- which designed build is active while the addon is already running, and
-    -- the old slot snapshot may otherwise leave us targeting a previous
-    -- wishlist. Refresh periodically; RequestSlots() itself is rate-limited.
-    if pewDone and GetTime() >= (slotsRefreshAt or 0) then
+    -- A native build write schedules exactly one settled refresh. Normal
+    -- server replies also flow through EchoJournal.OnDataChanged above, which
+    -- marks the represented state dirty without any polling loop.
+    if pewDone and slotsRefreshAt and GetTime() >= slotsRefreshAt then
         if A.RequestSlots() then
-            slotsRefreshAt = GetTime() + 5
+            slotsRefreshAt = nil
         else
             slotsRefreshAt = GetTime() + 1
         end

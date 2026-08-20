@@ -231,7 +231,7 @@ assert(DPS.ReceiveRecord({
 }, "Peer"))
 assert(Revisions.Get(Revisions.DPS_CHANGED) == beforeDpsRevision + 1,
     "one evidence-backed DPS winner did not retain one DPS revision")
-local storedRow = NexusDB.dpsCapture.characterBest.dummy.peer
+local storedRow = NexusDB.dpsCapture.characterBest.dummy["peer@ebonhold"]
 assert(storedRow.evidenceKey and not Catalog.Get("missing-page"),
     "missing-page DPS fixture unexpectedly gained a catalog row")
 storedRow.echoes = nil

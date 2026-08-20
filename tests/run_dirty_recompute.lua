@@ -77,12 +77,16 @@ assert(Nexus.Panel._lastModel.status == "status-only probe"
 -- An explicit user refresh authorizes exactly one full step on the next safe
 -- heartbeat; it does not bypass the direct tick or create a repeating task.
 local explicitBefore = Nexus.RecomputeStats()
+local explicitSlotReads = calls.slots
 assert(Nexus.RequestRecompute())
 H.Advance(0.2)
 local explicitAfter = Nexus.RecomputeStats()
 assert(explicitAfter.fullSteps == explicitBefore.fullSteps + 1
     and explicitAfter.forced == explicitBefore.forced + 1,
     "explicit refresh did not run exactly once on the next safe tick")
+assert(calls.slots == explicitSlotReads + 1,
+    "one full step materialized the server-slot payload more than once: before="
+        .. tostring(explicitSlotReads) .. " after=" .. tostring(calls.slots))
 H.Advance(0.2)
 assert(Nexus.RecomputeStats().fullSteps == explicitAfter.fullSteps,
     "explicit refresh leaked into a repeating recomputation")
@@ -112,19 +116,49 @@ assert(calls.panelRefresh == panelRefreshes + 1
     and Nexus.RecomputeStats().fullSteps == viewSteps,
     "revision burst failed to coalesce or entered automation")
 
--- A change with no hook is recovered only by the documented slow heartbeat.
-local beforeFallback = Nexus.RecomputeStats()
+-- Manual mode is fully reactive: a missed invalidation must not resurrect the
+-- expensive five-second heartbeat while the player is idle.
+local beforeManualIdle = Nexus.RecomputeStats()
+local manualSlotRequests = H.slotRequests or 0
 H.playerLevel = 6 -- intentionally bypass PLAYER_LEVEL_UP
+H.Advance(beforeManualIdle.fallbackSeconds + 0.5)
+assert(Nexus.RecomputeStats().fullSteps == beforeManualIdle.fullSteps,
+    "manual idle mode ran an unconditional fallback recomputation")
+assert((H.slotRequests or 0) == manualSlotRequests,
+    "manual idle mode continued requesting an unchanged server-slot payload")
+
+-- A concrete native build action schedules one settled refresh even though it
+-- bypasses the Adapter's own write helpers.
+assert(ProjectEbonhold.PerkService.ActivateServerBuildSlot(1))
+H.Advance(0.6)
+assert((H.slotRequests or 0) == manualSlotRequests + 1,
+    "native build action did not schedule one dynamic slot refresh")
+
+-- Active automation retains the slow self-healing heartbeat in case a client
+-- invalidation hook is missed during a live run.
+SlashCmdList.NEXUS("auto")
+H.Advance(0.2)
+local beforeFallback = Nexus.RecomputeStats()
+H.playerLevel = 7 -- intentionally bypass PLAYER_LEVEL_UP
 local remaining = beforeFallback.fallbackSeconds
     - (H.now - beforeFallback.lastFullStepAt)
 if remaining > 0.3 then H.Advance(remaining - 0.2) end
 assert(Nexus.RecomputeStats().fullSteps == beforeFallback.fullSteps,
-    "fallback recomputation ran before its slow heartbeat")
+    "active fallback recomputation ran before its slow heartbeat")
 H.Advance(0.3)
 local afterFallback = Nexus.RecomputeStats()
 assert(afterFallback.fullSteps == beforeFallback.fullSteps + 1
     and afterFallback.fallbacks == beforeFallback.fallbacks + 1,
-    "slow fallback did not self-heal a missed invalidation")
+    "active automation fallback did not self-heal a missed invalidation")
+
+-- A completed character has no recurring automation work; exact save/readback
+-- checks already schedule their own deadlines.
+H.playerLevel = 80
+local completedIdle = Nexus.RecomputeStats()
+H.Advance(completedIdle.fallbackSeconds + 0.5)
+assert(Nexus.RecomputeStats().fullSteps == completedIdle.fullSteps,
+    "level-80 idle mode ran an unconditional fallback recomputation")
+SlashCmdList.NEXUS("auto") -- restore manual mode for the next scenario
 
 -- The intent-to-action beat is an exact Main deadline: no dirty event is
 -- needed between showing the decision and issuing the safe action.
@@ -157,4 +191,4 @@ assert(#H.selectCalls == selectedBefore + 1
         .. " deadlines=" .. tostring(Nexus.RecomputeStats().deadlines - deadlinesBefore)
         .. " full=" .. tostring(Nexus.RecomputeStats().fullSteps))
 
-print("dirty, deadline, status, burst, fallback, and direct safety-poll recomputation -- OK")
+print("dirty, deadline, status, dynamic fallback, slot snapshot, and safety poll -- OK")

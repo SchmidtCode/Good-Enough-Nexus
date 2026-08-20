@@ -267,6 +267,16 @@ perform no catalog/DPS walk or ordering pass, and every caller receives a
 defensive copy. Status, timers, visibility, Sync queues, and diagnostic activity
 are not cache inputs.
 
+DPS character identity is stored and projected as a hidden normalized
+`name@realm` key. Realm-less legacy rows inherit the current realm because the
+current product has one realm. Realm whitespace and presentation punctuation
+are discarded so historical spellings such as `roguelite(live)` and
+`rogue-lite(live)` resolve identically; duplicate rows resolving to that same
+identity are reconciled by newest timestamp, then DPS, then fingerprint. Normal capture
+and Sync replacement remain best-DPS based. Short names remain the default UI
+label, but projections expose a realm-qualified display label whenever two
+explicitly different realms contain the same short character name.
+
 Construction is publish-after-success. If a represented revision changes while
 a projection is building, the module retries once against the new snapshot; an
 error or second unstable pass publishes nothing. The module owns no frames,
