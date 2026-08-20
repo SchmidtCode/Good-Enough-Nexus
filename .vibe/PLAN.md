@@ -131,11 +131,11 @@ depends_on: [43.1]
   - New `tests/run_locked_migration_authority.lua` matrix covering remote/local/build rows, ambiguous authority, completed-v1 preservation, orphan evidence, login order, future fields, and no Sync churn.
   - Rewritten lifecycle expectations in `tests/run_migration_owned_lifecycle.lua` preserving authoritative wait, immutable source restore, retry, and idempotence.
   - Minimal `core/DpsCapture.lua` fail-closed migration logic with no transport, identity, qualification, Wishlist, Orb, or UI redesign.
-  - Concise `.vibe/EVIDENCE.md` receipts and one explicitly staged local commit.
+  - Concise `.vibe/EVIDENCE.md` receipts and explicitly staged local follow-up commits.
 - Acceptance:
   - [x] The new runner fails on exact starting head because a local lock removes an ordinary Echo from a verified remote row, then passes after repair.
   - [x] Remote, global build, other-account-character, exact-owner-but-unknown-history, completed-v1 ambiguous, orphan-evidence, and no-lock rows remain byte-for-byte stable.
-  - [x] Inline/reference equality is not treated as historical provenance; an interrupted source is restored before any side effect; completed-v1 preservation is deterministic and idempotent.
+  - [x] Inline/reference equality is not treated as historical provenance; an interrupted source is restored and retired before readiness gating or any side effect; completed-v1 preservation is deterministic and idempotent.
   - [x] DPS/category/duration/owner/future fields, fingerprints, hashes, and Sync-visible row identities remain unchanged.
   - [x] Lua 5.1 parse, mapped DPS/Sync tests, related board/evidence/migration tests, Fast, required Full, and `git diff --check` pass on exact final repaired code/test bytes.
   - [x] Final status contains local WP1 follow-up repair commit(s) and no remote, package, install, Test18, live addon, or SavedVariables change.

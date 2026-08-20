@@ -91,6 +91,7 @@ interrupted.lockedMigrationSource={
     characterBest=original.characterBest,
 }
 NexusDB.dpsCapture=interrupted
+lockedReady=false
 dofile("core/DpsCapture.lua")
 DPS=Nexus.DpsCapture
 DPS.Init(adapter,{})
@@ -98,11 +99,17 @@ local retried=NexusDB.dpsCapture.personalBest[oldKey]
 assert(retried and retried.dummy.echoes[1].spellId==200100
     and retried.dummy.echoes[1].count==2
     and NexusDB.dpsCapture.lockedMigrationSource==nil,
-    "interrupted migration did not restore its immutable source exactly")
+    "unsynced restart did not restore and retire its immutable source")
+assert(not NexusDB.dpsCapture.lockedMigrationVersion,
+    "unsynced source restoration prematurely completed the migration")
 assert(partialEvidenceTouches==0,
     "partial live rows produced evidence before immutable source restoration")
 assert(revisionBumps>0,
     "represented interrupted-source restoration did not advance DPS revision")
+lockedReady=true
+DPS.Init(adapter,{})
+assert(NexusDB.dpsCapture.lockedMigrationVersion==1,
+    "authoritative retry did not complete restored migration")
 local retryOnce=Codec.JSONEncode(NexusDB.dpsCapture)
 dofile("core/DpsCapture.lua")
 Nexus.DpsCapture.Init(adapter,{})

@@ -714,14 +714,9 @@ local function MigrateLocalLockedBaseline()
         migratedLockedBaseline = true
         return
     end
-    local locked = Adapter and Adapter.LockedOwned and Adapter.LockedOwned()
-    if not (locked and locked.synced == true) then
-        return
-    end
     local source = db.lockedMigrationSource
-    local beforeState
     if type(source) == "table" then
-        beforeState = {
+        local beforeState = {
             personalBest=DeepCopy(PersonalBestStore()),
             buildBest=DeepCopy(BuildBestStore()),
             characterBest=DeepCopy(CharacterBestStore()),
@@ -730,21 +725,25 @@ local function MigrateLocalLockedBaseline()
         db.buildBest = DeepCopy(source.buildBest or {})
         db.characterBest = DeepCopy(source.characterBest
             or { dummy={}, lk={} })
+        db.lockedMigrationSource = nil
+        local changed = not DeepEqual(beforeState.personalBest, PersonalBestStore())
+            or not DeepEqual(beforeState.buildBest, BuildBestStore())
+            or not DeepEqual(beforeState.characterBest, CharacterBestStore())
+        if changed then BumpDps("locked migration source restored") end
+    end
+
+    -- Exact rollback is independent of current ownership readiness. Keep only
+    -- the migration completion stamp gated so an unsynced restart cannot expose
+    -- partial rows while still preserving the established retry lifecycle.
+    local locked = Adapter and Adapter.LockedOwned and Adapter.LockedOwned()
+    if not (locked and locked.synced == true) then
+        return
     end
 
     -- Reconcile legacy stores only after an interrupted pass has restored its
     -- immutable source. Partial live rows must never create pooled evidence,
     -- copied aliases, or revision churn before they are discarded.
     MigrateLegacyLeaderboard()
-    local function RevisionIfChanged()
-        if not beforeState then return false end
-        local changed = not DeepEqual(beforeState.personalBest, PersonalBestStore())
-            or not DeepEqual(beforeState.buildBest, BuildBestStore())
-            or not DeepEqual(beforeState.characterBest, CharacterBestStore())
-        if changed then BumpDps("locked migration source restored") end
-        return changed
-    end
-
     -- Current durable rows do not record whether locked evidence was captured
     -- with the pull or attached later from the current login. Inline and direct
     -- references therefore prove content integrity, not historical provenance.
@@ -752,7 +751,6 @@ local function MigrateLocalLockedBaseline()
     db.lockedMigrationSource = nil
     db.lockedMigrationVersion = LOCKED_MIGRATION_VERSION
     migratedLockedBaseline = true
-    RevisionIfChanged()
 end
 
 local function BuildSnapshot(build)

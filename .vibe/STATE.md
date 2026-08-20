@@ -10,7 +10,7 @@
 - Checkpoint: 46.1
 - Status: IN_REVIEW
 - Branch: `bugfix/test19-wp1-issue39`
-- Candidate head: branch `HEAD` after a second local follow-up commit on `9827faa5b7096d3c4dfca76e35ed345b9f09e746`; final restart-order code/test bytes passed replacement validation
+- Candidate head: branch `HEAD` after a final local source-first follow-up on `695d6190444ef6849f68cafa248388ded65aaebe`; unsynced-restart code/test bytes passed replacement validation
 - Worktree: `.wp1-issue39-worktree`
 - Base: `origin/refactor/nexus-1.20-test17` at `3965b107574d4a394e0672cb130eab7e4694e7b5`
 
@@ -23,12 +23,12 @@ Prevent locked-baseline migration from applying unproven evidence to historical 
 - Focused `tests/run_locked_migration_authority.lua` coverage for preservation, login order, restart, future-schema, and no-churn behavior.
 - `tests/run_migration_owned_lifecycle.lua` retained for authoritative wait, immutable interruption source, retry, and idempotence without current-character guessing.
 - One fail-closed `core/DpsCapture.lua` migration owner that restores an immutable interrupted source before any side-effecting migration work and otherwise preserves historical rows.
-- Focused mapped DPS tests plus Lua 5.1 parse, Fast, required Full, diff/scope review, and one local commit.
+- Focused mapped DPS tests plus Lua 5.1 parse, Fast, required Full, diff/scope review, and explicitly staged local follow-up commits.
 
 ## Acceptance (current checkpoint)
 
 - [x] Expected red proves a remote row loses a locally locked ordinary Echo under the old lifecycle.
-- [x] Pre-v1 and interrupted migration preserve every historical row, restoring a surviving immutable source before any partial live row can create evidence or revision side effects.
+- [x] Pre-v1 and interrupted migration preserve every historical row, restoring and retiring a surviving immutable source before readiness gating or any partial live row side effect.
 - [x] Completed-v1 rows remain unchanged because direct references and strict-subset relationships prove content consistency, not historical association.
 - [x] Login order, late current-state backfill, restart/retry/idempotence, future-schema/read-only, no-lock, and Sync fingerprint stability regressions pass.
 - [x] Mapped DPS tests, related board/evidence/migration tests, Lua 5.1 parse, Fast, required Full, and `git diff --check` pass on exact final repaired code/test bytes.
@@ -53,9 +53,13 @@ Prevent locked-baseline migration from applying unproven evidence to historical 
 - Stage 45.1 terminal reconciliation: PR #13 body and issue #12 comment `5310228999` carry the repair/CI receipt; supported `vibe stop` reports `stopped: true`, Stage 45.1 `DONE`, dispatcher `stop`, and no prompt.
 - Stage 46.1 repair: public-lifecycle, conflicting-evidence, completed-v1, interrupted-source, and shared-keyed-alias regressions pass; mapped tests pass; Fast passed `19/19`; the single Full passed `18` blocking checks with `209/209` Lua and `282/282` Lua 5.1 parse plus one explicit manual SavedVariables skip.
 - Stage 46.1 final restart-order candidate: focused/mapped tests pass, Fast passed `19/19`, and replacement Full passed `18` blocking checks with `209/209` Lua and `282/282` Lua 5.1 parse plus the explicit manual SavedVariables skip.
+- Stage 46.1 final unsynced-restart candidate: both focused runners and Fast `19/19` pass; final Full passed `18` blocking checks with Lua `209/209`, Lua 5.1 parse `282/282`, and the explicit manual SavedVariables skip.
 
 ## Work log
 
+- Stage 46.1 final source-first implementation restores/retires rollback before readiness, leaves only the version stamp gated, preserves authoritative retry/reload behavior, and froze the final validated bytes for review.
+- Stage 46.1 unsynced-restart triage resolved the final blocker: rollback now restores and retires the source before readiness, the version stamp still waits, and the authoritative retry/reload remains idempotent.
+- Stage 46.1 follow-up review FAIL: source restoration still followed the locked-readiness return, so an unsynced restart could expose partial rows to `DPS.Init` legacy reconciliation. The checkpoint returned to implementation.
 - Stage 46.1 final implementation restored surviving source stores before legacy reconciliation, removed the obsolete new-source snapshot cycle, proved zero partial-row evidence touches plus represented revision advance, and froze replacement code/test bytes for review.
 - Stage 46.1 issue triage resolved the restart-order blocker: a tagged partial row failed red when evidence touched it, then passed after source restoration moved ahead of legacy reconciliation; represented restoration still advances the DPS revision.
 - Stage 46.1 final review FAIL: interrupted restart still ran `MigrateLegacyLeaderboard` over partial live stores before restoring `lockedMigrationSource`, allowing orphan evidence and revision side effects. The checkpoint returned to implementation.
@@ -115,7 +119,7 @@ Prevent locked-baseline migration from applying unproven evidence to historical 
 
 - Inline and referenced locked evidence prove content integrity but not historical provenance because current-state backfill can create both; absent a durable provenance bridge, automatic subtraction is forbidden.
 - An interrupted migration restores `lockedMigrationSource` exactly before completing the fail-closed version stamp; completed-v1 rows are not automatically reversed from direct references or subset relationships.
-- Source restoration precedes `MigrateLegacyLeaderboard` so partial live rows cannot leak evidence or revision side effects before replacement.
+- Source restoration and rollback-source retirement precede both readiness gating and `MigrateLegacyLeaderboard` so partial live rows cannot leak evidence or revision side effects.
 - Preserve ambiguous evidence in place, preserve future-schema/read-only storage, avoid a new durable audit schema, and do not broaden Stage 46 beyond WP1/#39.
 - Reuse one shared strict download-URI validator for ordinary tool assets and PSScriptAnalyzer; do not add a second validation path.
 - Keep Stage 45 to checkpoint 45.1; because CI evidence must be committed into terminal Vibe truth, use the authorized two-cycle flow and require replacement Quality and Release on the receipt-only final head.
@@ -127,8 +131,8 @@ Prevent locked-baseline migration from applying unproven evidence to historical 
 
 ## Last completed loop
 
-- Stage 46.1 final implementation resolved the restart-order defect and handed replacement local bytes to adversarial review.
+- Stage 46.1 final implementation resolved the unsynced-restart source-first defect and handed the validated local candidate to adversarial review.
 
 ## Recommended next action
 
-- Adversarially review the final local restart-order follow-up against `9827faa` and WP1; do not publish or advance to WP2.
+- Adversarially review the final source-first local follow-up against `695d619`; do not publish or advance to WP2.
