@@ -432,21 +432,39 @@ local function BuildProjection(filters)
     return out, summary
 end
 
-local function PlayerKey(value)
-    return Identity.PlayerKey(value) or "invalid"
+local function EvidenceIdentityKey(row)
+    if type(row) ~= "table" then return "invalid" end
+    local ownerKey = Identity.VerifiedOwnerKey(row)
+    if ownerKey then return ownerKey end
+    local player = type(row.player) == "string" and row.player:lower() or ""
+    local realm = type(row.realm) == "string" and row.realm:lower() or ""
+    local claimed = type(row.claimedOwnerKey) == "string"
+        and row.claimedOwnerKey:lower() or ""
+    local relay = type(row.relaySender) == "string"
+        and row.relaySender:lower() or ""
+    local owner = type(row.ownerKey) == "string"
+        and row.ownerKey:lower() or ""
+    if realm == "" and claimed == "" and relay == "" and owner == "" then
+        return Identity.PlayerKey(row.player) or "invalid"
+    end
+    return "evidence:" .. TypedIdentity(player)
+        .. ":" .. TypedIdentity(realm)
+        .. ":" .. TypedIdentity(owner)
+        .. ":" .. TypedIdentity(claimed)
+        .. ":" .. TypedIdentity(relay)
 end
 
 local function RecordKey(row)
-    return PlayerKey(row and row.player)
+    return EvidenceIdentityKey(row)
         .. "|" .. TypedIdentity(row and (row.fingerprint or row.buildId))
 end
 
-local function ExactRecordKey(row)
+local function CombinedRecordKey(row)
     if type(row) ~= "table" or type(row.fingerprint) ~= "string"
         or row.fingerprint == "" then return nil end
-    local player = Identity.PlayerKey(row.player)
-    if not player then return nil end
-    return player .. "|" .. TypedIdentity(row.fingerprint)
+    local ownerKey = Identity.VerifiedOwnerKey(row)
+    if not ownerKey then return nil end
+    return ownerKey .. "|" .. TypedIdentity(row.fingerprint)
 end
 
 local function CommonTypedIdentity(left, right)
@@ -460,7 +478,7 @@ local function EvidenceRecord(row)
         player=row.player,fingerprint=row.fingerprint,
         buildId=row.buildId,resolvedBuildId=row.resolvedBuildId,
         ownerKey=row.ownerKey,ownerVerified=row.ownerVerified == true,
-        relaySender=row.relaySender,
+        claimedOwnerKey=row.claimedOwnerKey,relaySender=row.relaySender,
         buildIdentityMismatch=row.buildIdentityMismatch,
         recordIdentityMismatch=row.recordIdentityMismatch,
         resolvedIdentityMismatch=row.resolvedIdentityMismatch,
@@ -496,12 +514,12 @@ local function CombinedRows()
     local dummy, lk = Board("dummy"), Board("lk")
     local dummyByKey = {}
     for _, row in ipairs(dummy) do
-        local key = ExactRecordKey(row)
+        local key = CombinedRecordKey(row)
         if key then dummyByKey[key] = row end
     end
     local out = {}
     for _, lrow in ipairs(lk) do
-        local key = ExactRecordKey(lrow)
+        local key = CombinedRecordKey(lrow)
         local drow = key and dummyByKey[key]
         if drow then
             local average = ((tonumber(drow.dps) or 0)
@@ -519,6 +537,7 @@ local function CombinedRows()
             local resolvedFingerprintRevision = CommonTypedIdentity(
                 drow.resolvedFingerprintRevision,
                 lrow.resolvedFingerprintRevision)
+            local ownerKey = Identity.VerifiedOwnerKey(lrow)
             out[#out + 1] = {
                 player=lrow.player, dps=average, average=average,
                 dummyDps=drow.dps, lkDps=lrow.dps,
@@ -530,10 +549,7 @@ local function CombinedRows()
                 fingerprint=lrow.fingerprint or drow.fingerprint,
                 class=not classConflict and (lkClass or dummyClass) or nil,
                 classEvidenceMismatch=classConflict or nil,
-                ownerKey=lrow.ownerKey or drow.ownerKey,
-                ownerVerified=lrow.ownerVerified == true
-                    and drow.ownerVerified == true,
-                relaySender=lrow.relaySender or drow.relaySender,
+                ownerKey=ownerKey,ownerVerified=true,
                 dummyEvidence=EvidenceRecord(drow),
                 lkEvidence=EvidenceRecord(lrow),
                 echoes=ordinary,
@@ -871,6 +887,7 @@ local function CombinedRow(drow, lrow)
     local dummyClass = NormalizeClass(drow.resolvedClass or drow.class)
     local lkClass = NormalizeClass(lrow.resolvedClass or lrow.class)
     local classConflict = dummyClass and lkClass and dummyClass ~= lkClass
+    local ownerKey = Identity.VerifiedOwnerKey(lrow)
     return {
         player=lrow.player,dps=average,average=average,
         dummyDps=drow.dps,lkDps=lrow.dps,
@@ -880,10 +897,7 @@ local function CombinedRow(drow, lrow)
         category="combined",fingerprint=lrow.fingerprint or drow.fingerprint,
         class=not classConflict and (lkClass or dummyClass) or nil,
         classEvidenceMismatch=classConflict or nil,
-        ownerKey=lrow.ownerKey or drow.ownerKey,
-        ownerVerified=lrow.ownerVerified == true
-            and drow.ownerVerified == true,
-        relaySender=lrow.relaySender or drow.relaySender,
+        ownerKey=ownerKey,ownerVerified=true,
         dummyEvidence=EvidenceRecord(drow),
         lkEvidence=EvidenceRecord(lrow),
         echoes=ordinary,
@@ -1032,11 +1046,7 @@ end
 local function IsCurrentPlayerRow(row, context)
     if type(row) ~= "table" then return false end
     local owner = type(context) == "table" and context.ownerKey or ""
-    if row.ownerVerified == true and owner ~= ""
-        and type(Identity.CanonicalOwnerKey) == "function" then
-        return Identity.CanonicalOwnerKey(row.ownerKey) == owner
-    end
-    return false
+    return owner ~= "" and Identity.VerifiedOwnerKey(row) == owner
 end
 
 local function ResolveLeaderboardClass(row, resolvedBuild, context,
@@ -1071,7 +1081,7 @@ local function ResolveLeaderboardClass(row, resolvedBuild, context,
     local catalog = Nexus and Nexus.BuildCatalog
     if catalog and type(catalog.ResolveOwnerClass) == "function" then
         local ok, recovered, source = pcall(
-            catalog.ResolveOwnerClass, row.ownerKey, row.ownerVerified)
+            catalog.ResolveOwnerClass, row)
         recovered = ok and NormalizeClass(recovered) or nil
         if recovered then return recovered, source or "owner-consensus" end
         if ok and source == "owner class evidence conflicts" then
@@ -1197,7 +1207,7 @@ local function PumpLeaderboardJob(job, unit)
             local row = dummy[job.sourceIndex]
             job.sourceIndex = job.sourceIndex + 1
             sourceRows = sourceRows + 1
-            local key = ExactRecordKey(row)
+            local key = CombinedRecordKey(row)
             if key then job.dummyByKey[key] = row end
         end
         if job.sourceIndex > #dummy then
@@ -1213,7 +1223,7 @@ local function PumpLeaderboardJob(job, unit)
             sourceRows = sourceRows + 1
             local row = raw
             if combined then
-                local key = ExactRecordKey(raw)
+                local key = CombinedRecordKey(raw)
                 local drow = key and job.dummyByKey[key]
                 if drow then
                     row = CombinedRow(drow, raw)

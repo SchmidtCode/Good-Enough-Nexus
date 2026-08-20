@@ -41,6 +41,7 @@ for index = 1, 1000 do
                 [category .. "@" .. index] = {
                 player=string.format("Player%03d", index),
                 ownerKey=string.format("player%03d@ebonhold", index),
+                ownerVerified=true,realm="ebonhold",
                 dps=(category == "dummy" and 30000000 or 28000000)-index,
                 level=80,ts=index,duration=60,class="MAGE",
                 buildId=id,fingerprint=fingerprint,

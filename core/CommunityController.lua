@@ -334,28 +334,84 @@ function Controller.New(options)
 
     local function OwnerEvidenceKey(record)
         if type(record) ~= "table" then return nil end
-        local author = record.player or record.p or record.author
-        local ownerKey = record.claimedOwnerKey or record.ownerKey or record.o
-        local realm = record.realm
-        if realm == nil then realm = record.r end
-        if ownerKey == nil and realm ~= nil then
-            ownerKey = Identity.OwnerKey(author, realm)
+        if record.a ~= nil then return nil end
+        local ownerKey
+        for _, field in ipairs({"claimedOwnerKey", "ownerKey", "o"}) do
+            local value = record[field]
+            if value ~= nil then
+                local canonical = Identity.CanonicalOwnerKey(value)
+                if not canonical or canonical:match("@unknown$")
+                    or (ownerKey and ownerKey ~= canonical) then return nil end
+                ownerKey = canonical
+            end
         end
-        ownerKey = Identity.CanonicalOwnerKey(ownerKey)
-        if not ownerKey or ownerKey:match("@unknown$")
-            or not Identity.OwnerKeyMatchesAuthor(ownerKey, author) then
-            return nil
+        local authorFields = {"player", "p", "author"}
+        local firstAuthor
+        for _, field in ipairs(authorFields) do
+            local value = record[field]
+            if value ~= nil then
+                if type(value) ~= "string" or not Identity.ValidPlayer(value) then
+                    return nil
+                end
+                firstAuthor = firstAuthor or value
+            end
         end
-        if type(author) == "string" and author:find("-", 1, true)
-            and Identity.CanonicalOwnerFromTransport(author) ~= ownerKey then
-            return nil
+        local realmFields = {"realm", "r"}
+        local firstRealm
+        for _, field in ipairs(realmFields) do
+            local value = record[field]
+            if value ~= nil then
+                if type(value) ~= "string" or value == ""
+                    or value:find("[%c|%s]") then return nil end
+                firstRealm = firstRealm or value
+            end
         end
-        if realm ~= nil then
-            local realmOwner = Identity.CanonicalOwnerKey(
-                Identity.OwnerKey(author, realm))
-            if realmOwner ~= ownerKey then return nil end
+        if ownerKey == nil and firstAuthor and firstRealm then
+            ownerKey = Identity.CanonicalOwnerKey(
+                Identity.OwnerKey(firstAuthor, firstRealm))
+        end
+        if not ownerKey then return nil end
+        for _, field in ipairs(authorFields) do
+            local author = record[field]
+            if author ~= nil then
+                if not Identity.OwnerKeyMatchesAuthor(ownerKey, author)
+                    or (author:find("-", 1, true)
+                        and Identity.CanonicalOwnerFromTransport(author)
+                            ~= ownerKey) then return nil end
+            end
+        end
+        local ownerName = ownerKey:match("^([^@]+)@")
+        for _, field in ipairs(realmFields) do
+            local realm = record[field]
+            if realm ~= nil and Identity.CanonicalOwnerKey(
+                Identity.OwnerKey(ownerName, realm)) ~= ownerKey then
+                return nil
+            end
         end
         return ownerKey
+    end
+
+    -- A fresh verified DPS owner may repair its own retained auto page even
+    -- when old transport aliases made that page non-authoritative. This helper
+    -- is promotion-only: it never grants reads, edits, publication, or relay.
+    local function CanPromoteOwnerEvidence(record, incomingOwner)
+        incomingOwner = Identity.CanonicalOwnerKey(incomingOwner)
+        if type(record) ~= "table" or not incomingOwner
+            or Identity.SavedMirrorKind(record) ~= "ordinary"
+            or record.autoDps ~= true
+            or Identity.VerifiedOwnerKey(record) ~= nil then return false end
+        local claimedKey = Identity.CanonicalOwnerKey(record.claimedOwnerKey)
+        local storedKey = Identity.CanonicalOwnerKey(record.ownerKey)
+        if claimedKey and storedKey and claimedKey ~= storedKey then return false end
+        local claim = claimedKey or storedKey
+        if claim ~= incomingOwner then return false end
+        local author = record.author
+        if author ~= nil and (type(author) ~= "string"
+            or not Identity.OwnerKeyMatchesAuthor(incomingOwner, author)
+            or (author:find("-", 1, true)
+                and Identity.CanonicalOwnerFromTransport(author)
+                    ~= incomingOwner)) then return false end
+        return true
     end
 
     local function VerifiedDpsOwnerKey(record)
@@ -377,7 +433,7 @@ function Controller.New(options)
         build.author = author
         build.player = nil
         build.realm = ownerKey:match("@(.+)$")
-        build.o, build.p, build.r = nil, nil, nil
+        build.a, build.o, build.p, build.r = nil, nil, nil, nil
         build.isMine = ownerKey == CurrentVerifiedOwnerKey()
     end
 
@@ -1006,7 +1062,7 @@ function Controller.New(options)
         return nil
     end
 
-    local function SavedMirrorOwnedBy(candidate, ownerKey)
+    local function SavedMirrorReusableBy(candidate, ownerKey)
         return Identity.CanAdoptSavedMirror(candidate, ownerKey)
     end
 
@@ -1017,7 +1073,7 @@ function Controller.New(options)
         return FindStableCollisionTarget(base, token, function(candidate)
             return Identity.SavedMirrorKind(candidate) == "saved"
                 and tonumber(candidate.serverSlot) == slot
-                and SavedMirrorOwnedBy(candidate, job.ownerKey)
+                and SavedMirrorReusableBy(candidate, job.ownerKey)
         end)
     end
 
@@ -1247,7 +1303,7 @@ function Controller.New(options)
                         savedImportStats.cleanupExamined + 1
                     local build = LoadBuild(id)
                     if Identity.SavedMirrorKind(build) == "saved"
-                        and SavedMirrorOwnedBy(build, job.ownerKey)
+                        and Identity.LocalOwnsSavedMirror(build, job.ownerKey)
                         and not job.seen[id] then
                         if RemoveOverlay(id) then
                             if selectedId == id then selectedId = nil end
@@ -1519,7 +1575,9 @@ function Controller.New(options)
             local verdict = evidence and recovered
                 and type(evidence.OrdinaryCompleteness) == "function"
                 and evidence.OrdinaryCompleteness(recovered) or nil
-            if recoveredId and type(verdict) == "table"
+            if recoveredId
+                and Identity.SavedMirrorKind(recovered) == "ordinary"
+                and type(verdict) == "table"
                 and verdict.complete == true then
                 local recoveredOwner = Identity.VerifiedOwnerKey(recovered)
                 local recoveredClaim = OwnerEvidenceKey(recovered)
@@ -1528,7 +1586,9 @@ function Controller.New(options)
                     if recordOwner then
                         sameAutoOwner = recoveredOwner == recordOwner
                             or (not recoveredOwner
-                                and recoveredClaim == recordOwner)
+                                and (recoveredClaim == recordOwner
+                                    or CanPromoteOwnerEvidence(
+                                        recovered, recordOwner)))
                     elseif recordClaim then
                         sameAutoOwner = recoveredOwner == recordClaim
                             or (not recoveredOwner
@@ -1554,6 +1614,10 @@ function Controller.New(options)
         -- A protocol build ID is an identity, not a derived alias. Never attach
         -- its record to a different loadout or owner merely because IDs collide.
         local explicitExisting = explicitId and LoadBuild(explicitId) or nil
+        if explicitExisting
+            and Identity.SavedMirrorKind(explicitExisting) ~= "ordinary" then
+            explicitId, explicitExisting = nil, nil
+        end
         if explicitExisting then
             -- Only a verified canonical DPS owner may hydrate or promote an
             -- existing opaque identity.  Claims remain evidence, never power.
@@ -1577,7 +1641,9 @@ function Controller.New(options)
                     recordOwner, explicitExisting.author)
             if existingOwner and existingOwner ~= recordOwner then return nil end
             if not existingOwner and existingClaim ~= recordOwner
-                and not producerPromotion then return nil end
+                and not producerPromotion
+                and not CanPromoteOwnerEvidence(
+                    explicitExisting, recordOwner) then return nil end
             local promoteOwner = existingOwner == nil
             local presentationChanged = false
             if promoteOwner then
@@ -1646,7 +1712,8 @@ function Controller.New(options)
                 local verdict = evidence
                     and type(evidence.OrdinaryCompleteness) == "function"
                     and evidence.OrdinaryCompleteness(build) or nil
-                if type(verdict) == "table" and verdict.complete == true
+                if Identity.SavedMirrorKind(build) == "ordinary"
+                    and type(verdict) == "table" and verdict.complete == true
                     and verdict.fingerprint == key then
                     if not build.autoDps then
                         if recordOwner
@@ -1657,7 +1724,9 @@ function Controller.New(options)
                         local buildClaim = OwnerEvidenceKey(build)
                         local sameOwner = recordOwner and (
                             buildOwner == recordOwner
-                            or (not buildOwner and buildClaim == recordOwner))
+                            or (not buildOwner and (buildClaim == recordOwner
+                                or CanPromoteOwnerEvidence(
+                                    build, recordOwner))))
                         local sameClaim = not recordOwner and recordClaim
                             and (buildOwner == recordClaim
                                 or (not buildOwner
@@ -1690,7 +1759,9 @@ function Controller.New(options)
         if ownAutoId then
             local changed = false
             if recordOwner and not Identity.VerifiedOwnerKey(ownAutoBuild) then
-                if OwnerEvidenceKey(ownAutoBuild) ~= recordOwner then return nil end
+                if OwnerEvidenceKey(ownAutoBuild) ~= recordOwner
+                    and not CanPromoteOwnerEvidence(
+                        ownAutoBuild, recordOwner) then return nil end
                 ApplyVerifiedBuildOwner(ownAutoBuild, recordOwner, player)
                 changed = true
             end
@@ -1976,6 +2047,13 @@ function Controller.New(options)
 
     local function HasLeaderboardRecord(build)
         if not build then return false end
+        if Identity.SavedMirrorKind(build) == "saved" then
+            local related, valid = RelatedBuild(build)
+            if not valid or type(related) ~= "table" then return false end
+            build = related
+        elseif Identity.SavedMirrorKind(build) ~= "ordinary" then
+            return false
+        end
         if build.autoDps then return true end
         local D = Nexus.DpsCapture
         if not D or not D.GetLeaderboard then return false end
@@ -2031,12 +2109,14 @@ function Controller.New(options)
         local published = PublishedBuild(build, LoadBuildSummary)
         local localOwner = Identity.LocalOwnsSavedMirror(
             build, CurrentOwnerKey())
+        local projectedClass = localOwner and CurrentClass() or nil
+        projectedClass = NormalizeClass(projectedClass)
+            or NormalizeClass(relation and relation.class) or "UNKNOWN"
         return {
             recordBuildId=relation and relation.buildId or nil,
             fingerprint=relation and relation.fingerprint or nil,
             fingerprintHash=relation and relation.fingerprintHash or nil,
-            class=NormalizeClass(relation and relation.class)
-                or localOwner and CurrentClass() or "UNKNOWN",
+            class=projectedClass,
             publishedBuildId=published and published.id or nil,
         }, relation
     end
@@ -2211,6 +2291,10 @@ function Controller.New(options)
             }
         end
         if #echoes == 0 then return false, "that build has no ordinary echoes" end
+        local projectionState = M.SavedProjectionState(source)
+        local publicationClass = NormalizeClass(
+            projectionState and projectionState.class)
+            or InferBuildClass(echoes)
         -- Build and validate a complete replacement before changing either record.
         local record = {
             id=publishedId,
@@ -2218,7 +2302,7 @@ function Controller.New(options)
             description=source.userDescription or source.description or "",
             author=(UnitName and UnitName("player")) or "You",
             ownerKey=localOwner, ownerVerified=localOwner and true or false,
-            class=NormalizeClass(source.class) or InferBuildClass(echoes),
+            class=publicationClass,
             echoes=echoes,
             postedAt=old and old.postedAt or stamp,
             lastModified=stamp,

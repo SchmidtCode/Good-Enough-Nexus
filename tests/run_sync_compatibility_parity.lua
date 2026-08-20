@@ -61,6 +61,7 @@ local catalog = {
 
 local cachedDelta, cachedLegacy
 local buildRevision = 1
+local currentOwner = "local@realm"
 local cacheStats = {available=true, marker="cache"}
 local hashCache
 local echoKeyEnabled = false
@@ -91,10 +92,11 @@ local C = Nexus.SyncInternals.Compatibility.New({
     getTombstones=function() return tombstones end,
     localOwnsTomb=function(tombstone)
         return tombstone.ownerVerified == true
-            and tombstone.ownerKey == "local@realm"
+            and tombstone.ownerKey == currentOwner
     end,
     relayEligible=function(build) return build.relayBlocked ~= true end,
     myName=function() return "Local" end,
+    currentOwnerKey=function() return currentOwner end,
     now=function() return 123.5 end,
     getCodec=function() return Nexus.Codec end,
     validIdentifier=Protocol.ValidIdentifier,
@@ -221,6 +223,27 @@ assert(complete == true and why == nil and progressed == false
     and stats.candidateScans == scansAtComplete,
     "completed snapshot was rebuilt or rescanned")
 
+-- Tomb candidates depend on exact local authority, not only the short display
+-- name. A same-name realm transition must invalidate every retained snapshot
+-- even when the represented hash and catalog revision are unchanged.
+currentOwner = "local@otherrealm"
+assert(C.SnapshotCurrent(snapshot) == false,
+    "EXPECTED RED: exact owner change retained a prior tomb snapshot")
+complete, why, progressed = C.AdvanceCandidateSnapshot(snapshot)
+assert(complete == false and why == "stale candidate snapshot"
+    and progressed == true,
+    "exact-owner-stale candidate snapshot did not fail explicitly")
+local ownerReplacement = C.BuildCandidateSnapshot(cachedDelta)
+assert(ownerReplacement ~= snapshot and stats.candidateSnapshots == 2
+    and C.BuildCandidateSnapshot(cachedDelta) == ownerReplacement,
+    "exact owner invalidation did not rebuild exactly once")
+currentOwner = "local@realm"
+assert(C.SnapshotCurrent(ownerReplacement) == false,
+    "same-short owner rollback retained the foreign-owner snapshot")
+snapshot = C.BuildCandidateSnapshot(cachedDelta)
+assert(stats.candidateSnapshots == 3,
+    "owner rollback did not rebuild the candidate snapshot")
+
 -- Metadata-only represented changes advance the build revision even when the
 -- wire hash fields stay byte-identical. They must replace the derived view.
 buildRevision = buildRevision + 1
@@ -231,7 +254,7 @@ assert(complete == false and why == "stale candidate snapshot"
     and progressed == true,
     "stale candidate snapshot did not fail explicitly")
 local replacement = C.BuildCandidateSnapshot(cachedDelta)
-assert(replacement ~= snapshot and stats.candidateSnapshots == 2
+assert(replacement ~= snapshot and stats.candidateSnapshots == 4
     and C.BuildCandidateSnapshot(cachedDelta) == replacement,
     "metadata-only invalidation did not rebuild exactly once")
 
@@ -240,12 +263,12 @@ buildRevision = buildRevision + 1
 assert(C.SnapshotCurrent(replacement) == false,
     "wire-hash revision did not invalidate old snapshot")
 local hashReplacement = C.BuildCandidateSnapshot(cachedDelta)
-assert(hashReplacement ~= replacement and stats.candidateSnapshots == 3
+assert(hashReplacement ~= replacement and stats.candidateSnapshots == 5
     and C.BuildCandidateSnapshot(cachedDelta) == hashReplacement,
     "wire-hash invalidation did not rebuild exactly once")
 C.Reset()
 assert(C.BuildCandidateSnapshot(cachedDelta) ~= hashReplacement
-    and stats.candidateSnapshots == 4,
+    and stats.candidateSnapshots == 6,
     "session reset retained derived candidate state")
 
 -- Fingerprints and compact summaries preserve the established exact fields.

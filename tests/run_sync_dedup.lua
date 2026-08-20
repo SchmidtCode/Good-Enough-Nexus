@@ -4,6 +4,7 @@ local H = dofile("tests/harness.lua")
 dofile("core/Codec.lua")
 dofile("core/SyncProtocol.lua"); dofile("core/SyncTransport.lua"); dofile("core/SyncCompatibility.lua"); dofile("core/SyncReconciler.lua"); dofile("core/SyncInbound.lua"); dofile("core/SyncDiagnostics.lua"); dofile("core/SyncSession.lua"); dofile("core/Sync.lua")
 local Codec, Sync = Nexus.Codec, Nexus.Sync
+local Catalog = Nexus.BuildCatalog
 
 NexusDB = {}
 UnitName = function() return "Alice" end
@@ -13,10 +14,26 @@ GetTime = function() return fakeClock end
 Sync.Init(Codec, nil)
 
 local function BroadcastAndCollect(build)
+    local previous = Catalog.Get(build.id)
+    assert(Catalog.Put(build), "sender build could not enter the catalog")
+    local selected = Catalog.Get(build.id)
     H.sentChatMessages = {}
-    Sync.BroadcastBuild(build)
+    local queued, why = Sync.BroadcastBuild(selected)
+    assert(queued, "selected sender build was not queued: " .. tostring(why))
     for i = 1, 30 do Sync.OnUpdate(0.2) end
-    return H.sentChatMessages
+    local messages = H.sentChatMessages
+    local emitted = false
+    for _, message in ipairs(messages) do
+        if tostring(message.text):match("^WLRB|") then emitted = true break end
+    end
+    assert(emitted, "selected sender build emitted no WLRB payload")
+    if previous then
+        assert(Catalog.Put(previous), "receiver snapshot could not be restored")
+    else
+        assert(Catalog.RemoveOverlay(build.id),
+            "temporary sender build could not be removed")
+    end
+    return messages
 end
 
 -- Receiving is opt-in: every delivery in these tests happens inside an

@@ -43,6 +43,8 @@ local boards = {dummy={},lk={}}
 for index = 1, 100 do
     local common = {
         player="Player"..index, buildId="board-"..index,
+        ownerKey="player"..index.."@realma",ownerVerified=true,
+        realm="realma",
         fingerprint=tostring(600000+index).."x1",
         build={id="board-"..index,title="Board "..index,
             author="Author"..index,class=index%2==0 and "MAGE" or "WARRIOR",
@@ -236,8 +238,10 @@ assert(#orderedCollision == 2 and type(orderedCollision[1].id) == "number"
 
 local collisionBoards = {
     dummy={{player="Collision",buildId=1,dps=100,category="dummy",
+        ownerKey="collision@realma",ownerVerified=true,realm="realma",
         build={id=1,title="Numeric",class="MAGE"}}},
     lk={{player="Collision",buildId="1",dps=200,category="lk",
+        ownerKey="collision@realma",ownerVerified=true,realm="realma",
         build={id="1",title="String",class="MAGE"}}},
 }
 Nexus.DpsCapture.GetDpsBoard = function(category)
@@ -259,6 +263,19 @@ Revisions.Advance(Revisions.DPS_CHANGED, {scope="all"})
 local exactCombined = P.Leaderboard("combined", {classFilter="ALL"})
 assert(#exactCombined == 1 and not exactCombined[1].lockedEvidenceMismatch,
     "matching exact fingerprints did not pair leaderboard records")
+collisionBoards.lk[1].player = "Collision-RealmB"
+collisionBoards.lk[1].ownerKey = "collision@realmb"
+collisionBoards.lk[1].realm = "realmb"
+Revisions.Advance(Revisions.DPS_CHANGED, {scope="all"})
+assert(#P.Leaderboard("combined", {classFilter="ALL"}) == 0,
+    "same-name different-realm records were combined")
+collisionBoards.lk[1].player = "Collision"
+collisionBoards.lk[1].ownerKey = "collision@realma"
+collisionBoards.lk[1].realm = "realma"
+Revisions.Advance(Revisions.DPS_CHANGED, {scope="all"})
+exactCombined = P.Leaderboard("combined", {classFilter="ALL"})
+assert(#exactCombined == 1,
+    "restored exact owner records did not combine")
 collisionBoards.dummy[1].lockedEchoes = {{spellId=810001,count=1}}
 collisionBoards.lk[1].lockedEchoes = {{spellId=810002,count=1}}
 Revisions.Advance(Revisions.DPS_CHANGED, {scope="all"})

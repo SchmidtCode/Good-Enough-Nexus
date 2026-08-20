@@ -187,7 +187,8 @@ local Builds = Nexus.CommunityBuilds
 local originalEchoes = {{spellId=200300, quality=2, stacks=1}}
 NexusDB.communityBuilds = {
     mine={id="mine", title="Original", description="Original description",
-        author="Boganic", ownerKey="boganic@ebonhold", class="MAGE",
+        author="Boganic", ownerKey="boganic@ebonhold",
+        ownerVerified=true,realm="ebonhold",class="MAGE",
         echoes=originalEchoes, postedAt=10, lastModified=10, isMine=true,
         fingerprint="stale", fingerprintHash="stale", echoCount=99},
 }

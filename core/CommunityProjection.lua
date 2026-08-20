@@ -355,14 +355,11 @@ function Projection.New(options)
             lkPersonal = type(options.personalBest) == "function"
                 and options.personalBest(recordId, "lk") or nil
         end
-        local lockDummy, lockLk = dummy, lk
-        if recordId ~= nil and recordId ~= build.id then
-            stats.detail.leaderboardReads = stats.detail.leaderboardReads + 2
-            lockDummy = SafeRows(options.leaderboard, build.id, "dummy")
-            lockLk = SafeRows(options.leaderboard, build.id, "lk")
-        end
-        local loadoutLocked = build.autoDps == true
-            or #lockDummy > 0 or #lockLk > 0
+        -- Saved mirrors remain editable local slot projections. A validated
+        -- publication relationship may supply display DPS, but it must not
+        -- borrow the ordinary publication's leaderboard lock state.
+        local loadoutLocked = savedKind ~= "saved"
+            and (build.autoDps == true or #dummy > 0 or #lk > 0)
 
         local editState
         if savedKind == "saved" then

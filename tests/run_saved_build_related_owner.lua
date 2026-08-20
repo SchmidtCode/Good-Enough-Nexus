@@ -317,6 +317,7 @@ assert(stableLocalSlotTwo == localSlotTwo,
 
 local ambiguousMirrorId = "saved-twin-4"
 local ambiguousOrphanId = "saved-twin-8"
+local explicitLegacyOrphanId = "saved-twin-14"
 assert(Nexus.BuildCatalog.Put({
     id=ambiguousMirrorId,title="Ambiguous Private",userTitle="Ambiguous Private",
     serverTitle="Ambiguous Private",author="Twin",isMine=true,
@@ -328,6 +329,13 @@ assert(Nexus.BuildCatalog.Put({
     class="ROGUE",postedAt=46,lastModified=46,echoes=Echoes(987601, 6),
     importedSavedBuild=true,serverSlot=8,
 }), "ambiguous Saved mirror cleanup fixture did not initialize")
+assert(Nexus.BuildCatalog.Put({
+    id=explicitLegacyOrphanId,title="Explicit Legacy Orphan",
+    serverTitle="Explicit Legacy Orphan",author="Twin",
+    ownerKey="twin@realma",realm="realma",isMine=true,
+    class="MAGE",postedAt=47,lastModified=47,echoes=Echoes(987651, 6),
+    importedSavedBuild=true,serverSlot=14,
+}), "explicit-owner legacy Saved orphan did not initialize")
 slots.bySlot[4] = {
     name="RealmA Slot Four",class="MAGE",echoes=Echoes(987701, 6),
 }
@@ -343,8 +351,9 @@ end
 assert(ambiguousMirror.ownerVerified ~= true
     and ambiguousMirror.userTitle == "Ambiguous Private"
     and Nexus.BuildCatalog.Get(ambiguousOrphanId) ~= nil
+    and Nexus.BuildCatalog.Get(explicitLegacyOrphanId) ~= nil
     and localSlotFour and localSlotFour ~= ambiguousMirrorId,
-    "EXPECTED RED: ambiguous short-name mirror was adopted or cleaned as RealmA")
+    "EXPECTED RED: unverified Saved evidence was adopted or cleaned as RealmA")
 
 -- A valid persisted relation remains the stable winner across equal candidates.
 -- With no persisted winner, equal authority/content candidates resolve by ID
@@ -664,8 +673,11 @@ assert(changedDetail.build.recordBuildId == nil
     "content-changed valid publication lost its projected upload state")
 local changedPublished, changedPublishedId =
     controller.PublishImportedBuild(changedSavedId)
-assert(changedPublished and changedPublishedId == changedPublicationId,
-    "content-changed upload migrated its source-bound publication identity")
+local changedPublishedBuild = changedPublishedId
+    and Nexus.BuildCatalog.Get(changedPublishedId) or nil
+assert(changedPublished and changedPublishedId == changedPublicationId
+    and changedPublishedBuild and changedPublishedBuild.class == "MAGE",
+    "EXPECTED RED: content-changed upload migrated identity or published stale class")
 
 local explicitLegacyId = "saved-twin-9"
 local explicitLegacyEchoes = Echoes(990001, 6)

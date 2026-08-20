@@ -207,14 +207,14 @@ assert(type(buildPayload.e) == "table" and #buildPayload.e == 2
     "build wire lost pooled exact Echo evidence")
 H.sentChatMessages = {}
 assert(Sync.BroadcastBuild({
-    id="short-a", title="Reference-owned", author="Localhero", class="MAGE",
+    id="reference-only", title="Reference-owned", author="Localhero", class="MAGE",
     ownerKey="localhero@ebonhold", ownerVerified=true,
     postedAt=12, lastModified=12, evidenceKey=rawB.evidenceKey,
-}), "reference-only ID-collision build could not enter the wire path")
+}), "reference-only build could not enter the wire path")
 Pump(10)
 local collisionPayload = DecodeChunks(H.sentChatMessages, "WLRB", 5, 6)
 assert(#collisionPayload.e == 1 and collisionPayload.e[1][1] == 200102,
-    "catalog ID fallback replaced reference-owned exact build evidence")
+    "catalog fallback replaced reference-owned exact build evidence")
 
 -- A public DPS row remains viewable without its claimed catalog page. Its
 -- stored inline array can also be removed synthetically and hydrated from the

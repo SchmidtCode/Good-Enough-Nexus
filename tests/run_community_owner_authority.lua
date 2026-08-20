@@ -54,6 +54,16 @@ local function BoardRow(category, fingerprint, realm)
     end
 end
 
+local function DurableRow(category, fingerprint, realm)
+    local capture = NexusDB.dpsCapture or {}
+    local store = capture.characterBest and capture.characterBest[category] or {}
+    for _, row in pairs(store or {}) do
+        if row.fingerprint == fingerprint and row.realm == realm then
+            return row
+        end
+    end
+end
+
 local function StoredBuild(id)
     return id and Nexus.BuildCatalog.Get(id) or nil
 end
@@ -105,8 +115,12 @@ assert(DPS.ReceiveRecord(
 local crossFingerprint = DPS.GetEchoKey(crossEchoes)
 local crossRow = assert(BoardRow("dummy", crossFingerprint, "realmb"),
     "cross-realm DPS evidence was not exposed with actual transport provenance")
-local crossId = assert(crossRow.buildId,
-    "cross-realm DPS evidence lost its public Community page")
+assert(crossRow.buildId == nil and crossRow.build == nil,
+    "unverified cross-realm evidence exposed a public build association")
+local crossDurable = assert(DurableRow("dummy", crossFingerprint, "realmb"),
+    "cross-realm DPS evidence was not retained durably")
+local crossId = assert(crossDurable.buildId,
+    "cross-realm evidence lost its non-authoritative promotion page")
 local crossBuild = assert(StoredBuild(crossId),
     "cross-realm Community page was not stored")
 assert(crossRow.ownerVerified == false and crossRow.ownerKey == nil,
@@ -204,6 +218,8 @@ for _, mixed in ipairs({
         ownerVerified=true, isMine=true},
     {author="Twin", realm="RealmB", r="RealmA",
         ownerKey="twin@realma", ownerVerified=true, isMine=true},
+    {author="Twin", a="Other-RealmX", ownerKey="twin@realma",
+        ownerVerified=true, isMine=true},
 }) do
     assert(not Community.IsOwnBuild(mixed),
         "mixed compact/durable identity aliases gained local authority")
@@ -267,6 +283,13 @@ for _, row in ipairs({
         echoes={{spellId=720020, quality=2, stacks=1}},
         postedAt=1, lastModified=1,
     },
+    {
+        id="summary-alias-author", title="Compact author alias", author="Twin",
+        a="Other-RealmX", ownerKey="twin@realma", ownerVerified=true,
+        isMine=true, class="MAGE",
+        echoes={{spellId=720022, quality=2, stacks=1}},
+        postedAt=1, lastModified=1,
+    },
 }) do
     assert(Nexus.BuildCatalog.Put(row), "summary authority control was not stored")
     assert(not Community.IsOwnBuild(row.id),
@@ -280,6 +303,7 @@ AssertNotMineInLibrary("summary-alias-player")
 AssertNotMineInLibrary("summary-alias-realm")
 AssertNotMineInLibrary("summary-legacy-alias")
 AssertNotMineInLibrary("summary-inverse-owner")
+AssertNotMineInLibrary("summary-alias-author")
 
 -- The DPS producer must not stamp verified authority before the durable
 -- Community consumer gets a chance to reject contradictory identity.
@@ -292,9 +316,15 @@ assert(DPS.ReceiveRecord(qualifiedWire, "Twin-RealmA"),
     "qualified-author conflict was not retained as ambient evidence")
 local qualifiedRow = assert(BoardRow(
     "dummy", DPS.GetEchoKey(qualifiedEchoes), "realma"))
-local qualifiedBuild = assert(qualifiedRow.buildId
-        and StoredBuild(qualifiedRow.buildId),
-    "qualified-author conflict lost its ambient Community page")
+assert(qualifiedRow.buildId == nil and qualifiedRow.build == nil,
+    "qualified-author conflict exposed a public build association")
+local qualifiedDurable = assert(DurableRow(
+    "dummy", DPS.GetEchoKey(qualifiedEchoes), "realma"),
+    "qualified-author conflict was not retained durably")
+local qualifiedId = assert(qualifiedDurable.buildId,
+    "qualified-author conflict lost its non-authoritative promotion page")
+local qualifiedBuild = assert(StoredBuild(qualifiedId),
+    "qualified-author ambient Community page was not stored")
 assert(qualifiedRow.ownerVerified == false and qualifiedRow.ownerKey == nil
         and qualifiedBuild.ownerVerified == false
             and qualifiedBuild.ownerKey == nil
@@ -313,12 +343,12 @@ assert(Nexus.BuildCatalog.Put(qualifiedBuild),
 now = now + 1
 local exactQualified = Wire(
     "Twin-RealmA", nil, "twin@realma", qualifiedEchoes, now,
-    qualifiedRow.buildId)
+    qualifiedId)
 assert(DPS.HasCanonicalOwnerIdentity(exactQualified),
     "qualified exact DPS tuple was rejected as incoherent")
 assert(DPS.ReceiveRecord(exactQualified, "Twin-RealmA"),
     "qualified exact owner could not promote retained ambient evidence")
-local promotedQualified = assert(StoredBuild(qualifiedRow.buildId),
+local promotedQualified = assert(StoredBuild(qualifiedId),
     "qualified exact promotion replaced the stable Community identity")
 assert(promotedQualified.ownerVerified == true
         and promotedQualified.ownerKey == "twin@realma"
@@ -346,6 +376,7 @@ assert(reuseId and reuseBuild and reuseBuild.ownerVerified == false,
 reuseBuild.o = "twin@realmb"
 reuseBuild.p = "Twin"
 reuseBuild.r = "RealmB"
+reuseBuild.a = "Other-RealmX"
 assert(Nexus.BuildCatalog.Put(reuseBuild),
     "fingerprint promotion alias control was not persisted")
 local reusedId, promotedReuse = Community.EnsureDpsBuildForEchoes(
@@ -357,7 +388,8 @@ assert(reusedId == reuseId and promotedReuse
         and promotedReuse.ownerVerified == true
         and promotedReuse.ownerKey == "twin@realma"
         and promotedReuse.player == nil
-        and promotedReuse.o == nil and promotedReuse.p == nil
+        and promotedReuse.a == nil and promotedReuse.o == nil
+        and promotedReuse.p == nil
         and promotedReuse.r == nil
         and Nexus.Identity.VerifiedOwnerKey(promotedReuse) == "twin@realma"
         and Community.IsOwnBuild(promotedReuse),
@@ -426,8 +458,12 @@ assert(DPS.ReceiveRecord(soloWire, "Solo"),
     "realm-less DPS compatibility evidence was not retained")
 local soloRow = assert(BoardRow("dummy", soloFingerprint, nil),
     "realm-less DPS evidence was not retained as ambiguous evidence")
-local soloId = assert(soloRow.buildId,
-    "realm-less DPS evidence lost its Community page")
+assert(soloRow.buildId == nil and soloRow.build == nil,
+    "realm-less DPS evidence exposed a public build association")
+local soloDurable = assert(DurableRow("dummy", soloFingerprint, nil),
+    "realm-less DPS evidence was not retained durably")
+local soloId = assert(soloDurable.buildId,
+    "realm-less evidence lost its non-authoritative promotion page")
 local soloBuild = assert(StoredBuild(soloId))
 assert(soloBuild.ownerVerified == false and soloBuild.ownerKey == nil
         and soloBuild.isMine ~= true and not Community.IsOwnBuild(soloBuild),
@@ -570,6 +606,7 @@ local invalidBuilds = {
     BuildVariant("authority-o", {o="twin@realmb"}),
     BuildVariant("authority-p", {p="Other"}),
     BuildVariant("authority-r", {r="realmb"}),
+    BuildVariant("authority-a", {a="Other-RealmX"}),
     BuildVariant("authority-player", {player="Other"}),
     BuildVariant("authority-realm", {realm="realmb"}),
     BuildVariant("authority-realm-type", {realm=123}),
@@ -619,12 +656,29 @@ assert(Nexus.Sync.BroadcastBuildSummary(verifiedRemote)
 
 local legacyLocal = BuildVariant("authority-local-legacy", {})
 legacyLocal.ownerVerified = nil
-assert(Nexus.Identity.LocalOwnsRecord(legacyLocal, "twin@realma"),
-    "coherent local legacy build control lost authority")
+assert(Nexus.BuildCatalog.Put(legacyLocal),
+    "coherent local legacy evidence was not retained")
+assert(not Nexus.Identity.LocalOwnsRecord(legacyLocal, "twin@realma")
+        and not Community.IsOwnBuild(legacyLocal.id),
+    "EXPECTED RED: unverified ordinary legacy evidence gained local authority")
+local legacyEdited, legacyEditWhy = Community.EditBuild(
+    legacyLocal.id, "Legacy edit", "blocked")
+local legacyUpdated, legacyUpdateWhy = Community.UpdateFromWishlist(
+    legacyLocal.id)
+local legacyDeleted, legacyDeleteWhy = Community.DeleteBuild(legacyLocal.id)
+assert(not legacyEdited and legacyEditWhy == "not your build"
+        and not legacyUpdated and legacyUpdateWhy == "not your build"
+        and not legacyDeleted and legacyDeleteWhy == "not your build"
+        and Nexus.BuildCatalog.Get(legacyLocal.id) ~= nil,
+    "EXPECTED RED: unverified ordinary legacy evidence mutated or associated")
 Nexus.Sync.Init(Nexus.Codec, {})
-assert(Nexus.Sync.BroadcastBuildSummary(legacyLocal)
-        and Nexus.Sync.BroadcastBuild(legacyLocal)
-        and Nexus.Sync.BroadcastDelete(legacyLocal),
-    "coherent local legacy build lost share/delete compatibility")
+local legacySummary, legacySummaryWhy =
+    Nexus.Sync.BroadcastBuildSummary(legacyLocal)
+local legacyFull, legacyFullWhy = Nexus.Sync.BroadcastBuild(legacyLocal)
+assert(not legacySummary and legacySummaryWhy == "relay unauthorized"
+        and not legacyFull and legacyFullWhy == "relay unauthorized"
+        and not Nexus.Sync.BroadcastDelete(legacyLocal)
+        and NexusDB.syncTombstones[legacyLocal.id] == nil,
+    "EXPECTED RED: unverified ordinary legacy evidence relayed or tombstoned")
 
 print("Community owner authority -- OK")

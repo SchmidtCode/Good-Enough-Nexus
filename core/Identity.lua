@@ -245,7 +245,7 @@ function Identity.CoherentRecordOwnerKey(record)
     -- Compact DPS aliases are transport input, not durable Community fields.
     -- Rejecting them here prevents a summary or mixed-shape record from hiding
     -- a contradiction through alias precedence.
-    if record.o ~= nil or record.p ~= nil or record.r ~= nil
+    if record.a ~= nil or record.o ~= nil or record.p ~= nil or record.r ~= nil
         or record.relaySender ~= nil or record.claimedOwnerKey ~= nil then
         return nil
     end
@@ -278,7 +278,7 @@ function Identity.SavedMirrorKind(record)
 end
 
 local function LocalOwnsLegacyEvidence(record, current)
-    if record.o ~= nil or record.p ~= nil or record.r ~= nil
+    if record.a ~= nil or record.o ~= nil or record.p ~= nil or record.r ~= nil
         or record.relaySender ~= nil or record.claimedOwnerKey ~= nil then
         return false
     end
@@ -297,16 +297,14 @@ local function LocalOwnsLegacyEvidence(record, current)
     return true
 end
 
--- Ordinary durable ownership is intentionally incapable of interpreting a
--- Saved or malformed marker. This prevents future callers from accidentally
--- bypassing Saved's verified-only public boundary.
+-- Ordinary durable ownership is verified-only. Legacy rows remain readable,
+-- but local-looking flags or owner text cannot grant mutation, association,
+-- publication, relay, or delete authority without an explicit verification.
 function Identity.LocalOwnsRecord(record, currentOwnerKey)
     if Identity.SavedMirrorKind(record) ~= "ordinary" then return false end
     local current = Identity.CanonicalOwnerKey(currentOwnerKey)
     if not current or current:match("@unknown$") then return false end
-    local verified = Identity.VerifiedOwnerKey(record)
-    if verified then return verified == current end
-    return LocalOwnsLegacyEvidence(record, current)
+    return Identity.VerifiedOwnerKey(record) == current
 end
 
 -- Saved-loadout mirrors may coexist for same-named characters on different
@@ -322,8 +320,8 @@ function Identity.LocalOwnsSavedMirror(record, currentOwnerKey)
 end
 
 -- Public build ownership is type-dispatched before any compatibility branch.
--- Saved mirrors require explicit verification; malformed marker values never
--- fall through to the ordinary local-legacy bridge.
+-- Saved and ordinary rows both require explicit verification; malformed marker
+-- values never fall through to a local-looking compatibility branch.
 function Identity.LocalOwnsBuild(record, currentOwnerKey)
     local kind = Identity.SavedMirrorKind(record)
     if kind == "saved" then

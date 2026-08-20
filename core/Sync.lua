@@ -222,6 +222,14 @@ local function NormalizePeerName(name)
     return Identity.PlayerKey(name, true) or ""
 end
 
+local function CatalogRecordRevision(id)
+    local catalog = Catalog()
+    if not (catalog and type(catalog.RecordRevision) == "function") then
+        return nil, nil
+    end
+    return catalog.RecordRevision(id)
+end
+
 local function SamePeer(a, b)
     return Identity.SamePlayer(a, b)
 end
@@ -433,12 +441,6 @@ IsLocalTransportSender = function(sender)
         and transportOwner == localOwner
 end
 
-local function IsExactLocalOwner(record)
-    local localOwner = CurrentOwnerKey()
-    return localOwner ~= nil
-        and Identity.LocalOwnsBuild(record, localOwner)
-end
-
 local function TrustedStoredOwnerKey(record, source)
     if type(record) ~= "table" then return nil end
     local verified = Identity.VerifiedOwnerKey(record)
@@ -446,24 +448,36 @@ local function TrustedStoredOwnerKey(record, source)
     if source == "bundled" then
         return Identity.CoherentRecordOwnerKey(record)
     end
-    if IsExactLocalOwner(record) then
-        return Identity.CanonicalOwnerKey(record.ownerKey)
-    end
     return nil
+end
+
+local function LocalOwnsStoredBuild(record)
+    local localOwner = CurrentOwnerKey()
+    return type(record) == "table" and record.isMine == true
+        and localOwner ~= nil
+        and Identity.LocalOwnsBuild(record, localOwner)
+end
+
+local function OwnerKeyIsLocal(ownerKey)
+    local localOwner = CurrentOwnerKey()
+    return localOwner ~= nil
+        and Identity.CanonicalOwnerKey(ownerKey) == localOwner
 end
 
 -- Exact owner traffic may replace evidence that was retained without durable
 -- authority. The claimed key is evidence only: it can constrain a later
 -- promotion, but never grants relay, edit, or delete authority by itself.
 local function CanPromoteStoredOwner(record, ownerKey)
-    if type(record) ~= "table" or record.ownerVerified == true then
+    if type(record) ~= "table" or Identity.VerifiedOwnerKey(record) ~= nil then
         return false
     end
     local incomingOwner = Identity.CanonicalOwnerKey(ownerKey)
     if not incomingOwner then return false end
 
-    local claimedOwner = Identity.CanonicalOwnerKey(
-        record.claimedOwnerKey or record.ownerKey)
+    local claimedKey = Identity.CanonicalOwnerKey(record.claimedOwnerKey)
+    local storedKey = Identity.CanonicalOwnerKey(record.ownerKey)
+    if claimedKey and storedKey and claimedKey ~= storedKey then return false end
+    local claimedOwner = claimedKey or storedKey
     if claimedOwner then return claimedOwner == incomingOwner end
 
     -- Older retained rows that lost their claim remain ambiguous. Do not infer
@@ -667,6 +681,12 @@ if not (CompatibilityFactory
     and type(CompatibilityFactory.New) == "function") then
     error("Nexus SyncCompatibility must load before Sync")
 end
+local function LocalOwnsVerifiedTomb(tomb)
+    local localOwner = CurrentOwnerKey()
+    return localOwner ~= nil
+        and Identity.VerifiedOwnerKey(tomb) == localOwner
+end
+
 Compatibility = CompatibilityFactory.New({
     buckets=BUILD_BUCKETS,
     getCatalog=Catalog,
@@ -682,14 +702,10 @@ Compatibility = CompatibilityFactory.New({
         return Nexus and Nexus.DpsCapture
     end,
     getTombstones=function() return tombstones end,
-    localOwnsTomb=function(tomb)
-        local localOwner = CurrentOwnerKey()
-        return type(tomb) == "table" and tomb.ownerVerified == true
-            and localOwner ~= nil
-            and Identity.CanonicalOwnerKey(tomb.ownerKey) == localOwner
-    end,
+    localOwnsTomb=LocalOwnsVerifiedTomb,
     relayEligible=function(build) return RelayEligible(build) end,
     myName=MyName,
+    currentOwnerKey=CurrentOwnerKey,
     now=Now,
     getCodec=function() return Codec end,
     validIdentifier=ValidIdentifier,
@@ -707,13 +723,10 @@ local BuildBucket = Compatibility.BuildBucket
 local TombStamp = Compatibility.TombStamp
 local TombAuthor = Compatibility.TombAuthor
 local function TombOwnerKey(value)
-    return type(value) == "table"
-        and Identity.CanonicalOwnerKey(value.ownerKey) or nil
+    return Identity.VerifiedOwnerKey(value)
 end
 local function LocalOwnsTomb(value)
-    local localOwner = CurrentOwnerKey()
-    return type(value) == "table" and value.ownerVerified == true
-        and localOwner ~= nil and TombOwnerKey(value) == localOwner
+    return LocalOwnsVerifiedTomb(value)
 end
 local HashText = Compatibility.HashText
 local BuildFingerprint = Compatibility.BuildFingerprint
@@ -1109,21 +1122,21 @@ function Sync.NoteTransportNotice(text)
 end
 
 
+local function RelayOwnerKey(build, source)
+    if type(build) ~= "table" then return nil end
+    local ownerKey = Identity.VerifiedOwnerKey(build)
+    if not ownerKey and source == "bundled" then
+        ownerKey = Identity.CoherentRecordOwnerKey(build)
+    end
+    return ownerKey
+end
+
 RelayEligible = function(build, source)
     if type(build) ~= "table" then return false end
     local kind = Identity.SavedMirrorKind(build)
     if kind == "invalid" then return false end
-    if kind == "saved" then
-        return IsExactLocalOwner(build)
-            and not (build.legacyRecovered == true
-                and build.ownerVerified ~= true)
-    end
-    local ownerKey = Identity.VerifiedOwnerKey(build)
-    if not ownerKey and source == "bundled" then
-        ownerKey = Identity.CoherentRecordOwnerKey(build)
-    elseif not ownerKey and IsExactLocalOwner(build) then
-        ownerKey = Identity.CanonicalOwnerKey(build.ownerKey)
-    end
+    if kind == "saved" then return false end
+    local ownerKey = RelayOwnerKey(build, source)
     return ownerKey ~= nil
         and not (build.legacyRecovered == true
             and build.ownerVerified ~= true)
@@ -1184,6 +1197,23 @@ local function PumpPendingShare(elapsed)
     pendingShareTicker = 0
     pending.attempts = pending.attempts + 1
     pending.status.retryAttempts = pending.attempts
+    local retryBuild = pending.catalogBound
+        and CatalogGet(pending.status.id) or pending.build
+    local retryOwner = Identity.VerifiedOwnerKey(retryBuild)
+    if not retryBuild or Operation.ShareVersion(retryBuild)
+            ~= pending.status.version
+        or retryOwner ~= pending.ownerKey
+        or BuildFingerprint(retryBuild) ~= pending.fingerprint then
+        FinishPendingShare("share source changed", false, true)
+        return
+    end
+    local retryPrepared, prepareWhy = Responder.PrepareSummary(retryBuild)
+    if not retryPrepared or type(retryPrepared.messages) ~= "table"
+        or type(retryPrepared.messages[1]) ~= "string" then
+        FinishPendingShare(prepareWhy or "share source unauthorized", false, true)
+        return
+    end
+    pending.message = retryPrepared.messages[1]
     local queued, why = Transport.EnqueueControl(pending.message,
         pending.metadata)
     if queued then
@@ -1263,8 +1293,13 @@ local function BroadcastSummary(build, options)
                 status.expiresAt = Now() + SHARE_RETRY_MAX_AGE
                 status.retryAttempts = 0
                 Operation.Transition(status, "retry-pending", queueWhy)
+                local pendingCatalogBuild = CatalogGet(status.id)
                 pendingShare = {
                     message=msg,metadata=metadata,status=status,
+                    build=pendingCatalogBuild and nil or build,
+                    catalogBound=pendingCatalogBuild ~= nil,
+                    ownerKey=Identity.VerifiedOwnerKey(build),
+                    fingerprint=BuildFingerprint(build),
                     createdAt=Now(),expiresAt=status.expiresAt,attempts=0,
                 }
                 pendingShareTicker = 0
@@ -1459,7 +1494,11 @@ local function StoreSummary(data, transportSender, context)
         and IsLocalTransportSender(context.requester)
         and context.requestId or nil
     local old, oldSource = CatalogGet(id)
-    if old and old.isMine then
+    if old and Identity.SavedMirrorKind(old) ~= "ordinary" then
+        Responder.NoteContextOutcome(context, "rejected", "ownership")
+        return false, false
+    end
+    if old and LocalOwnsStoredBuild(old) then
         Responder.NoteContextOutcome(context, "rejected", "ownership")
         return false, false
     end
@@ -1570,7 +1609,10 @@ local function StoreSummary(data, transportSender, context)
         ownerKey=type(data.o)=="string"
             and Identity.CanonicalOwnerKey(data.o) or nil,
         class=data.c, description=old and old.description or "",
-        lastModified=stamp, postedAt=old and old.postedAt or stamp, isMine=old and old.isMine or false,
+        lastModified=stamp, postedAt=old and old.postedAt or stamp,
+        -- Transport ownership verifies the remote record; it does not prove
+        -- this client created the local source row.
+        isMine=false,
         autoDps=data.x==1, fingerprint=keepEchoes and old.fingerprint or nil,
         fingerprintHash=newHash, echoCount=tonumber(data.n) or 0,
         echoes=keepEchoes, loadoutAvailable=type(keepEchoes)=="table" and #keepEchoes>0,
@@ -1713,12 +1755,24 @@ function Responder.PrepareBuild(build, responseMode, responseContext, source)
     local messages, why = Responder.ChunkBuildMessages(
         build.id, tostring(payload.m), b64, responseMode, responseContext)
     if not messages then return nil, why end
+    local catalogBuild, catalogSource = CatalogGet(build.id)
+    local catalogBound = type(catalogBuild) == "table"
+    local recordEpoch, recordRevision
+    if catalogBound then
+        recordEpoch, recordRevision = CatalogRecordRevision(build.id)
+    end
+    local authoritySource = catalogBound and catalogSource or source
     local prepared = {
         messages=messages, build=build,
         buildKey=tostring(build.id or build.fingerprintHash
             or build.fingerprint or ""),
         title=build.title, id=build.id,
         echoCount=#build.echoes, b64Bytes=#b64,
+        catalogBound=catalogBound,catalogSource=authoritySource,
+        recordEpoch=recordEpoch,recordRevision=recordRevision,
+        ownerKey=RelayOwnerKey(build, source),
+        fingerprint=BuildFingerprint(build),
+        version=Operation.ShareVersion(build),
     }
     PreparedWireCost(prepared, responseMode, false)
     return prepared
@@ -1727,6 +1781,24 @@ end
 function Responder.AdmitBuild(prepared, responseMode, responseContext)
     if type(prepared) ~= "table" or type(prepared.messages) ~= "table" then
         return false, "invalid prepared build"
+    end
+    local current, currentSource = CatalogGet(prepared.id)
+    if prepared.catalogBound then
+        local currentEpoch, currentRevision = CatalogRecordRevision(prepared.id)
+        if type(current) ~= "table"
+            or currentSource ~= prepared.catalogSource
+            or (prepared.recordEpoch ~= nil
+                and (currentEpoch ~= prepared.recordEpoch
+                    or currentRevision ~= prepared.recordRevision))
+            or not RelayEligible(current, currentSource)
+            or RelayOwnerKey(current, currentSource) ~= prepared.ownerKey
+            or BuildFingerprint(current) ~= prepared.fingerprint
+            or Operation.ShareVersion(current) ~= prepared.version then
+            return false, "stale prepared build"
+        end
+    elseif current ~= nil or not RelayEligible(
+            prepared.build, prepared.catalogSource) then
+        return false, "stale prepared build"
     end
     if not Responder.CanAdmit(#prepared.messages) then
         return false, "sync queue full"
@@ -1805,7 +1877,12 @@ function Sync.BroadcastMine()
     -- peer was listening, then peer syncs within HOT_WINDOW)
     for id, h in pairs(hotBuilds) do
         if not sent[id] then
-            if BroadcastSummary(h.build) then n=n+1 end
+            local current = CatalogGet(id)
+            if current and RelayEligible(current) then
+                if BroadcastSummary(current) then n=n+1 end
+            else
+                hotBuilds[id] = nil
+            end
         end
     end
     return n
@@ -1890,6 +1967,9 @@ function Responder.AdmitCandidate(item, bucketState, responseBudget)
         end
     end
     if not admitted then
+        if admitWhy == "stale prepared build" then
+            bucketState.prepared[item.token] = nil
+        end
         return false, admitWhy, admitWhy == "sync queue full"
     end
     bucketState.prepared[item.token] = nil
@@ -2015,11 +2095,33 @@ function Responder.ValidatePreparedDps(payload, originVerified)
         and payload.h and (not computedHash or payload.h == computedHash)
 end
 
+local function VerifiedDpsBuildId(ownerKey, fingerprint, buildId)
+    if type(buildId) ~= "string" or buildId == "" then return nil end
+    local canonicalOwner = Identity.CanonicalOwnerKey(ownerKey)
+    local relatedBuild = CatalogGet(buildId)
+    if not canonicalOwner or type(relatedBuild) ~= "table"
+        or Identity.SavedMirrorKind(relatedBuild) ~= "ordinary"
+        or Identity.VerifiedOwnerKey(relatedBuild) ~= canonicalOwner
+        or BuildFingerprint(relatedBuild) ~= fingerprint then
+        return nil
+    end
+    return buildId
+end
+
 function Sync.BroadcastDpsRecord(record, prepared, responseMode,
         responseContext, responseBudget)
     if type(prepared) ~= "table" then prepared = nil end
     if responseMode and Responder.Backpressured() then
         return false, "sync queue full", prepared
+    end
+    if prepared ~= nil and type(prepared.payload) == "table"
+        and prepared.payload.b ~= nil
+        and not VerifiedDpsBuildId(prepared.payload.o,
+            prepared.payload.f, prepared.payload.b) then
+        -- A deferred payload is only a serialization cache. Catalog authority
+        -- may change while it waits for queue/wire budget, so rebuild it from
+        -- the durable row and drop any relationship that is no longer valid.
+        prepared = nil
     end
     if prepared ~= nil then
         if type(prepared) ~= "table" or type(prepared.messages) ~= "table"
@@ -2144,6 +2246,8 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
     if not loadoutHash or (computedHash and loadoutHash ~= computedHash) then
         return false, "integrity"
     end
+    local relatedBuildId = VerifiedDpsBuildId(
+        verifiedOwner, record.fingerprint, record.buildId)
     local payload = {
         v = tonumber(record.protocolVersion) or 5,
         h = loadoutHash,
@@ -2153,7 +2257,7 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode,
         u = duration, t = stamp,
         p = player, l = level,
         k = record.class, o = record.ownerKey, r = record.realm,
-        b = record.buildId,
+        b = relatedBuildId,
         lk = (type(record.lockedEchoes)=="table" and #record.lockedEchoes>0)
              and record.lockedEchoes or nil,
         x = relayContext and {n=relayContext.n,i=relayContext.i,
@@ -2239,8 +2343,9 @@ function Sync.BroadcastDelete(build)
     local id = tostring(build.id)
     local author = tostring(build.author or MyName())
     local localOwner = CurrentOwnerKey()
-    if not localOwner
-        or not Identity.LocalOwnsBuild(build, localOwner) then
+    if Identity.SavedMirrorKind(build) ~= "ordinary"
+        or not localOwner
+        or not Identity.LocalOwnsRecord(build, localOwner) then
         return false
     end
     local existing = tombstones[id]
@@ -2350,7 +2455,6 @@ end
 local function StoreReceivedBuild(payload, ownerVerified, relaySender,
         matchedReplacement, canonicalFingerprint)
     local existing = CatalogGet(payload.id)
-    local mine = (existing and existing.isMine) or false
     -- A matching current summary makes an absent link authoritative. Legacy
     -- unsolicited full payloads retain the established local-link fallback.
     local link = payload.link
@@ -2367,7 +2471,7 @@ local function StoreReceivedBuild(payload, ownerVerified, relaySender,
         ownerKey=ownerVerified and payload.ownerKey or nil,
         claimedOwnerKey=not ownerVerified and payload.ownerKey or nil,
         class=payload.class, echoes=payload.echoes,
-        postedAt=payload.postedAt, lastModified=payload.lastModified, isMine=mine,
+        postedAt=payload.postedAt, lastModified=payload.lastModified, isMine=false,
         autoDps=payload.autoDps, fingerprint=fingerprint,
         fingerprintHash=HashText(fingerprint),
         echoCount=(function() local t=0; for _,e in ipairs(payload.echoes) do t=t+(tonumber(e.stacks or e.count) or 1) end; return t end)(),
@@ -2394,6 +2498,10 @@ local function CommitReceivedBuild(payload, transportSender, context)
     local directOwner = Identity.TransportOwns(
         payload.ownerKey, transportSender)
     local existing, existingSource = CatalogGet(payload.id)
+    if existing and Identity.SavedMirrorKind(existing) ~= "ordinary" then
+        Responder.NoteContextOutcome(context, "rejected", "ownership")
+        return false
+    end
     local previousRemoteStamp = seenRemoteIds[payload.id]
     local payloadOwner = Identity.CanonicalOwnerKey(payload.ownerKey)
     local replacingUnverified = existing and directOwner
@@ -2448,7 +2556,8 @@ local function CommitReceivedBuild(payload, transportSender, context)
             matchedReplacement = true
         end
     end
-    if existing and not existing.isMine and not replacingUnverified then
+    if existing and not LocalOwnsStoredBuild(existing)
+        and not replacingUnverified then
         local existingOwner = TrustedStoredOwnerKey(existing, existingSource)
         if not existingOwner or existingOwner ~= payloadOwner then
             LogEvent("RX", "REJECT owner change for '%s'", tostring(payload.id))
@@ -2498,7 +2607,7 @@ local function CommitReceivedBuild(payload, transportSender, context)
         Responder.NoteContextOutcome(context, "rejected", "ownership")
         return false
     end
-    if existing and existing.isMine then
+    if existing and LocalOwnsStoredBuild(existing) then
         LogEvent("RX", "REJECT remote overwrite of local build '%s'",
             tostring(payload.id))
         PeerObserve("receiver_commit", {id=payload.id,peer=transportSender,
@@ -2611,7 +2720,12 @@ local function HandleDelete(sender, buildId, stamp, originAuthor, context)
     -- originAuthor is an optional 5th field; treat empty string same as nil
     local author = tostring((originAuthor and originAuthor ~= "")
         and originAuthor or sender or "")
-    if not SamePeer(sender, author) then
+    local senderOwner = Identity.CanonicalOwnerFromTransport(sender)
+    local qualifiedAuthorOwner = author:find("-", 1, true)
+        and Identity.CanonicalOwnerFromTransport(author) or nil
+    if not SamePeer(sender, author)
+        or (author:find("-", 1, true)
+            and qualifiedAuthorOwner ~= senderOwner) then
         Responder.NoteContextOutcome(context, "rejected", "ownership")
         LogEvent("RX", "REJECT relayed delete for '%s' from %s",
             tostring(buildId), tostring(sender))
@@ -2635,13 +2749,18 @@ local function HandleDelete(sender, buildId, stamp, originAuthor, context)
             tostring(buildId))
         return false
     end
-    if existing.isMine then
+    if Identity.SavedMirrorKind(existing) ~= "ordinary" then
+        Responder.NoteContextOutcome(context, "rejected", "ownership")
+        LogEvent("RX", "REJECT delete of private or malformed build '%s'",
+            tostring(buildId))
+        return false
+    end
+    if LocalOwnsStoredBuild(existing) then
         Responder.NoteContextOutcome(context, "rejected", "ownership")
         LogEvent("RX","ignoring delete for MY build '%s' relayed by %s",
             tostring(existing.title), tostring(sender))
         return false
     end
-    local senderOwner = Identity.CanonicalOwnerFromTransport(sender)
     local existingOwner = TrustedStoredOwnerKey(existing, existingSource)
     if not existingOwner
         and CanPromoteStoredOwner(existing, senderOwner) then
@@ -2669,6 +2788,7 @@ local function HandleDelete(sender, buildId, stamp, originAuthor, context)
     end
     tombstones[buildId] = tomb
     seenRemoteIds[buildId] = nil
+    hotBuilds[buildId] = nil
     Session.ClearRequestedLoadout(buildId)
     LogEvent("RX","DELETED '%s' from origin %s (relay %s)",
         tostring(existing.title), author, tostring(sender))

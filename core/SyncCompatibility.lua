@@ -23,6 +23,8 @@ function Compatibility.New(options)
     local relayEligible = assert(options.relayEligible,
         "build relay authority callback required")
     local myName = assert(options.myName, "name callback required")
+    local currentOwnerKey = assert(options.currentOwnerKey,
+        "exact owner callback required")
     local now = assert(options.now, "clock callback required")
     local getCodec = assert(options.getCodec, "Codec callback required")
     local validIdentifier = assert(options.validIdentifier,
@@ -250,6 +252,7 @@ function Compatibility.New(options)
 
     local function CandidateKey(deltaHash)
         return tostring(deltaHash) .. "|" .. tostring(myName()) .. "|"
+            .. tostring(currentOwnerKey() or "") .. "|"
             .. tostring(getBuildRevision())
     end
 
@@ -266,6 +269,7 @@ function Compatibility.New(options)
         end
         candidateCache = {
             key=key, deltaHash=tostring(deltaHash), sender=myName(),
+            ownerKey=currentOwnerKey(),
             byBucket=byBucket, phase="overlay", cursor=nil,
             claimSafeByBucket=claimSafeByBucket,
             complete=false, createdAt=now(),

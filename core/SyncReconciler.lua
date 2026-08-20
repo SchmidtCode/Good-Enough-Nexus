@@ -704,7 +704,14 @@ function Reconciler.New(options)
             contextCapable=supportsRequestContext(entry.requestId)}
         local admitted, why = admitBuild(entry.preparedBuild, true,
             responseContext)
-        if not admitted then return false, progressed, why end
+        if not admitted then
+            if why == "stale prepared build" then
+                entry.preparedBuild = nil
+                entry.preparedRevision = nil
+                return false, true, why
+            end
+            return false, progressed, why
+        end
         local claimed, claimWhy = publishLoadoutClaim(entry)
         if not claimed then
             log("TX", "loadout claim skipped for '%s': %s",

@@ -8,7 +8,8 @@ local function Pump(steps) for _=1,steps do clock=clock+0.2; Sync.OnUpdate(0.2) 
 local who='Source'; UnitName=function() return who end
 local echoes={}; for i=1,79 do echoes[i]={spellId=200000+i,stacks=(i%3)+1,quality=3} end
 local build={id='build-79',title='AoE | ST',description=string.rep('description ',50),
-    author='Source',ownerKey='source@ebonhold',class='MAGE',echoes=echoes,
+    author='Source',ownerKey='source@ebonhold',ownerVerified=true,
+    realm='ebonhold',class='MAGE',echoes=echoes,
     postedAt=10,lastModified=10,isMine=true}
 NexusDB={communityBuilds={[build.id]=build},syncTombstones={},dpsCapture={}}
 Sync.Init(Nexus.Codec,{}); Nexus.DpsCapture.Init({},Sync)

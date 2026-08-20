@@ -19,10 +19,12 @@ local baseline = {
 local database = {
     communityBuilds = {
         base = { id="base", title="Overlay", author="A", postedAt=10,
-            lastModified=11, echoes={{spellId=1,stacks=2}} },
+            lastModified=11, ownerKey="a@realma",realm="realma",
+            ownerVerified=true,echoes={{spellId=1,stacks=2}} },
         newer = { id="newer", title="Stale overlay", author="A", postedAt=5,
             lastModified=5, echoes={{spellId=2,stacks=1}} },
         personal = { id="personal", title="Mine", author="Me", isMine=true,
+            ownerKey="me@realma",realm="realma",ownerVerified=true,
             postedAt=1, lastModified=1, echoes={{spellId=4,stacks=1}} },
     },
     syncTombstones = { deleted={stamp=30,author="A"} },
@@ -55,6 +57,21 @@ assert(delta.base and delta.personal and not delta.newer and not delta.deleted,
 delta.base.title = "mutated delta copy"
 assert(Nexus.BuildCatalog.Get("base").title == "Overlay",
     "DeltaSnapshot exposed mutable overlay storage")
+
+assert(Nexus.BuildCatalog.Put({id="delta-unverified",title="Unverified",
+    author="Peer",ownerKey="peer@realma",realm="realma",
+    postedAt=12,lastModified=12,echoes={{spellId=6,stacks=1}}}))
+assert(Nexus.BuildCatalog.Put({id="delta-saved",title="Private Saved",
+    author="Me",ownerKey="me@realma",realm="realma",ownerVerified=true,
+    importedSavedBuild=true,isMine=true,serverSlot=1,
+    postedAt=13,lastModified=13,echoes={{spellId=7,stacks=1}}}))
+local authorityDelta = Nexus.BuildCatalog.DeltaSnapshot()
+assert(authorityDelta["delta-unverified"] == nil
+        and authorityDelta["delta-saved"] == nil,
+    "EXPECTED RED: unverified or private Saved rows entered Sync delta state")
+assert(Nexus.BuildCatalog.RemoveOverlay("delta-unverified")
+        and Nexus.BuildCatalog.RemoveOverlay("delta-saved"),
+    "authority delta fixtures were not removed cleanly")
 
 assert(Nexus.BuildCatalog.Put({ id="deleted", title="Resurrection attempt",
     postedAt=50, lastModified=50, echoes={{spellId=3,stacks=2}} }))

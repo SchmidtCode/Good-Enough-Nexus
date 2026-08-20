@@ -119,6 +119,21 @@ exactRecord.title = "mutated"
 assert(Catalog.Get(exactId).title ~= "mutated",
     "exact fingerprint index leaked a mutable represented row")
 assert(Catalog.Put({
+    id="000-saved-exact",title="Private Saved Exact",serverTitle="Private Saved Exact",
+    author="IndexMage",ownerKey="indexmage@ebonhold",ownerVerified=true,
+    realm="ebonhold",class="ROGUE",postedAt=1997,lastModified=1997,
+    importedSavedBuild=true,isMine=true,serverSlot=99,
+    echoes=Echoes(810001, 6),
+}))
+local savedRawResolution, savedRawReason =
+    Catalog.ResolveFingerprintIdentity("000-saved-exact", exactKey)
+assert(Catalog.FindExactFingerprintId(exactKey) == "index-exact"
+    and savedRawResolution == "index-exact"
+    and savedRawReason == "fingerprint",
+    "private Saved mirror hid or became the public exact-content winner")
+assert(Catalog.RemoveOverlay("000-saved-exact"),
+    "private Saved exact-index control could not be removed")
+assert(Catalog.Put({
     id="invalid-exact",title="Invalid Exact",author="Other",
     ownerKey="other@ebonhold",class="MAGE",postedAt=1998,
     lastModified=1998,echoes={

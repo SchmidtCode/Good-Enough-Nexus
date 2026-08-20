@@ -94,6 +94,10 @@ local function NewHarness(overrides)
         end,
         admitBuild=function(prepared)
             Count("admitBuild")
+            if state.stalePrepared then
+                state.stalePrepared = false
+                return false, "stale prepared build"
+            end
             if state.queueFull then return false, "sync queue full" end
             state.successfulAdmissions = state.successfulAdmissions + 1
             state.workOrder[#state.workOrder + 1] =
@@ -260,6 +264,28 @@ AssertEqual(ls.successfulAdmissions, 1, "exactly one successful admission")
 AssertEqual(#ls.claims, 1, "claim follows successful admission")
 loadouts.Process(1)
 AssertEqual(ls.calls.admitBuild, 2, "completed loadout never readmitted")
+
+-- A prepared loadout is only a serialization cache. If its catalog authority
+-- changes before admission, the reconciler discards it and re-prepares the
+-- current record before publishing a claim.
+local staleLoadout, staleLoadoutState = NewHarness()
+staleLoadoutState.builds["known"] = {id="known",echoes={1}}
+staleLoadoutState.stalePrepared = true
+assert(staleLoadout.ScheduleLoadout({requester="Alice",buildId="known"}))
+staleLoadout.Process(1)
+AssertEqual(staleLoadoutState.calls.prepareBuild, 1,
+    "stale loadout initial preparation")
+AssertEqual(staleLoadout.Counts().loadouts, 1,
+    "stale prepared loadout was dropped instead of retained for repair")
+AssertEqual(#staleLoadoutState.claims, 0,
+    "stale prepared loadout published a claim")
+staleLoadout.Process(1)
+AssertEqual(staleLoadoutState.calls.prepareBuild, 2,
+    "stale prepared loadout was not regenerated")
+AssertEqual(staleLoadoutState.successfulAdmissions, 1,
+    "regenerated loadout was not admitted exactly once")
+AssertEqual(#staleLoadoutState.claims, 1,
+    "regenerated loadout did not publish its post-admission claim")
 
 -- A matching peer claim uses current candidate and ownership state.
 local claims, claimState = NewHarness()

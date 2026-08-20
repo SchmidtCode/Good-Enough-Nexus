@@ -212,11 +212,9 @@ local function OrdinaryComplete(record)
 end
 
 local function SyncEligible(record)
-    if type(record) ~= "table"
-        or record.ownerVerified == false
-        or (record.legacyRecovered == true
-            and record.ownerVerified ~= true) then return false end
-    return OrdinaryComplete(record)
+    return Identity.SavedMirrorKind(record) == "ordinary"
+        and Identity.VerifiedOwnerKey(record) ~= nil
+        and OrdinaryComplete(record)
 end
 
 local function BumpBuild(reason, id)
@@ -374,7 +372,7 @@ end
 local SUMMARY_FIELDS = {
     "id", "title", "serverTitle", "description", "author", "player",
     "ownerKey", "realm",
-    "o", "p", "r", "class",
+    "a", "o", "p", "r", "class",
     "postedAt", "lastModified", "importedSavedBuild", "isMine",
     "destinationWishlistName", "destinationProgress", "destinationTotal",
     "recordBuildId", "publishedBuildId", "sourceSavedBuildId", "autoDps",
@@ -552,13 +550,10 @@ local function RemoveBucket(index, key, id)
 end
 
 local function AddOwnerClass(record, id)
-    if type(record) ~= "table" or record.ownerVerified ~= true then return nil end
-    local key = Identity.CanonicalOwnerKey(record.ownerKey)
+    if Identity.SavedMirrorKind(record) ~= "ordinary" then return nil end
+    local key = Identity.VerifiedOwnerKey(record)
     local class = NormalizedClass(record.class)
-    if not key or key:match("@unknown$") or not class
-        or not Identity.OwnerKeyMatchesAuthor(key, record.author) then
-        return nil
-    end
+    if not key or not class then return nil end
     local bucket = relatedIndex.ownerClasses[key]
     if not bucket then
         bucket = {ids={},classes={},count=0}
@@ -638,7 +633,11 @@ local function AddRelatedRow(id, record)
     if type(record) ~= "table" then return end
     local savedKind = Identity.SavedMirrorKind(record)
     if savedKind == "invalid" then return end
-    local exact = OrdinaryComplete(record) and ExactFingerprint(record) or nil
+    -- The exact-content resolver is a public-build relationship seam. Saved
+    -- mirrors remain indexed only by the dedicated Saved bucket; otherwise a
+    -- lexically earlier private mirror can hide a valid ordinary publication.
+    local exact = savedKind == "ordinary" and OrdinaryComplete(record)
+        and ExactFingerprint(record) or nil
     local exactBucket, exactAdded = AddBucket(relatedIndex.exact, exact, id)
     local exactAuto = record.autoDps == true
     if exactBucket and exactAdded then
@@ -877,8 +876,8 @@ end
 
 function Catalog.GetSummary(id)
     EnsureBound()
-    local record = SelectedRaw(id)
-    return record and SummaryRecord(record) or nil
+    local record, source = SelectedRaw(id)
+    return record and SummaryRecord(record) or nil, source
 end
 
 -- Allocation-free revision tokens for one selected record and one exact Echo
@@ -925,7 +924,7 @@ end
 
 function Catalog.FindExactFingerprint(fingerprint)
     local id, record, source = FindExactFingerprintId(fingerprint)
-    return id, PublicRecord(record, source)
+    return id, PublicRecord(record, source), source
 end
 
 -- Resolve and validate a protocol-v6 @hash claim only through its exact typed
@@ -943,6 +942,9 @@ function Catalog.ValidateLegacyFingerprintClaim(rawId, record)
     end
     if type(raw) ~= "table" then
         return nil, "exact represented build is unavailable"
+    end
+    if Identity.SavedMirrorKind(raw) ~= "ordinary" then
+        return nil, "historical build identity is private"
     end
     local evidence = Nexus and Nexus.LoadoutEvidence
     if not (evidence
@@ -1002,7 +1004,8 @@ function Catalog.ResolveFingerprintIdentity(rawId, fingerprint, options)
                 debugStats.identityResolutionFailures + 1
             return nil, "historical build identity is tombstoned"
         end
-        if raw and ExactFingerprint(raw) == fingerprint
+        if raw and Identity.SavedMirrorKind(raw) == "ordinary"
+            and ExactFingerprint(raw) == fingerprint
             and (OrdinaryComplete(raw) or
                 (allowClassOnly and HasStringClass(raw))) then
             debugStats.identityRawHits = debugStats.identityRawHits + 1
@@ -1037,17 +1040,14 @@ end
 -- Recover display/filter class only from an exact, realm-qualified owner whose
 -- provenance was verified on both the indexed build and the requesting row.
 -- Realm-less author text is deliberately never identity authority.
-function Catalog.ResolveOwnerClass(ownerKey, ownerVerified)
+function Catalog.ResolveOwnerClass(record)
     EnsureBound()
     debugStats.ownerClassLookups = debugStats.ownerClassLookups + 1
     if relatedIndexGeneration ~= libraryGeneration then
         return nil, "owner class index stale"
     end
-    if ownerVerified ~= true then return nil, "owner identity is unverified" end
-    local key = Identity.CanonicalOwnerKey(ownerKey)
-    if not key or key:match("@unknown$") then
-        return nil, "realm-qualified owner is unavailable"
-    end
+    local key = Identity.VerifiedOwnerKey(record)
+    if not key then return nil, "owner identity is unverified" end
     local bucket = relatedIndex.ownerClasses[key]
     if not bucket then return nil, "owner class unavailable" end
     local resolved, distinct = nil, 0

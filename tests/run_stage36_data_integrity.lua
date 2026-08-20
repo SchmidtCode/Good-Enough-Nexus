@@ -170,7 +170,7 @@ local function BuildRecord(id, echoes, stamp)
     return {
         id=id,title="Replacement " .. id,author="Owner",class="MAGE",
         lastModified=stamp or 1,postedAt=stamp or 1,echoes=echoes,
-        ownerVerified=true,
+        ownerKey="owner@ebonhold",realm="Ebonhold",ownerVerified=true,
     }
 end
 
