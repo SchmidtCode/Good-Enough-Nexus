@@ -8,7 +8,7 @@
 
 - Stage: 47
 - Checkpoint: 47.2
-- Status: IN_REVIEW
+- Status: IN_PROGRESS
 - Branch: `refactor/test19-wp2-wp5`
 - Starting head: `4eaf7131e09f6a57ae84514291e70916cb4fcea6`; checkpoint 47.1 product/test head `781165b484a2c7fdd5100fbef457e40138840de3`
 - Worktree: `.test19-wp2-wp5-worktree`
@@ -55,6 +55,8 @@ Prevent DPS-derived Community builds from acquiring local ownership through shor
 
 ## Work log
 
+- ISSUE-47.2-R4 triage resolved the duplicated Sync build-authority boundary. Summary/full/response/delete egress now consumes the shared durable Identity verdict, source-proven bundled rows use a separate coherence-only bridge, and directly verified ingress no longer retains false relay provenance. The public eight-variant laundering matrix and surrounding focused suites pass; replacement Fast passed `72/72`, repeat Spec/Standards/adversarial review passed, and Full remains unrun as the checkpoint gate.
+- Checkpoint 47.2 final review FAIL at frozen `57218e5`: Spec passed, while Standards and adversarial public probes proved that Sync summary/full/delete egress still trusted raw verified/local flags after the shared Identity policy rejected compact/durable alias or claim/relay provenance conflicts. Encoders then stripped those contradictions into clean owner traffic; delete also removed the row and created a verified tombstone. Full was not run. ISSUE-47.2-R4 owns this single duplicated build-authority boundary.
 - Checkpoint 47.2 third replacement Fast passed `72/72` with no failed, unavailable, or skipped checks after ISSUE-47.2-R3. Strict Vibe and diff checks pass; the final repair bytes are ready to freeze for repeat Spec/Standards/adversarial review, with Full still unrun.
 - ISSUE-47.2-R3 triage resolved the final frozen-review findings. Exact promotion now atomically replaces every durable/compact identity component; non-string durable realms fail closed; and direct, response, build-best, and local-bucket DPS egress all consume the shared provenance-aware verified-owner verdict. The expected-red authority runner plus 32 surrounding Community/catalog/identity/DPS/Sync/security/integration runners pass. Two older diagnostic fixtures gained the canonical owner/realm evidence their positive rows claim; their negative assertions remain intact. Replacement Fast remains pending and Full remains unrun.
 - Checkpoint 47.2 final repeat review FAIL at frozen `2349147`: Spec, Standards, and adversarial public probes found three bounded gaps. Exact promotion retained compact/player contradictions while stamping authority; durable realm validation accepted non-strings through coercion; and DPS direct/response/bucket producers copied raw verified flags while dropping retained claim/relay provenance. Full was not run; ISSUE-47.2-R3 owns the complete repair.
@@ -156,8 +158,8 @@ Prevent DPS-derived Community builds from acquiring local ownership through shor
 
 ## Last completed loop
 
-- Checkpoint 47.2 implementation passed replacement Fast `72/72` after ISSUE-47.2-R3 and is ready for repeat independent review; Full remains unrun.
+- Checkpoint 47.2 review failed frozen `57218e5` because Sync build summary/full/delete egress duplicated raw ownership flags instead of consuming the shared Identity verdict; Full remained unrun.
 
 ## Recommended next action
 
-- Freeze the final repair bytes, then repeat independent Spec/Standards/adversarial review before the single required Full.
+- Add one public Sync build-egress authority matrix, centralize non-bundled relay/delete authority on Identity, preserve the explicit bundled source bridge, and repeat focused/Fast/review validation before Full.

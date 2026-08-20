@@ -435,16 +435,18 @@ end
 
 local function IsExactLocalOwner(record)
     local localOwner = CurrentOwnerKey()
-    return type(record) == "table" and record.isMine == true
-        and record.ownerVerified ~= false
-        and localOwner ~= nil
-        and Identity.CanonicalOwnerKey(record.ownerKey) == localOwner
+    return localOwner ~= nil
+        and Identity.LocalOwnsRecord(record, localOwner)
 end
 
 local function TrustedStoredOwnerKey(record, source)
     if type(record) ~= "table" then return nil end
-    if record.ownerVerified == true or source == "bundled"
-        or IsExactLocalOwner(record) then
+    local verified = Identity.VerifiedOwnerKey(record)
+    if verified then return verified end
+    if source == "bundled" then
+        return Identity.CoherentRecordOwnerKey(record)
+    end
+    if IsExactLocalOwner(record) then
         return Identity.CanonicalOwnerKey(record.ownerKey)
     end
     return nil
@@ -1108,12 +1110,14 @@ end
 
 
 RelayEligible = function(build, source)
-    local ownerKey = type(build) == "table"
-        and Identity.CanonicalOwnerKey(build.ownerKey) or nil
+    if type(build) ~= "table" then return false end
+    local ownerKey = Identity.VerifiedOwnerKey(build)
+    if not ownerKey and source == "bundled" then
+        ownerKey = Identity.CoherentRecordOwnerKey(build)
+    elseif not ownerKey and IsExactLocalOwner(build) then
+        ownerKey = Identity.CanonicalOwnerKey(build.ownerKey)
+    end
     return ownerKey ~= nil
-        and OwnerKeyMatchesAuthor(ownerKey, build.author)
-        and (source == "bundled" or build.ownerVerified == true
-            or IsExactLocalOwner(build))
         and not (build.legacyRecovered == true
             and build.ownerVerified ~= true)
 end
@@ -2228,9 +2232,7 @@ function Sync.BroadcastDelete(build)
     local author = tostring(build.author or MyName())
     local localOwner = CurrentOwnerKey()
     if not localOwner
-        or Identity.CanonicalOwnerKey(build.ownerKey) ~= localOwner
-        or not (build.ownerVerified == true
-            or (build.isMine == true and build.ownerVerified ~= false)) then
+        or not Identity.LocalOwnsRecord(build, localOwner) then
         return false
     end
     local existing = tombstones[id]
@@ -2365,7 +2367,7 @@ local function StoreReceivedBuild(payload, ownerVerified, relaySender,
         link=link,
         linkHash=HashText(link), needsFullBuild=nil,
         ownerVerified=ownerVerified and true or false,
-        relaySender=ownerVerified and nil or relaySender,
+        relaySender=not ownerVerified and relaySender or nil,
     }
     CatalogClearTombstone(payload.id)
     local stored, storedAs = CatalogPut(record)

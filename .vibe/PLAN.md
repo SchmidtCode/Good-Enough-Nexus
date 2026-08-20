@@ -181,7 +181,7 @@ depends_on: [43.1]
 
 depends_on: [47.1]
 
-- Status: `IN_REVIEW`
+- Status: `IN_PROGRESS`
 - Objective:
   - Prevent DPS-derived Community builds from acquiring local ownership through short-name resemblance or unverified metadata.
 - Deliverables:

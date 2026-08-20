@@ -237,11 +237,11 @@ local function ExactOwnerRealm(ownerKey, realm)
         Identity.OwnerKey(name, realm)) == ownerKey
 end
 
--- Durable record ownership requires both an explicit verification decision and
--- one coherent canonical name@realm tuple.  Presentation names, local-looking
--- flags, and malformed/unknown realm metadata never satisfy this predicate.
-function Identity.VerifiedOwnerKey(record)
-    if type(record) ~= "table" or record.ownerVerified ~= true then return nil end
+-- Validate one durable record identity tuple without granting authority by
+-- itself. The only current non-verified consumer is immutable bundled-source
+-- admission, where provenance is supplied separately by BuildCatalog.
+function Identity.CoherentRecordOwnerKey(record)
+    if type(record) ~= "table" then return nil end
     -- Compact DPS aliases are transport input, not durable Community fields.
     -- Rejecting them here prevents a summary or mixed-shape record from hiding
     -- a contradiction through alias precedence.
@@ -256,6 +256,14 @@ function Identity.VerifiedOwnerKey(record)
     if not authorOk or not playerOk or not (hasAuthor or hasPlayer)
         or not ExactOwnerRealm(ownerKey, record.realm) then return nil end
     return ownerKey
+end
+
+-- Durable record ownership requires both an explicit verification decision and
+-- one coherent canonical name@realm tuple.  Presentation names, local-looking
+-- flags, and malformed/unknown realm metadata never satisfy this predicate.
+function Identity.VerifiedOwnerKey(record)
+    if type(record) ~= "table" or record.ownerVerified ~= true then return nil end
+    return Identity.CoherentRecordOwnerKey(record)
 end
 
 -- One shared consumer policy keeps mutation, detail controls, and "My Builds"

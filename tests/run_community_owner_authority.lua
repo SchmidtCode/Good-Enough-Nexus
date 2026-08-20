@@ -548,4 +548,83 @@ assert(offered == 0 and complete == true and copied == 0
         tostring(offered), tostring(complete), tostring(copied),
         tostring(claimSafe)))
 
+-- Community, direct Sync egress, response egress, and deletion must consume
+-- the same durable-build authority verdict. Wire encoders cannot be allowed to
+-- erase a rejected alias or provenance conflict into a clean owner assertion.
+Reset("Twin", "RealmA")
+local buildEchoes = {{spellId=720040, quality=2, stacks=1}}
+local function BuildVariant(id, changes)
+    local build = {
+        id=id, title="Authority " .. id, author="Twin",
+        ownerKey="twin@realma", ownerVerified=true, realm="realma",
+        isMine=true, class="MAGE", echoes=buildEchoes,
+        postedAt=1, lastModified=1,
+    }
+    for key, value in pairs(changes or {}) do build[key] = value end
+    return build
+end
+
+local invalidBuilds = {
+    BuildVariant("authority-relay", {relaySender="Relay-RealmB"}),
+    BuildVariant("authority-claim", {claimedOwnerKey="twin@realmb"}),
+    BuildVariant("authority-o", {o="twin@realmb"}),
+    BuildVariant("authority-p", {p="Other"}),
+    BuildVariant("authority-r", {r="realmb"}),
+    BuildVariant("authority-player", {player="Other"}),
+    BuildVariant("authority-realm", {realm="realmb"}),
+    BuildVariant("authority-realm-type", {realm=123}),
+}
+for _, build in ipairs(invalidBuilds) do
+    assert(Nexus.Identity.VerifiedOwnerKey(build) == nil
+            and not Nexus.Identity.LocalOwnsRecord(build, "twin@realma")
+            and not Community.IsOwnBuild(build),
+        "invalid build authority control unexpectedly verified: " .. build.id)
+    Nexus.Sync.Init(Nexus.Codec, {})
+    local summarized, summaryWhy = Nexus.Sync.BroadcastBuildSummary(build)
+    assert(summarized == false and summaryWhy == "relay unauthorized",
+        "summary egress laundered rejected build authority: " .. build.id)
+    local sent, sendWhy = Nexus.Sync.BroadcastBuild(build)
+    assert(sent == false and sendWhy == "relay unauthorized",
+        "full-build egress laundered rejected build authority: " .. build.id)
+    assert(not Nexus.Sync.BroadcastDelete(build)
+            and NexusDB.syncTombstones[build.id] == nil,
+        "delete egress laundered rejected build authority: " .. build.id)
+
+    assert(Nexus.BuildCatalog.Put(build),
+        "response authority control was not stored: " .. build.id)
+    Nexus.Sync.Init(Nexus.Codec, {})
+    H.sentChatMessages = {}
+    assert(Nexus.Sync.HandleIncoming(
+        "WLLQ|Requester-RealmQ|" .. build.id, "Requester-RealmQ"),
+        "response authority request was rejected: " .. build.id)
+    for _ = 1, 180 do Nexus.Sync.OnUpdate(0.2) end
+    for _, message in ipairs(H.sentChatMessages) do
+        local wire = tostring(message.text or ""):gsub("||", "|")
+        assert(not wire:find(build.id, 1, true),
+            "response egress laundered rejected build authority: " .. build.id)
+    end
+end
+
+local verifiedRemote = BuildVariant("authority-remote", {
+    author="Remote-RealmB", ownerKey="remote@realmb",
+    realm="realmb", isMine=false,
+})
+assert(Nexus.Identity.VerifiedOwnerKey(verifiedRemote) == "remote@realmb",
+    "verified remote build control lost canonical authority")
+Nexus.Sync.Init(Nexus.Codec, {})
+assert(Nexus.Sync.BroadcastBuildSummary(verifiedRemote)
+        and Nexus.Sync.BroadcastBuild(verifiedRemote)
+        and not Nexus.Sync.BroadcastDelete(verifiedRemote),
+    "coherent verified remote build lost relay-only compatibility")
+
+local legacyLocal = BuildVariant("authority-local-legacy", {})
+legacyLocal.ownerVerified = nil
+assert(Nexus.Identity.LocalOwnsRecord(legacyLocal, "twin@realma"),
+    "coherent local legacy build control lost authority")
+Nexus.Sync.Init(Nexus.Codec, {})
+assert(Nexus.Sync.BroadcastBuildSummary(legacyLocal)
+        and Nexus.Sync.BroadcastBuild(legacyLocal)
+        and Nexus.Sync.BroadcastDelete(legacyLocal),
+    "coherent local legacy build lost share/delete compatibility")
+
 print("Community owner authority -- OK")
