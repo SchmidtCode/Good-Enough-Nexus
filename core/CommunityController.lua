@@ -115,6 +115,13 @@ function Controller.New(options)
         return catalog.Get(id)
     end
 
+    local function ShallowCopy(record)
+        if type(record) ~= "table" then return nil end
+        local out = {}
+        for key, value in pairs(record) do out[key] = value end
+        return out
+    end
+
     local function LoadBuildSummary(id)
         local catalog = Catalog()
         if not (catalog and type(catalog.GetSummary) == "function") then
@@ -379,7 +386,9 @@ function Controller.New(options)
     end
 
     function M.Build(id)
-        return LoadBuild(id)
+        local build = LoadBuild(id)
+        if M.ProjectBuild then return M.ProjectBuild(build) end
+        return build
     end
 
     function M.Builds()
@@ -423,10 +432,16 @@ function Controller.New(options)
             local ok, available = pcall(dps.IsDetailsAvailable)
             if ok then detailsAvailable = available and true or false end
         end
+        local currentClass = ""
+        if type(UnitClass) == "function" then
+            local ok, _, token = pcall(UnitClass, "player")
+            currentClass = ok and (NormalizeClass(token) or "") or ""
+        end
         return {
             ownerKey=CurrentOwnerKey() or "",
             player=Identity.PlayerKey(
                 (UnitName and UnitName("player")) or "") or "",
+            currentClass=currentClass,
             isAdmin=IsAdmin() and true or false,
             ownedBySpell=ownedBySpell,
             detailsAvailable=detailsAvailable,
@@ -443,8 +458,9 @@ function Controller.New(options)
         local dps = Nexus and Nexus.DpsCapture
         if type(build) ~= "table" or not (dps
             and type(dps.GetRecordForIdentity) == "function") then return nil end
+        local savedKind = Identity.SavedMirrorKind(build)
         local related, valid = RelatedBuild(build)
-        if build.importedSavedBuild and not valid then return nil end
+        if savedKind ~= "ordinary" and not valid then return nil end
         return dps.GetRecordForIdentity(related.id, related.fingerprint,
             related.fingerprintHash, category)
     end
@@ -573,7 +589,9 @@ function Controller.New(options)
     end
 
     function M.SelectedBuild()
-        return selectedId and LoadBuild(selectedId) or nil
+        local build = selectedId and LoadBuild(selectedId) or nil
+        if M.ProjectBuild then return M.ProjectBuild(build) end
+        return build
     end
 
     function M.SelectedBuildKey()
@@ -716,16 +734,13 @@ function Controller.New(options)
     end
 
     IsOwnBuild = function(build)
-        if type(build) == "table" and build.importedSavedBuild == true then
-            return Identity.LocalOwnsSavedMirror(build, CurrentOwnerKey())
-        end
-        return Identity.LocalOwnsRecord(build, CurrentOwnerKey())
+        return Identity.LocalOwnsBuild(build, CurrentOwnerKey())
     end
 
     local function HasVerifiedRelatedOwner(candidate, ownerKey)
         ownerKey = Identity.CanonicalOwnerKey(ownerKey)
         return ownerKey ~= nil and type(candidate) == "table"
-            and not candidate.importedSavedBuild
+            and Identity.SavedMirrorKind(candidate) == "ordinary"
             and Identity.VerifiedOwnerKey(candidate) == ownerKey
     end
 
@@ -741,7 +756,7 @@ function Controller.New(options)
     end
 
     PublishedBuild = function(source, loadCandidate)
-        if type(source) ~= "table" or not source.importedSavedBuild then
+        if Identity.SavedMirrorKind(source) ~= "saved" then
             return nil
         end
         loadCandidate = type(loadCandidate) == "function"
@@ -791,9 +806,9 @@ function Controller.New(options)
     end
 
     RelatedBuild = function(build)
-        if type(build) ~= "table" or not build.importedSavedBuild then
-            return build, type(build) == "table"
-        end
+        local savedKind = Identity.SavedMirrorKind(build)
+        if savedKind == "ordinary" then return build, true end
+        if savedKind ~= "saved" then return build, false end
         local ownerKey = Identity.VerifiedOwnerKey(build)
         if not ownerKey then return build, false end
         local score = NewRelatedScorer(
@@ -1000,7 +1015,7 @@ function Controller.New(options)
         local token = job.ownerKey
             and StableIdHash(job.ownerKey):sub(1, 8) or nil
         return FindStableCollisionTarget(base, token, function(candidate)
-            return candidate and candidate.importedSavedBuild
+            return Identity.SavedMirrorKind(candidate) == "saved"
                 and tonumber(candidate.serverSlot) == slot
                 and SavedMirrorOwnedBy(candidate, job.ownerKey)
         end)
@@ -1231,7 +1246,7 @@ function Controller.New(options)
                     savedImportStats.cleanupExamined =
                         savedImportStats.cleanupExamined + 1
                     local build = LoadBuild(id)
-                    if build and build.importedSavedBuild
+                    if Identity.SavedMirrorKind(build) == "saved"
                         and SavedMirrorOwnedBy(build, job.ownerKey)
                         and not job.seen[id] then
                         if RemoveOverlay(id) then
@@ -1976,8 +1991,9 @@ function Controller.New(options)
     end
 
     function M.RecordBuildId(build)
+        local savedKind = Identity.SavedMirrorKind(build)
         local related, valid = RelatedBuild(build)
-        if build and build.importedSavedBuild and not valid then return nil end
+        if savedKind ~= "ordinary" and not valid then return nil end
         return related and related.id or nil
     end
 
@@ -1986,7 +2002,7 @@ function Controller.New(options)
     -- the list projection can then join the accepted target to its one bulk
     -- DPS eligibility snapshot without per-row leaderboard reads.
     function M.SavedProjectionRelation(build)
-        if type(build) ~= "table" or build.importedSavedBuild ~= true then
+        if Identity.SavedMirrorKind(build) ~= "saved" then
             return nil
         end
         local ownerKey = Identity.VerifiedOwnerKey(build)
@@ -2001,7 +2017,45 @@ function Controller.New(options)
             buildId=related.id,
             fingerprint=related.fingerprint,
             fingerprintHash=related.fingerprintHash,
+            class=NormalizeClass(related.class),
         }
+    end
+
+    -- One controller-owned projection verdict prevents list, detail, renderer,
+    -- and diagnostic consumers from independently interpreting persisted Saved
+    -- class or relationship hints. Publication identity is source-bound but
+    -- content-independent, so it remains valid across local loadout edits.
+    function M.SavedProjectionState(build)
+        if Identity.SavedMirrorKind(build) ~= "saved" then return nil end
+        local relation = M.SavedProjectionRelation(build)
+        local published = PublishedBuild(build, LoadBuildSummary)
+        local localOwner = Identity.LocalOwnsSavedMirror(
+            build, CurrentOwnerKey())
+        return {
+            recordBuildId=relation and relation.buildId or nil,
+            fingerprint=relation and relation.fingerprint or nil,
+            fingerprintHash=relation and relation.fingerprintHash or nil,
+            class=NormalizeClass(relation and relation.class)
+                or localOwner and CurrentClass() or "UNKNOWN",
+            publishedBuildId=published and published.id or nil,
+        }, relation
+    end
+
+    -- Public readers receive a defensive Saved projection whose class and
+    -- relationship IDs all originate in the verdict above. Ordinary rows keep
+    -- their established catalog-reader semantics; malformed markers disappear.
+    function M.ProjectBuild(idOrBuild)
+        local build = type(idOrBuild) == "table" and idOrBuild
+            or LoadBuild(idOrBuild)
+        local kind = Identity.SavedMirrorKind(build)
+        if kind == "ordinary" then return build, nil end
+        if kind ~= "saved" then return nil, nil end
+        local state, relation = M.SavedProjectionState(build)
+        local projected = ShallowCopy(build)
+        projected.recordBuildId = state and state.recordBuildId or nil
+        projected.publishedBuildId = state and state.publishedBuildId or nil
+        projected.class = NormalizeClass(state and state.class) or "UNKNOWN"
+        return projected, relation
     end
 
     function M.PublishedBuildId(idOrBuild)
@@ -2017,10 +2071,11 @@ function Controller.New(options)
             dummy=0,lk=0,best=0,average=0,count=0,
         }
         if not (dps and build) then return summary end
+        local savedKind = Identity.SavedMirrorKind(build)
         local related, valid = RelatedBuild(build)
-        local recordId = (not build.importedSavedBuild or valid)
+        local recordId = (savedKind == "ordinary" or valid)
             and related and related.id or nil
-        local allowEchoFallback = not build.importedSavedBuild or valid
+        local allowEchoFallback = savedKind == "ordinary" or valid
         for _, category in ipairs({"dummy", "lk"}) do
             local rows
             if recordId and dps.GetLeaderboard then
@@ -2061,7 +2116,7 @@ function Controller.New(options)
         local editName = build.title
         if not editName or editName == "" then editName = build.userTitle end
         if (not editName or editName == "")
-            and build.importedSavedBuild then
+            and Identity.SavedMirrorKind(build) == "saved" then
             editName = build.serverTitle
             if (not editName or editName == "") and build.serverSlot
                 and Adapter and Adapter.Slots then
@@ -2125,7 +2180,9 @@ function Controller.New(options)
 
     function M.PublishImportedBuild(id)
         local source = LoadBuild(id)
-        if not source or not source.importedSavedBuild then return false, "not a saved loadout" end
+        if Identity.SavedMirrorKind(source) ~= "saved" then
+            return false, "not a saved loadout"
+        end
         if not IsOwnBuild(source) then return false, "not your build" end
         if type(source.echoes) ~= "table" or #source.echoes == 0 then return false, "that build has no echoes" end
 
@@ -2223,7 +2280,8 @@ function Controller.New(options)
         b.title = nextTitle
         b.description = nextDescription
         b.link = nextLink
-        if b.importedSavedBuild then
+        local savedKind = Identity.SavedMirrorKind(b)
+        if savedKind == "saved" then
             b.userTitle = nextTitle
             b.userDescription = nextDescription
         end
@@ -2233,7 +2291,7 @@ function Controller.New(options)
         -- Editing a server Saved Build mirror is local-only. It reaches the
         -- community only through the explicit Upload Build action (or a DPS
         -- record path handled by DpsCapture).
-        if not b.importedSavedBuild then BroadcastIfPossible(b) end
+        if savedKind == "ordinary" then BroadcastIfPossible(b) end
         return true
     end
 
@@ -2241,7 +2299,7 @@ function Controller.New(options)
         local b = LoadBuild(id)
         if not b then return false, "not found" end
         if not IsOwnBuild(b) then return false, "not your build" end
-        if b.importedSavedBuild then
+        if Identity.SavedMirrorKind(b) == "saved" then
             return false, "saved loadouts update from the server; edit the server loadout itself to change its Echoes"
         end
         if HasLeaderboardRecord(b) then
@@ -2283,7 +2341,7 @@ function Controller.New(options)
         if not owner and not IsAdmin() then
             return false, "not your build"
         end
-        if b.importedSavedBuild then
+        if Identity.SavedMirrorKind(b) == "saved" then
             return false, "server Saved Builds cannot be deleted here"
         end
         local outcome = {

@@ -266,19 +266,22 @@ function Identity.VerifiedOwnerKey(record)
     return Identity.CoherentRecordOwnerKey(record)
 end
 
--- One shared consumer policy keeps mutation, detail controls, and "My Builds"
--- filtering aligned.  The narrow nil-flag branch preserves old locally-created
--- manual/Saved rows, but auto-DPS or provenance-bearing rows always fail closed.
-function Identity.LocalOwnsRecord(record, currentOwnerKey)
-    if type(record) ~= "table" then return false end
-    local current = Identity.CanonicalOwnerKey(currentOwnerKey)
-    if not current or current:match("@unknown$") then return false end
+-- Keep Saved-mirror marker interpretation type-stable across mutation,
+-- projection, relation, and renderer boundaries. Explicit false retains
+-- ordinary-build compatibility; any other non-boolean value is malformed.
+function Identity.SavedMirrorKind(record)
+    if type(record) ~= "table" then return nil end
+    local marker = record.importedSavedBuild
+    if marker == true then return "saved" end
+    if marker == nil or marker == false then return "ordinary" end
+    return "invalid"
+end
+
+local function LocalOwnsLegacyEvidence(record, current)
     if record.o ~= nil or record.p ~= nil or record.r ~= nil
         or record.relaySender ~= nil or record.claimedOwnerKey ~= nil then
         return false
     end
-    local verified = Identity.VerifiedOwnerKey(record)
-    if verified then return verified == current end
     if record.ownerVerified ~= nil or record.autoDps == true
         or record.isMine ~= true then return false end
     local rawLegacyOwner = record.ownerKey
@@ -294,11 +297,23 @@ function Identity.LocalOwnsRecord(record, currentOwnerKey)
     return true
 end
 
+-- Ordinary durable ownership is intentionally incapable of interpreting a
+-- Saved or malformed marker. This prevents future callers from accidentally
+-- bypassing Saved's verified-only public boundary.
+function Identity.LocalOwnsRecord(record, currentOwnerKey)
+    if Identity.SavedMirrorKind(record) ~= "ordinary" then return false end
+    local current = Identity.CanonicalOwnerKey(currentOwnerKey)
+    if not current or current:match("@unknown$") then return false end
+    local verified = Identity.VerifiedOwnerKey(record)
+    if verified then return verified == current end
+    return LocalOwnsLegacyEvidence(record, current)
+end
+
 -- Saved-loadout mirrors may coexist for same-named characters on different
 -- realms. Public ownership is therefore verified-only; an unverified mirror
 -- may remain visible but cannot become editable or publishable.
 function Identity.LocalOwnsSavedMirror(record, currentOwnerKey)
-    if type(record) ~= "table" or record.importedSavedBuild ~= true then
+    if Identity.SavedMirrorKind(record) ~= "saved" then
         return false
     end
     local current = Identity.CanonicalOwnerKey(currentOwnerKey)
@@ -306,19 +321,31 @@ function Identity.LocalOwnsSavedMirror(record, currentOwnerKey)
     return Identity.VerifiedOwnerKey(record) == current
 end
 
+-- Public build ownership is type-dispatched before any compatibility branch.
+-- Saved mirrors require explicit verification; malformed marker values never
+-- fall through to the ordinary local-legacy bridge.
+function Identity.LocalOwnsBuild(record, currentOwnerKey)
+    local kind = Identity.SavedMirrorKind(record)
+    if kind == "saved" then
+        return Identity.LocalOwnsSavedMirror(record, currentOwnerKey)
+    end
+    if kind ~= "ordinary" then return false end
+    return Identity.LocalOwnsRecord(record, currentOwnerKey)
+end
+
 -- A live Saved-slot reconciliation may adopt a pre-verification mirror only
 -- when it already carries the exact explicit canonical owner tuple. This is a
 -- storage-compatibility bridge, not mutation or projection authority.
 function Identity.CanAdoptSavedMirror(record, currentOwnerKey)
     if Identity.LocalOwnsSavedMirror(record, currentOwnerKey) then return true end
-    if type(record) ~= "table" or record.importedSavedBuild ~= true then
+    if Identity.SavedMirrorKind(record) ~= "saved" then
         return false
     end
     local current = Identity.CanonicalOwnerKey(currentOwnerKey)
     if not current or current:match("@unknown$") then return false end
     return record.ownerVerified == nil
         and Identity.CanonicalOwnerKey(record.ownerKey) == current
-        and Identity.LocalOwnsRecord(record, current)
+        and LocalOwnsLegacyEvidence(record, current)
 end
 
 function Identity.SanitizeText(value, maxBytes)

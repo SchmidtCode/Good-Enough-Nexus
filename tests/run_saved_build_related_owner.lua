@@ -173,6 +173,9 @@ local projection = Nexus.CommunityInternals.Projection.New({
     publishedBuildId=function(build)
         return controller.PublishedBuildId(build)
     end,
+    savedProjection=function(build)
+        return controller.ProjectBuild(build)
+    end,
     leaderboard=function(buildId)
         requestedIds[#requestedIds + 1] = buildId
         if buildId == "realm-b-exact" then
@@ -466,7 +469,7 @@ assert(reloadedController.SavedProjectionRelation(malformedTargetSource) == nil,
 -- owner-key legacy adoption path as a positive control: it is authoritative
 -- enough to adopt locally, while a claimless isMine row is not.
 local savedRelationResolver = function(build)
-    return controller.SavedProjectionRelation(build)
+    return controller.ProjectBuild(build)
 end
 assert(Nexus.ViewProjections.BindSavedRelationResolver(
     savedRelationResolver), "Saved relation resolver did not bind")
@@ -478,20 +481,20 @@ local function ProjectedBuild(rows, id)
     return nil
 end
 
-local function ProjectMine(search, qualifiedOnly)
+local function ProjectMine(search, qualifiedOnly, currentClassOnly)
     Nexus.ViewProjections.Reset()
     local rows, summary, err = Nexus.ViewProjections.Builds({
-        scope="mine",search=search,currentClassOnly=false,
+        scope="mine",search=search,currentClassOnly=currentClassOnly == true,
         qualifiedOnly=qualifiedOnly,sortMode="title",
     })
     assert(type(rows) == "table", tostring(err or "My Builds projection failed"))
     return rows, summary
 end
 
-local function ProjectMineAsync(search, qualifiedOnly)
+local function ProjectMineAsync(search, qualifiedOnly, currentClassOnly)
     Nexus.ViewProjections.Reset()
     local filters = {
-        scope="mine",search=search,currentClassOnly=false,
+        scope="mine",search=search,currentClassOnly=currentClassOnly == true,
         qualifiedOnly=qualifiedOnly,sortMode="title",
     }
     for _ = 1, 200 do
@@ -522,6 +525,147 @@ local function LocalMirrorForSlot(slot)
     end
     return nil, nil
 end
+
+-- A rejected relationship must not keep contributing its persisted class or
+-- IDs while startup reconciliation is still pending. The verified local Saved
+-- mirror belongs to the current MAGE; only its RealmB candidate says ROGUE.
+local staleProjectionEchoes = Echoes(990501, 6)
+local staleProjectionFingerprint =
+    assert(Nexus.DpsCapture.GetEchoKey(staleProjectionEchoes))
+local staleProjectionHash =
+    assert(Nexus.DpsCapture.GetEchoHash(staleProjectionEchoes))
+assert(Nexus.BuildCatalog.Put({
+    id="realm-b-stale-projection",title="Stale Projection Candidate",
+    author="Twin",ownerKey="twin@realmb",ownerVerified=true,realm="realmb",
+    class="ROGUE",postedAt=66,lastModified=66,echoes=staleProjectionEchoes,
+    fingerprint=staleProjectionFingerprint,
+    fingerprintHash=staleProjectionHash,
+}), "stale projection wrong-owner candidate did not initialize")
+local staleProjectionId = "saved-stale-projection"
+assert(Nexus.BuildCatalog.Put({
+    id=staleProjectionId,title="Stale Projection Mirror",
+    serverTitle="Stale Projection Candidate",author="Twin",
+    ownerKey="twin@realma",ownerVerified=true,realm="realma",isMine=true,
+    class="ROGUE",postedAt=67,lastModified=67,echoes=staleProjectionEchoes,
+    fingerprint=staleProjectionFingerprint,
+    fingerprintHash=staleProjectionHash,importedSavedBuild=true,serverSlot=13,
+    recordBuildId="realm-b-stale-projection",
+    publishedBuildId="realm-b-stale-projection",
+}), "stale projection Saved mirror did not initialize")
+local staleProjectionSource =
+    assert(Nexus.BuildCatalog.Get(staleProjectionId))
+assert(controller.SavedProjectionRelation(staleProjectionSource) == nil
+    and controller.RecordBuildId(staleProjectionSource) == nil
+    and controller.PublishedBuildId(staleProjectionSource) == nil,
+    "stale projection setup unexpectedly retained the RealmB relationship")
+local controllerProjectedStale, controllerStaleRelation =
+    controller.ProjectBuild(staleProjectionSource)
+local persistedStaleProjection =
+    assert(Nexus.BuildCatalog.Get(staleProjectionId))
+assert(controllerProjectedStale and controllerStaleRelation == nil
+    and controllerProjectedStale.class == "MAGE"
+    and controllerProjectedStale.recordBuildId == nil
+    and controllerProjectedStale.publishedBuildId == nil
+    and persistedStaleProjection.class == "ROGUE"
+    and persistedStaleProjection.recordBuildId == "realm-b-stale-projection"
+    and persistedStaleProjection.publishedBuildId == "realm-b-stale-projection",
+    "controller projection did not sanitize without mutating persisted evidence")
+assert(controller.Build(staleProjectionId).class == "MAGE",
+    "renderer-facing exact build reader reused rejected class metadata")
+controller.Select(staleProjectionId)
+local selectedStaleProjection = assert(controller.SelectedBuild())
+assert(selectedStaleProjection.class == "MAGE"
+    and selectedStaleProjection.recordBuildId == nil
+    and selectedStaleProjection.publishedBuildId == nil,
+    "renderer-facing selected build reused rejected relationship metadata")
+controller.ClearSelection(staleProjectionId)
+local projectedStale = ProjectedBuild(
+    ProjectMine("stale projection mirror", false, true), staleProjectionId)
+assert(projectedStale and projectedStale.class == "MAGE"
+    and projectedStale.recordBuildId == nil
+    and projectedStale.publishedBuildId == nil,
+    "EXPECTED RED: sync projection reused rejected class or related IDs")
+local asyncProjectedStale = ProjectedBuild(
+    ProjectMineAsync("stale projection mirror", false, true), staleProjectionId)
+assert(asyncProjectedStale and asyncProjectedStale.class == "MAGE"
+    and asyncProjectedStale.recordBuildId == nil
+    and asyncProjectedStale.publishedBuildId == nil,
+    "EXPECTED RED: async projection reused rejected class or related IDs")
+local staleDetailProjection = Nexus.CommunityInternals.Projection.New({
+    builds=function() return {}, {} end,
+    buildsCurrent=function() return false end,
+    loadBuild=function(id) return controller.Build(id) end,
+    revisionSnapshot=function() return controller.RevisionSnapshot() end,
+    recordBuildId=function(build) return controller.RecordBuildId(build) end,
+    publishedBuildId=function(build)
+        return controller.PublishedBuildId(build)
+    end,
+    savedProjection=function(build)
+        return controller.ProjectBuild(build)
+    end,
+    leaderboard=function() return {} end,
+    personalBest=function() return nil end,
+})
+local staleDetail = assert(staleDetailProjection.Detail(staleProjectionId, {
+    ownerKey="twin@realma",player="Twin",currentClass="MAGE",
+    detailsAvailable=true,
+}))
+assert(staleDetail.build.class == "MAGE"
+    and staleDetail.build.recordBuildId == nil
+    and staleDetail.build.publishedBuildId == nil,
+    "EXPECTED RED: detail projection exposed rejected class or related IDs")
+assert(Nexus.ViewProjections.ExplainBuild(staleProjectionId, {
+        scope="mine",search="stale projection mirror",currentClassOnly=true,
+        qualifiedOnly=false,sortMode="title",
+    }) == "included on current page",
+    "EXPECTED RED: ExplainBuild filtered a Saved mirror by rejected class")
+
+-- A source-bound publication remains a stable upload identity even after the
+-- local Saved content changes enough that it is no longer a DPS relation.
+local changedPublicationId = "published-content-changed"
+local changedSavedId = "saved-content-changed"
+local changedSavedEchoes = Echoes(990701, 6)
+assert(Nexus.BuildCatalog.Put({
+    id=changedPublicationId,title="Old Published Content",author="Twin",
+    ownerKey="twin@realma",ownerVerified=true,realm="realma",class="MAGE",
+    postedAt=68,lastModified=68,echoes=Echoes(990801, 6),
+    sourceSavedBuildId=changedSavedId,
+}), "content-changed publication target did not initialize")
+assert(Nexus.BuildCatalog.Put({
+    id=changedSavedId,title="Changed Local Content",
+    serverTitle="Changed Local Content",author="Twin",
+    ownerKey="twin@realma",ownerVerified=true,realm="realma",isMine=true,
+    class="ROGUE",postedAt=69,lastModified=69,echoes=changedSavedEchoes,
+    importedSavedBuild=true,serverSlot=14,
+    recordBuildId=changedPublicationId,publishedBuildId=changedPublicationId,
+}), "content-changed Saved mirror did not initialize")
+local changedSaved = assert(Nexus.BuildCatalog.Get(changedSavedId))
+local changedProjected, changedRelation = controller.ProjectBuild(changedSaved)
+assert(changedRelation == nil and changedProjected
+    and changedProjected.class == "MAGE"
+    and changedProjected.recordBuildId == nil
+    and changedProjected.publishedBuildId == changedPublicationId,
+    "valid publication identity was nested under content relation acceptance")
+local changedDetailProjection = Nexus.CommunityInternals.Projection.New({
+    builds=function() return {}, {} end,
+    buildsCurrent=function() return false end,
+    loadBuild=function(id) return Nexus.BuildCatalog.Get(id) end,
+    savedProjection=function(build) return controller.ProjectBuild(build) end,
+    revisionSnapshot=function() return controller.RevisionSnapshot() end,
+    leaderboard=function() return {} end,
+    personalBest=function() return nil end,
+})
+local changedDetail = assert(changedDetailProjection.Detail(changedSavedId, {
+    ownerKey="twin@realma",player="Twin",currentClass="MAGE",
+}))
+assert(changedDetail.build.recordBuildId == nil
+    and changedDetail.build.publishedBuildId == changedPublicationId
+    and changedDetail.actionText == "Update Upload",
+    "content-changed valid publication lost its projected upload state")
+local changedPublished, changedPublishedId =
+    controller.PublishImportedBuild(changedSavedId)
+assert(changedPublished and changedPublishedId == changedPublicationId,
+    "content-changed upload migrated its source-bound publication identity")
 
 local explicitLegacyId = "saved-twin-9"
 local explicitLegacyEchoes = Echoes(990001, 6)
@@ -556,13 +700,77 @@ assert(ProjectedBuild(explicitRows, explicitLegacyId),
     "verified explicit-owner legacy mirror was excluded from My Builds")
 
 local ambiguousBefore = assert(Nexus.BuildCatalog.Get(ambiguousMirrorId))
+local ambiguousProjected = assert(controller.ProjectBuild(ambiguousBefore))
 assert(not controller.IsOwnBuild(ambiguousBefore),
     "EXPECTED RED: claimless isMine Saved mirror granted owner authority")
 local ambiguousPublished, ambiguousWhy =
     controller.PublishImportedBuild(ambiguousMirrorId)
 assert(not ambiguousPublished and ambiguousWhy == "not your build"
+    and ambiguousProjected.class == "UNKNOWN"
+    and ambiguousProjected.recordBuildId == nil
+    and ambiguousProjected.publishedBuildId == nil
     and Nexus.BuildCatalog.Get("published-" .. ambiguousMirrorId) == nil,
     "EXPECTED RED: claimless Saved mirror reached publication authority")
+local ambiguousDetail = assert(changedDetailProjection.Detail(
+    ambiguousMirrorId, {ownerKey="twin@realma",player="Twin",
+        currentClass="MAGE"}))
+assert(not ambiguousDetail.mine and ambiguousDetail.build.class == "UNKNOWN"
+    and ambiguousDetail.build.recordBuildId == nil
+    and ambiguousDetail.build.publishedBuildId == nil,
+    "unverified Saved detail borrowed the current character's metadata")
+local foreignProjected = assert(controller.ProjectBuild(
+    Nexus.BuildCatalog.Get(foreignOrphanId)))
+local foreignDetail = assert(changedDetailProjection.Detail(
+    foreignOrphanId, {ownerKey="twin@realma",player="Twin",
+        currentClass="MAGE"}))
+assert(foreignProjected.class == "UNKNOWN"
+    and foreignDetail.build.class == "UNKNOWN" and not foreignDetail.mine,
+    "foreign Saved detail borrowed the current character's class")
+
+-- Saved-marker classification must be type-stable at every public boundary.
+-- A truthy non-boolean marker cannot take ordinary-build ownership and then
+-- switch to Saved-build publication semantics.
+for index, marker in ipairs({"true", 1, {future=true}}) do
+    local malformedId = "malformed-saved-marker-" .. index
+    assert(Nexus.BuildCatalog.Put({
+        id=malformedId,title="Malformed Saved Marker " .. index,
+        serverTitle="Malformed Saved Marker " .. index,author="Twin",
+        class="MAGE",postedAt=80 + index,lastModified=80 + index,
+        echoes=Echoes(991000 + index * 100, 6),
+        importedSavedBuild=marker,isMine=true,serverSlot=10 + index,
+    }), "malformed Saved marker fixture did not initialize: " .. index)
+    local malformed = assert(Nexus.BuildCatalog.Get(malformedId))
+    local published, why = controller.PublishImportedBuild(malformedId)
+    local rows = ProjectMine("malformed saved marker " .. index, false)
+    local malformedDetail = changedDetailProjection.Detail(malformedId, {
+        ownerKey="twin@realma",player="Twin",currentClass="MAGE",
+    })
+    assert(not controller.IsOwnBuild(malformed)
+        and controller.ProjectBuild(malformed) == nil
+        and controller.Build(malformedId) == nil
+        and malformedDetail == nil
+        and not published and why == "not a saved loadout"
+        and not ProjectedBuild(rows, malformedId)
+        and Nexus.BuildCatalog.Get("published-" .. malformedId) == nil,
+        "EXPECTED RED: malformed Saved marker crossed authority boundaries: "
+            .. index)
+end
+
+local explicitOrdinaryId = "explicit-false-ordinary"
+assert(Nexus.BuildCatalog.Put({
+    id=explicitOrdinaryId,title="Explicit False Ordinary",author="Twin",
+    ownerKey="twin@realma",ownerVerified=true,realm="realma",isMine=true,
+    class="MAGE",postedAt=90,lastModified=90,
+    echoes=Echoes(992001, 6),importedSavedBuild=false,
+}), "explicit false ordinary fixture did not initialize")
+local explicitOrdinary = assert(Nexus.BuildCatalog.Get(explicitOrdinaryId))
+local falsePublished, falseWhy =
+    controller.PublishImportedBuild(explicitOrdinaryId)
+assert(controller.IsOwnBuild(explicitOrdinary)
+    and not falsePublished and falseWhy == "not a saved loadout"
+    and ProjectedBuild(ProjectMine("explicit false ordinary", false),
+        explicitOrdinaryId),
+    "boolean false no longer retained ordinary-build semantics")
 
 for _, denied in ipairs({
     {id=foreignOrphanId,search="realmb orphan"},

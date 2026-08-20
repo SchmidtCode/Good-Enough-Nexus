@@ -436,7 +436,7 @@ end
 local function IsExactLocalOwner(record)
     local localOwner = CurrentOwnerKey()
     return localOwner ~= nil
-        and Identity.LocalOwnsRecord(record, localOwner)
+        and Identity.LocalOwnsBuild(record, localOwner)
 end
 
 local function TrustedStoredOwnerKey(record, source)
@@ -1111,6 +1111,13 @@ end
 
 RelayEligible = function(build, source)
     if type(build) ~= "table" then return false end
+    local kind = Identity.SavedMirrorKind(build)
+    if kind == "invalid" then return false end
+    if kind == "saved" then
+        return IsExactLocalOwner(build)
+            and not (build.legacyRecovered == true
+                and build.ownerVerified ~= true)
+    end
     local ownerKey = Identity.VerifiedOwnerKey(build)
     if not ownerKey and source == "bundled" then
         ownerKey = Identity.CoherentRecordOwnerKey(build)
@@ -1762,6 +1769,7 @@ function Sync.BroadcastBuild(build)
     if not ValidIdentifier(tostring(build.id or ""), MAX_BUILD_ID_BYTES) then
         return false, "invalid build id"
     end
+    if not RelayEligible(build) then return false, "relay unauthorized" end
     local buildKey = tostring(build.id or build.fingerprintHash or build.fingerprint or "")
     local now = Now()
     if buildKey ~= "" and recentBuildBroadcast[buildKey]
@@ -2232,7 +2240,7 @@ function Sync.BroadcastDelete(build)
     local author = tostring(build.author or MyName())
     local localOwner = CurrentOwnerKey()
     if not localOwner
-        or not Identity.LocalOwnsRecord(build, localOwner) then
+        or not Identity.LocalOwnsBuild(build, localOwner) then
         return false
     end
     local existing = tombstones[id]

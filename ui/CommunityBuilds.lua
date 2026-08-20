@@ -44,8 +44,8 @@ local function ControllerInstance()
         "Community controller unavailable")
 end
 
-local function SavedProjectionRelation(build)
-    return ControllerInstance().SavedProjectionRelation(build)
+local function ProjectSavedBuild(build)
+    return ControllerInstance().ProjectBuild(build)
 end
 
 local function BindSavedProjectionRelation(projections)
@@ -54,7 +54,7 @@ local function BindSavedProjectionRelation(projections)
         and type(projections.BindSavedRelationResolver) == "function") then
         return false
     end
-    projections.BindSavedRelationResolver(SavedProjectionRelation)
+    projections.BindSavedRelationResolver(ProjectSavedBuild)
     return true
 end
 
@@ -84,6 +84,9 @@ local function EnsureCommunityProjection()
         end,
         publishedBuildId=function(build)
             return ControllerInstance().PublishedBuildId(build)
+        end,
+        savedProjection=function(build)
+            return ControllerInstance().ProjectBuild(build)
         end,
         revisionSnapshot=function()
             return ControllerInstance().RevisionSnapshot()

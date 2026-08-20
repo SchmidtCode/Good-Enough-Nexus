@@ -108,7 +108,8 @@ local function NormalizeBuildFilters(filters)
     local search = tostring(filters.search or ""):lower()
         :gsub("^%s+", ""):gsub("%s+$", "")
     local currentClassOnly = filters.currentClassOnly ~= false
-    local classFilter = currentClassOnly and (CurrentClass() or "") or "ALL"
+    local currentClass = CurrentClass() or ""
+    local classFilter = currentClassOnly and currentClass or "ALL"
     local scope = filters.scope == "mine" and "mine" or "all"
     local sortMode = filters.sortMode
     if sortMode ~= "recent" and sortMode ~= "title" then sortMode = "dps" end
@@ -117,7 +118,7 @@ local function NormalizeBuildFilters(filters)
     return {
         search=search, classFilter=classFilter, scope=scope,
         sortMode=sortMode, player=player, ownerKey=ownerKey,
-        currentClassOnly=currentClassOnly,
+        currentClassOnly=currentClassOnly,currentClass=currentClass,
         qualifiedOnly=filters.qualifiedOnly ~= false,
         page=page,pageSize=20,
     }
@@ -146,7 +147,7 @@ local function BuildKey(filters)
         Revision(revisions.DPS_CHANGED),
         filters.scope, filters.classFilter, filters.search, filters.sortMode,
         filters.player, filters.ownerKey,
-        filters.currentClassOnly,filters.qualifiedOnly,
+        filters.currentClassOnly,filters.currentClass,filters.qualifiedOnly,
         savedRelationGeneration,
     })
 end
@@ -195,32 +196,48 @@ local function Cached(kind, keyBuilder, builder)
 end
 
 local function IsOwnBuild(build, filters)
-    if type(build) == "table" and build.importedSavedBuild == true then
-        return Identity.LocalOwnsSavedMirror(build, filters.ownerKey)
-    end
-    return Identity.LocalOwnsRecord(build, filters.ownerKey)
+    return Identity.LocalOwnsBuild(build, filters.ownerKey)
 end
 
-local function SavedRelation(build, unit)
-    if type(build) ~= "table" or build.importedSavedBuild ~= true
+local function ProjectSavedBuild(build, unit)
+    if Identity.SavedMirrorKind(build) ~= "saved"
         or type(savedRelationResolver) ~= "function" then return nil end
     workStats.joins = workStats.joins + 1
     if type(unit) == "table" then
         unit.joins = (unit.joins or 0) + 1
     end
-    local ok, relation = pcall(savedRelationResolver, build)
-    if not ok or type(relation) ~= "table"
+    local ok, projected, relation = pcall(savedRelationResolver, build)
+    if not ok or type(projected) ~= "table"
+        or tostring(projected.id or "") ~= tostring(build.id or "") then
+        return nil, nil
+    end
+    if type(relation) ~= "table"
         or type(relation.buildId) ~= "string"
-        or type(relation.fingerprint) ~= "string" then return nil end
-    return relation
+        or type(relation.fingerprint) ~= "string" then
+        relation = nil
+    end
+    projected.recordBuildId = relation and relation.buildId or nil
+    projected.publishedBuildId = type(projected.publishedBuildId) == "string"
+        and projected.publishedBuildId or nil
+    projected.class = NormalizeClass(projected.class) or "UNKNOWN"
+    return projected, relation
 end
 
-local function BuildDpsSummary(build, eligibility, unit)
+local function PrepareSavedBuild(build, filters, unit)
+    if Identity.SavedMirrorKind(build) ~= "saved" then return build, nil end
+    local projected, relation = ProjectSavedBuild(build, unit)
+    if projected then return projected, relation end
+    build.recordBuildId, build.publishedBuildId = nil, nil
+    build.class = "UNKNOWN"
+    return build, nil
+end
+
+local function BuildDpsSummary(build, eligibility, relation)
     local fingerprint
-    if type(build) == "table" and build.importedSavedBuild == true then
-        local relation = SavedRelation(build, unit)
+    local savedKind = Identity.SavedMirrorKind(build)
+    if savedKind == "saved" then
         fingerprint = relation and relation.fingerprint or nil
-    else
+    elseif savedKind == "ordinary" then
         fingerprint = type(build) == "table"
             and type(build.fingerprint) == "string" and build.fingerprint or nil
     end
@@ -335,27 +352,32 @@ local function BuildProjection(filters)
     local out = {}
     for _, build in pairs(all) do
         if type(build) == "table" and IsLoaded(build) then
+            local savedKind = Identity.SavedMirrorKind(build)
             summary.total = summary.total + 1
             summary.ready = summary.ready + 1
             local own = IsOwnBuild(build, filters)
             if own then summary.mine = summary.mine + 1 end
-            if build.importedSavedBuild then
+            if savedKind == "saved" then
                 summary.savedLoadouts = summary.savedLoadouts + 1
-            elseif own then
+            elseif savedKind == "ordinary" and own then
                 summary.uploaded = summary.uploaded + 1
             end
-            local classMatch = not filters.currentClassOnly
-                or tostring(build.class or ""):upper() == filters.classFilter
             local scopeMatch = filters.scope == "mine"
                 and own
-                or filters.scope ~= "mine" and not build.importedSavedBuild
+                or filters.scope ~= "mine" and savedKind == "ordinary"
             local searchMatch = filters.search == ""
                 or tostring(build.title or ""):lower():find(filters.search, 1, true)
                 or tostring(build.author or ""):lower():find(filters.search, 1, true)
                 or tostring(build.description or ""):lower():find(filters.search, 1, true)
+            local relation
+            if scopeMatch and searchMatch and savedKind == "saved" then
+                build, relation = PrepareSavedBuild(build, filters)
+            end
+            local classMatch = not filters.currentClassOnly
+                or tostring(build.class or ""):upper() == filters.classFilter
             local matched = classMatch and scopeMatch and searchMatch
             local dpsSummary = matched
-                and BuildDpsSummary(build, eligibility) or nil
+                and BuildDpsSummary(build, eligibility, relation) or nil
             local dummy = type(dpsSummary) == "table"
                 and (tonumber(dpsSummary.dummy) or 0) or 0
             local lk = type(dpsSummary) == "table"
@@ -734,23 +756,30 @@ local function PumpBuildJob(job, unit)
                 summary.total = summary.total + 1
                 summary.availableCount = summary.availableCount + 1
                 summary.ready = summary.ready + 1
+                local savedKind = Identity.SavedMirrorKind(build)
                 local own = IsOwnBuild(build, filters)
                 if own then summary.mine = summary.mine + 1 end
-                if build.importedSavedBuild then
+                if savedKind == "saved" then
                     summary.savedLoadouts = summary.savedLoadouts + 1
-                elseif own then summary.uploaded = summary.uploaded + 1 end
-                local classMatch = not filters.currentClassOnly
-                    or tostring(build.class or ""):upper() == filters.classFilter
+                elseif savedKind == "ordinary" and own then
+                    summary.uploaded = summary.uploaded + 1
+                end
                 local scopeMatch = filters.scope == "mine"
                     and own
-                    or filters.scope ~= "mine" and not build.importedSavedBuild
+                    or filters.scope ~= "mine" and savedKind == "ordinary"
                 local searchMatch = filters.search == ""
                     or tostring(build.title or ""):lower():find(filters.search,1,true)
                     or tostring(build.author or ""):lower():find(filters.search,1,true)
                     or tostring(build.description or ""):lower():find(filters.search,1,true)
+                local relation
+                if scopeMatch and searchMatch and savedKind == "saved" then
+                    build, relation = PrepareSavedBuild(build, filters, unit)
+                end
+                local classMatch = not filters.currentClassOnly
+                    or tostring(build.class or ""):upper() == filters.classFilter
                 local matched = classMatch and scopeMatch and searchMatch
                 local dpsSummary = matched
-                    and BuildDpsSummary(build, job.eligibility, unit) or nil
+                    and BuildDpsSummary(build, job.eligibility, relation) or nil
                 local dummy = type(dpsSummary) == "table"
                     and (tonumber(dpsSummary.dummy) or 0) or 0
                 local lk = type(dpsSummary) == "table"
@@ -1420,13 +1449,18 @@ function Projections.ExplainBuild(id, filters)
     end
     if type(build) ~= "table" then return "build unavailable" end
 
+    local savedKind = Identity.SavedMirrorKind(build)
     local own = IsOwnBuild(build, normalized)
     local scopeMatch = normalized.scope == "mine"
         and own
-        or normalized.scope ~= "mine" and not build.importedSavedBuild
+        or normalized.scope ~= "mine" and savedKind == "ordinary"
     if not scopeMatch then
         return normalized.scope == "mine"
             and "scope filter: not mine" or "scope filter: saved loadout"
+    end
+    local relation
+    if savedKind == "saved" then
+        build, relation = PrepareSavedBuild(build, normalized)
     end
     if normalized.currentClassOnly then
         if normalized.classFilter == "" then
@@ -1443,13 +1477,13 @@ function Projections.ExplainBuild(id, filters)
     if normalized.qualifiedOnly then
         local dpsOwner = Nexus and Nexus.DpsCapture
         local ok, dps = false, nil
-        local relation = build.importedSavedBuild and SavedRelation(build) or nil
         local lookupId = relation and relation.buildId or build.id
         local lookupFingerprint = relation and relation.fingerprint
             or build.fingerprint
         local lookupHash = relation and relation.fingerprintHash
             or build.fingerprintHash
-        if build.importedSavedBuild and not relation then
+        if savedKind == "invalid"
+            or savedKind == "saved" and not relation then
             return "qualification unavailable"
         elseif dpsOwner
             and type(dpsOwner.GetCachedCommunityQualification) == "function" then

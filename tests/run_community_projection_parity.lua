@@ -131,6 +131,18 @@ local projection = factory.New({
     publishedBuildId=function(build)
         return build and publishedIds[build.id] or nil
     end,
+    savedProjection=function(build)
+        if not build then return nil end
+        local projected = Copy(build)
+        if build.ownerVerified == true then
+            projected.recordBuildId = recordIds[build.id]
+            projected.publishedBuildId = publishedIds[build.id]
+        else
+            projected.recordBuildId, projected.publishedBuildId = nil, nil
+            projected.class = "UNKNOWN"
+        end
+        return projected
+    end,
     revisionSnapshot=function()
         return {build=R.Get(R.BUILD_LIBRARY_CHANGED),dps=R.Get(R.DPS_CHANGED)}
     end,

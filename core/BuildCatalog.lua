@@ -636,6 +636,8 @@ end
 
 local function AddRelatedRow(id, record)
     if type(record) ~= "table" then return end
+    local savedKind = Identity.SavedMirrorKind(record)
+    if savedKind == "invalid" then return end
     local exact = OrdinaryComplete(record) and ExactFingerprint(record) or nil
     local exactBucket, exactAdded = AddBucket(relatedIndex.exact, exact, id)
     local exactAuto = record.autoDps == true
@@ -652,7 +654,7 @@ local function AddRelatedRow(id, record)
             exact=exact,exactAuto=exactAuto,classOwner=classOwner}
         return
     end
-    if record.importedSavedBuild then
+    if savedKind == "saved" then
         local saved = RelatedKey(author, "saved")
         AddBucket(relatedIndex.saved, saved, id)
         relatedRows[id] = {

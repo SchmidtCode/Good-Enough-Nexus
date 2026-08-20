@@ -137,7 +137,12 @@ local relationCalls = 0
 local function ResolveSaved(build)
     relationCalls = relationCalls + 1
     if build.id == "projection-0010" then
-        return {buildId="projection-0020",fingerprint="500020x1"}
+        local projected = {}
+        for key, value in pairs(build) do projected[key] = value end
+        projected.recordBuildId = "projection-0020"
+        projected.class = "MAGE"
+        return projected,
+            {buildId="projection-0020",fingerprint="500020x1"}
     end
     return nil
 end

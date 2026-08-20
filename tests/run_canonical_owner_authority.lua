@@ -363,6 +363,168 @@ assert(falseLocalRelayed == false and falseLocalWhy == "relay unauthorized",
 assert(not Sync.BroadcastDelete(falseLocalAuthority),
     "ownerVerified=false build regained delete authority through isMine")
 
+-- Saved-loadout mirrors remain pre-adoption evidence until the exact live-slot
+-- reconciliation verifies them. Generic local legacy ownership must not let
+-- Sync disclose, advertise, or tombstone that private evidence first.
+local preAdoptionSaved = {
+    id="pre-adoption-saved",title="Pre-adoption Saved",author="Twin",
+    ownerKey="twin@realma",realm="realma",isMine=true,
+    importedSavedBuild=true,class="MAGE",lastModified=41,
+    echoes={{spellId=200305,quality=3,stacks=1}},
+}
+local claimlessSaved = {
+    id="claimless-saved",title="Claimless Saved",author="Twin",isMine=true,
+    importedSavedBuild=true,class="MAGE",lastModified=42,
+    echoes={{spellId=200306,quality=3,stacks=1}},
+}
+local malformedSaved = {
+    id="malformed-saved",title="Malformed Saved",author="Twin",
+    ownerKey="twin@realma",realm="realma",isMine=true,
+    importedSavedBuild="true",class="MAGE",lastModified=43,
+    echoes={{spellId=200307,quality=3,stacks=1}},
+}
+local malformedSavedNumber = {
+    id="malformed-saved-number",title="Malformed Saved Number",author="Twin",
+    ownerKey="twin@realma",realm="realma",isMine=true,
+    importedSavedBuild=1,class="MAGE",lastModified=44,
+    echoes={{spellId=200308,quality=3,stacks=1}},
+}
+local malformedSavedZero = {
+    id="malformed-saved-zero",title="Malformed Saved Zero",author="Twin",
+    ownerKey="twin@realma",realm="realma",isMine=true,
+    importedSavedBuild=0,class="MAGE",lastModified=45,
+    echoes={{spellId=200309,quality=3,stacks=1}},
+}
+local malformedSavedTable = {
+    id="malformed-saved-table",title="Malformed Saved Table",author="Twin",
+    ownerKey="twin@realma",realm="realma",isMine=true,
+    importedSavedBuild={future=true},class="MAGE",lastModified=46,
+    echoes={{spellId=200310,quality=3,stacks=1}},
+}
+local foreignVerifiedSaved = {
+    id="foreign-verified-saved",title="Foreign Verified Saved",author="Twin",
+    ownerKey="twin@realmb",ownerVerified=true,realm="realmb",isMine=false,
+    importedSavedBuild=true,class="ROGUE",lastModified=47,
+    echoes={{spellId=200311,quality=3,stacks=1}},
+}
+local deniedSaved = {
+    preAdoptionSaved,claimlessSaved,malformedSaved,malformedSavedNumber,
+    malformedSavedZero,malformedSavedTable,foreignVerifiedSaved,
+}
+assert(not Identity.LocalOwnsRecord(preAdoptionSaved, "twin@realma")
+    and not Identity.LocalOwnsBuild(preAdoptionSaved, "twin@realma")
+    and Identity.CanAdoptSavedMirror(preAdoptionSaved, "twin@realma")
+    and not Identity.LocalOwnsRecord(malformedSaved, "twin@realma")
+    and not Identity.LocalOwnsBuild(malformedSaved, "twin@realma"),
+    "typed Saved ownership or adoption dispatch changed")
+for _, build in ipairs(deniedSaved) do
+    local summaryQueued, summaryWhy = Sync.BroadcastBuildSummary(build)
+    local fullQueued, fullWhy = Sync.BroadcastBuild(build)
+    assert(not summaryQueued and summaryWhy == "relay unauthorized"
+        and not fullQueued and fullWhy == "relay unauthorized"
+        and not Sync.BroadcastDelete(build)
+        and NexusDB.syncTombstones[build.id] == nil,
+        "EXPECTED RED: pre-adoption or malformed Saved evidence crossed Sync: "
+            .. build.id)
+end
+
+local verifiedLocalSaved = {
+    id="verified-local-saved",title="Verified Local Saved",author="Twin",
+    ownerKey="twin@realma",ownerVerified=true,realm="realma",isMine=true,
+    importedSavedBuild=true,class="MAGE",lastModified=48,
+    echoes={{spellId=200312,quality=3,stacks=1}},
+}
+local explicitFalseOrdinary = {
+    id="explicit-false-sync",title="Explicit False Sync",author="Twin",
+    ownerKey="twin@realma",ownerVerified=true,realm="realma",isMine=true,
+    importedSavedBuild=false,class="MAGE",lastModified=49,
+    echoes={{spellId=200313,quality=3,stacks=1}},
+}
+assert(Identity.LocalOwnsBuild(verifiedLocalSaved, "twin@realma")
+    and Sync.BroadcastBuildSummary(verifiedLocalSaved)
+    and Sync.BroadcastBuild(verifiedLocalSaved),
+    "exact verified local Saved mirror lost legitimate Sync behavior")
+assert(Identity.SavedMirrorKind(explicitFalseOrdinary) == "ordinary"
+    and Identity.LocalOwnsRecord(explicitFalseOrdinary, "twin@realma")
+    and Sync.BroadcastBuildSummary(explicitFalseOrdinary)
+    and Sync.BroadcastBuild(explicitFalseOrdinary),
+    "explicit false ordinary build lost compatible Sync behavior")
+local dedupeAuthority = {
+    id="dedupe-authority",title="Dedupe Authority",author="Twin",
+    ownerKey="twin@realma",ownerVerified=true,realm="realma",isMine=true,
+    class="MAGE",lastModified=50,
+    echoes={{spellId=200314,quality=3,stacks=1}},
+}
+assert(Sync.BroadcastBuild(dedupeAuthority),
+    "dedupe authority positive control did not enter the queue")
+local dedupeSaved = {}
+for key, value in pairs(preAdoptionSaved) do dedupeSaved[key] = value end
+dedupeSaved.id = dedupeAuthority.id
+local dedupeQueued, dedupeWhy = Sync.BroadcastBuild(dedupeSaved)
+assert(not dedupeQueued and dedupeWhy == "relay unauthorized",
+    "dedupe suppression bypassed Saved authority admission")
+
+local retainedBuilds, retainedTombstones =
+    NexusDB.communityBuilds, NexusDB.syncTombstones
+NexusDB.communityBuilds = {}
+for _, build in ipairs(deniedSaved) do
+    NexusDB.communityBuilds[build.id] = build
+end
+NexusDB.syncTombstones = {}
+Sync.Init(Codec, {})
+H.sentChatMessages = {}
+assert(Sync.BroadcastMine() == 0,
+    "EXPECTED RED: BroadcastMine advertised pre-adoption Saved evidence")
+for index, build in ipairs(deniedSaved) do
+    assert(Sync.HandleIncoming(table.concat({"WLLQ","Requester-RealmQ",
+            build.id,"c1-saved-private-" .. index}, "|"),
+            "Requester-RealmQ"),
+        "Saved authority-denial request was not handled deterministically: "
+            .. build.id)
+end
+for _ = 1, 600 do Sync.OnUpdate(0.2) end
+for _, message in ipairs(H.sentChatMessages) do
+    for _, build in ipairs(deniedSaved) do
+        assert(not tostring(message.text):find("|" .. build.id .. "|", 1, true),
+            "EXPECTED RED: peer request disclosed denied Saved evidence: "
+                .. build.id)
+    end
+end
+NexusDB.communityBuilds = {
+    [verifiedLocalSaved.id]=verifiedLocalSaved,
+    [explicitFalseOrdinary.id]=explicitFalseOrdinary,
+}
+NexusDB.syncTombstones = {}
+Sync.Init(Codec, {})
+H.sentChatMessages = {}
+assert(Sync.BroadcastMine() == 2,
+    "verified Saved or explicit-false ordinary build left BroadcastMine")
+for index, build in ipairs({verifiedLocalSaved, explicitFalseOrdinary}) do
+    assert(Sync.HandleIncoming(table.concat({"WLLQ","Requester-RealmQ",
+            build.id,"c1-saved-positive-" .. index}, "|"),
+            "Requester-RealmQ"),
+        "authorized exact loadout request was rejected: " .. build.id)
+end
+for _ = 1, 600 do Sync.OnUpdate(0.2) end
+for _, build in ipairs({verifiedLocalSaved, explicitFalseOrdinary}) do
+    local disclosed = false
+    for _, message in ipairs(H.sentChatMessages) do
+        if tostring(message.text):find("|" .. build.id .. "|", 1, true) then
+            disclosed = true
+        end
+    end
+    assert(disclosed,
+        "authorized exact loadout was not available to Sync: " .. build.id)
+end
+assert(Sync.BroadcastDelete(verifiedLocalSaved)
+    and NexusDB.syncTombstones[verifiedLocalSaved.id]
+    and NexusDB.syncTombstones[verifiedLocalSaved.id].ownerKey
+        == "twin@realma",
+    "verified exact local Saved mirror lost owner-authorized deletion")
+NexusDB.communityBuilds, NexusDB.syncTombstones =
+    retainedBuilds, retainedTombstones
+Sync.Init(Codec, {})
+
 NexusDB.dpsCapture = {}
 Sync.Init(Codec, {})
 DPS.Init({}, Sync)
