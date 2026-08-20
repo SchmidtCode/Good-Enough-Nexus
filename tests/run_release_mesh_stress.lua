@@ -12,14 +12,23 @@ for i=1,100 do
  local id="stress-"..i
  NexusDB.communityBuilds[id]={id=id,title="Loadout "..i,author="Player"..i,class="MAGE",echoes=echoes,lastModified=i,postedAt=i,isMine=false}
  local fp=DPS.GetEchoKey(echoes)
- assert(DPS.ReceiveRecord({v=6,f=fp,e=echoes,c="dummy",d=1000000+i*10000,u=65,t=i,p="Player"..i,k="MAGE",l=80,b=id}))
+ local player="Player"..i
+ assert(DPS.ReceiveRecord({
+  v=6,f=fp,e=echoes,c="dummy",d=1000000+i*10000,u=65,t=i,
+  p=player,o=player:lower().."@ebonhold",r="ebonhold",
+  k="MAGE",l=80,b=id,
+ }, player.."-Ebonhold"))
 end
 local rows=DPS.GetDpsBoard("dummy")
 assert(#rows==100,"100 distinct characters should produce 100 rows")
 -- Same character, stronger different exact loadout: still 100 rows.
 local better={{spellId=400050,stacks=2},{spellId=410050,stacks=1}}
 NexusDB.communityBuilds["stress-50b"]={id="stress-50b",title="Winner 50",author="Player50",class="MAGE",echoes=better,lastModified=200,postedAt=200,isMine=false}
-assert(DPS.ReceiveRecord({v=6,f=DPS.GetEchoKey(better),e=better,c="dummy",d=9000000,u=65,t=200,p="Player50",k="MAGE",l=80,b="stress-50b"}))
+assert(DPS.ReceiveRecord({
+ v=6,f=DPS.GetEchoKey(better),e=better,c="dummy",d=9000000,u=65,
+ t=200,p="Player50",o="player50@ebonhold",r="ebonhold",
+ k="MAGE",l=80,b="stress-50b",
+}, "Player50-Ebonhold"))
 rows=DPS.GetDpsBoard("dummy")
 assert(#rows==100,"new winning loadout for one character must replace, not append")
 local found=false; for _,r in ipairs(rows) do if r.player=="Player50" then found=r.buildId=="stress-50b" and r.dps==9000000 end end
