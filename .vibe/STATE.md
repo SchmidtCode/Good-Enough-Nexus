@@ -6,33 +6,33 @@
 
 ## Current focus
 
-- Stage: 45
-- Checkpoint: 45.1
+- Stage: 46
+- Checkpoint: 46.1
 - Status: DONE
-- Branch: `infra/viberun-quality-gate`
-- Candidate head: reviewed repair commit `3432fd6122e3ac527d06e7e963cf09084b7e6cb4`; terminal receipt candidate is branch `HEAD` after this closure commit
-- Worktree: `.infra-viberun-quality-gate-worktree`
-- Base: `origin/refactor/nexus-1.20-test17` at `d0681b6a885db447c94a75f40df7e81f60b74c55`
+- Branch: `bugfix/test19-wp1-issue39`
+- Candidate head: branch `HEAD` after the authorized single local commit; frozen implementation was validated against starting exact head `3965b107574d4a394e0672cb130eab7e4694e7b5`
+- Worktree: `.wp1-issue39-worktree`
+- Base: `origin/refactor/nexus-1.20-test17` at `3965b107574d4a394e0672cb130eab7e4694e7b5`
 
 ## Objective (current checkpoint)
 
-Close the remaining PSScriptAnalyzer download-URI validation gap through the shared pre-use manifest policy and re-establish truthful exact-head CI.
+Prevent locked-baseline migration from applying one current character's locks to unrelated historical DPS rows, and recover only rows with exact record-specific pre-migration proof.
 
 ## Deliverables (current checkpoint)
 
-- One shared strict download-URI validator used by all manifest-controlled security downloads.
-- Expected-red and focused-green PSScriptAnalyzer/tool-asset URI fixtures without network access.
-- Focused local security/Fast/static validation and exact-base infrastructure-only scope proof.
-- Normal publication, replacement per-job exact-head CI audit, reconciled PR/issue evidence, and terminal stop.
+- Focused `tests/run_locked_migration_authority.lua` coverage for prevention, exact recovery, login order, restart, future-schema, and no-churn behavior.
+- `tests/run_migration_owned_lifecycle.lua` retained for authoritative wait, immutable interruption source, retry, and idempotence without current-character guessing.
+- One fail-closed `core/DpsCapture.lua` migration owner that uses only exact row-specific locked evidence and directly related immutable pre-state evidence.
+- Focused mapped DPS tests plus Lua 5.1 parse, Fast, required Full, diff/scope review, and one local commit.
 
 ## Acceptance (current checkpoint)
 
-- [x] Expected-red proves the exact missing PSScriptAnalyzer URI-validation contract.
-- [x] One shared validator rejects unsafe URI/path/control-character variants and preserves valid HTTPS metadata.
-- [x] Focused security regressions, Fast, Security, PSScriptAnalyzer, Gitleaks, diff, and scope checks pass.
-- [x] Every replacement Quality/Release source job proves `HEAD` equals reviewed repair head `3432fd6`, with zero successful artifacts; the terminal Vibe receipt commit requires its own replacement pair.
-- [x] PR #13, issue #12 comment `5310228999`, and append-only Vibe evidence describe the URI repair and reviewed-repair exact-head runs; external metadata will be refreshed after terminal-head CI without another repo commit.
-- [x] Committed terminal status is `DONE`, `RUN_STOPPED=true`, dispatcher `stop`; the unavoidable receipt-only post-CI commit requires a second exact-head Quality/Release pair before final completion.
+- [x] Expected red proves a remote row loses a locally locked ordinary Echo under the old lifecycle.
+- [x] Pre-v1 and interrupted migration change only rows carrying exact row-specific historical locked evidence; every ambiguous row and unknown field is preserved.
+- [x] Completed-v1 recovery changes only rows whose directly referenced immutable pre-state and row-specific baseline exactly prove the old transform; ambiguous rows and orphan evidence remain untouched.
+- [x] Login order, restart/retry/idempotence, future-schema/read-only, no-lock, and Sync fingerprint stability regressions pass.
+- [x] Mapped DPS tests, related board/evidence/migration tests, Lua 5.1 parse, Fast, required Full, and `git diff --check` pass on exact implementation bytes.
+- [x] Reviewed WP1 paths are staged explicitly into one clean local commit; no GitHub, package, install, Test18, live addon, or SavedVariables mutation occurs.
 
 ## Evidence
 
@@ -54,6 +54,9 @@ Close the remaining PSScriptAnalyzer download-URI validation gap through the sha
 
 ## Work log
 
+- Stage 46.1 checkpoint hygiene CLEAN: bounded review found one direct-reference resolver, one exact subtraction helper, one transform path per store shape, and no safe duplication removal, speculative abstraction, correctness issue, security issue, or actionable deferred debt; product/test bytes remain frozen.
+- Stage 46.1 review PASS: exact row authority prevents global current-login subtraction, bounded completed-v1 recovery requires direct pre-state plus exact row baseline, Fast passed `19/19`, Full passed `18` with the complete `209/209` Lua suite and one explicit manual SavedVariables skip, and no correctness/security or hygiene signal remains.
+- New human direction resumed the completed Stage 45 terminal state, reconciled PR #10 at exact head `3965b107` and issue #39, preserved every existing worktree, and selected isolated Stage 46.1 for Test19 WP1 only.
 - Checkpoint 45.1 implementation replaced the inline tool-asset URI check with one strict shared resolver used by both tool assets and PSScriptAnalyzer, added network-free hostile/safe fixtures, and passed focused/Fast/Security/static validation without workflow or protected-runtime changes.
 - Checkpoint 45.1 adversarial review passed at exact repair commit `3432fd6`: focused demos, Fast, Security, pre-use/no-mutation ownership, exact-base scope, seven source-job SHA logs, and empty artifact inventories are green; no correctness, security, or checkpoint-hygiene signal remains.
 - Checkpoint 45.1 bounded hygiene found one shared URI owner, direct owner-count coverage, no compatibility branch, no duplicate validation path, and no actionable debt; implementation bytes remain unchanged.
@@ -103,6 +106,9 @@ Close the remaining PSScriptAnalyzer download-URI validation gap through the sha
 
 ## Decisions
 
+- Historical subtraction requires the exact row's own locked evidence; current login, present ownership, names, categories, fingerprints, hashes, and orphan pool entries are not authority.
+- An interrupted migration restores `lockedMigrationSource` before applying the replacement policy; a completed-v1 row is recoverable only from a direct self-verifying pre-state, exact row baseline, and current inline identity that together prove its present subset is inconsistent.
+- Preserve ambiguous evidence in place, preserve future-schema/read-only storage, avoid a new durable audit schema, and do not broaden Stage 46 beyond WP1/#39.
 - Reuse one shared strict download-URI validator for ordinary tool assets and PSScriptAnalyzer; do not add a second validation path.
 - Keep Stage 45 to checkpoint 45.1; because CI evidence must be committed into terminal Vibe truth, use the authorized two-cycle flow and require replacement Quality and Release on the receipt-only final head.
 - Treat runs `31959113599` and `31959113603` as green synthetic-merge runs, not exact-head evidence; preserve them only as corrected historical receipts.
@@ -117,4 +123,4 @@ Close the remaining PSScriptAnalyzer download-URI validation gap through the sha
 
 ## Recommended next action
 
-- Commit and normally push the terminal receipt only, then require replacement exact-head Quality and Release before the final PR/issue refresh and independent merge-readiness handoff.
+- Independently review the local WP1 commit and, if accepted, publish it for PR #10 review; do not advance to WP2.

@@ -114,3 +114,35 @@ depends_on: [43.1]
   - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Security -BaseRef d0681b6a885db447c94a75f40df7e81f60b74c55`
 - Evidence:
   - Expected-red/green URI matrix, compact local gate summaries, and exact-head GitHub/Vibe receipts.
+
+## Stage 46 — Test19 WP1 locked-migration authority
+
+- Goal: prevent issue #39 corruption and permit only deterministic record-specific recovery while preserving ambiguous historical evidence.
+- Decision: use the row's own exact locked evidence for pre-v1 correction; never use the current login baseline as historical authority.
+- Decision: restore an interrupted immutable source first; for completed v1, require a direct self-verifying pre-state, exact row-locked evidence, and a current inline identity that is a strict inconsistent subset before recovering only that row.
+- Decision: orphan evidence, similarity, current identity, and present ownership never authorize reconstruction; future-owned storage remains read-only.
+
+### 46.1 — Fail closed and recover only exact historical rows
+
+- Status: `DONE`
+- Objective:
+  - Make locked-baseline migration preserve every historical DPS row unless exact record-specific evidence authorizes correction or deterministic completed-v1 recovery.
+- Deliverables:
+  - New `tests/run_locked_migration_authority.lua` matrix covering remote/local/build rows, proven and ambiguous authority, completed-v1 recovery, orphan evidence, login order, future fields, and no Sync churn.
+  - Rewritten lifecycle expectations in `tests/run_migration_owned_lifecycle.lua` preserving authoritative wait, immutable source restore, retry, and idempotence.
+  - Minimal `core/DpsCapture.lua` row-authority and exact-pre-state recovery logic with no transport, identity, qualification, Wishlist, Orb, or UI redesign.
+  - Concise `.vibe/EVIDENCE.md` receipts and one explicitly staged local commit.
+- Acceptance:
+  - [x] The new runner fails on exact starting head because a local lock removes an ordinary Echo from a verified remote row, then passes after repair.
+  - [x] Remote, global build, other-account-character, exact-owner-but-unknown-history, completed-v1 ambiguous, orphan-evidence, and no-lock rows remain byte-for-byte stable.
+  - [x] Exact row-locked evidence authorizes only its row; interrupted source restoration and completed-v1 direct-pre-state recovery are deterministic, bounded, and idempotent.
+  - [x] DPS/category/duration/owner/future fields remain unchanged; fingerprints/hashes change only for authorized repair and never fabricate unrelated Sync churn.
+  - [x] Lua 5.1 parse, mapped DPS/Sync tests, related board/evidence/migration tests, Fast, required Full, and `git diff --check` pass on exact implementation bytes.
+  - [x] Final status contains one local WP1 commit and no remote, package, install, Test18, live addon, or SavedVariables change.
+- Demo commands:
+  - `luajit tests/run_locked_migration_authority.lua && luajit tests/run_migration_owned_lifecycle.lua`
+  - `pwsh -NoProfile -File tools/Get-ChangedTestPlan.ps1 -BaseRef 3965b107574d4a394e0672cb130eab7e4694e7b5`
+  - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Fast -BaseRef 3965b107574d4a394e0672cb130eab7e4694e7b5`
+  - `pwsh -NoProfile -File tools/Invoke-QualityGate.ps1 -Mode Full -BaseRef 3965b107574d4a394e0672cb130eab7e4694e7b5`
+- Evidence:
+  - Expected-red/focused-green authority matrix, compact Fast/Full summaries, and final exact-scope/commit receipt.

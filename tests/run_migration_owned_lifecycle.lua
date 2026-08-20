@@ -10,6 +10,7 @@ local sourceRow = {
     dps=25000000, duration=65, ts=50000, player="Boganic", level=80,
     class="MAGE", fingerprint=oldKey,
     echoes={{spellId=200100,count=2},{spellId=200200,count=1}},
+    lockedEchoes={{spellId=200100,count=1}},
 }
 local function FreshDpsDb()
     return {
@@ -18,6 +19,7 @@ local function FreshDpsDb()
             player=sourceRow.player, level=sourceRow.level, class=sourceRow.class,
             fingerprint=sourceRow.fingerprint,
             echoes={{spellId=200100,count=2},{spellId=200200,count=1}},
+            lockedEchoes={{spellId=200100,count=1}},
         }}},
         buildBest={},
         characterBest={dummy={},lk={}},
@@ -28,7 +30,9 @@ NexusDB={communityBuilds={},dpsCapture=FreshDpsDb()}
 local lockedReady = false
 local adapter = {
     LockedOwned=function()
-        return {synced=lockedReady,bySpell=lockedReady and {[200100]=1} or {}}
+        -- Readiness still gates the pass, but this current-login set is not
+        -- historical authority for sourceRow. Its own lockedEchoes are.
+        return {synced=lockedReady,bySpell=lockedReady and {[299999]=1} or {}}
     end,
     Owned=function() return {synced=true,bySpell={},byFamily={}} end,
 }
@@ -59,6 +63,7 @@ interrupted.personalBest={ [newKey]={dummy={
     dps=sourceRow.dps,duration=65,ts=50000,player="Boganic",level=80,
     class="MAGE",fingerprint=newKey,
     echoes={{spellId=200100,count=1},{spellId=200200,count=1}},
+    lockedEchoes={{spellId=200100,count=1}},
 }}}
 interrupted.lockedMigrationSource={
     personalBest=original.personalBest,
