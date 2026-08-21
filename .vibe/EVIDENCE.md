@@ -402,3 +402,9 @@ Record concise command/result receipts here. A skipped or unavailable command is
 
 - Bounded inspection of Store, LegacyDataMigration, contracts, and focused fixtures found no correctness/security defect, stale debug/TODO artifact, redundant authority branch, or safe high-value quick win. The small duplicated name/realm coherence shape is tested and deliberately left local rather than broadening the shared Identity interface after final Full.
 - No product/test/contract/workflow byte changed. Artifact policy checked all `368` tracked paths with zero violations; exact-base range and working-tree diff checks pass. No debt item was added.
+
+# 2026-08-20 — Checkpoint 47.5 implementation
+
+- Expected-red: `node tools/run-lua.js tests/run_public_identity_presentation.lua` failed twice before implementation at the verified RealmA/RealmB label assertion. The final runner covers same exact owner/better historical evidence, different verified realms, a stronger ambiguous Sync record retained but shadowed, an identical exact bridge, reload, Dummy, LK, Combined, and Community label/count behavior.
+- Focused and mapped checks pass across the new runner, DPS boards, Leaderboard UI, canonical owner authority, View/Community projections, renderer, completeness, class hydration/presentation, virtualization, refresh/show/work budgets, and Community owner/eligibility. The renderer's malformed-author failure/recovery control caught and closed one initial sanitization regression.
+- Exact-base Fast passed `39/39` with zero failed, unavailable, or skipped checks. The complete normal Lua inventory passed `215/215`; Lua 5.1 parse passed `288/288`; integration passed `70/70`; module inventory remains `modules=11 surfaces=208 assignedMembers=14 callbackSites=162 groups=17 unmapped=0`; package metadata and workflow policy pass. Final cumulative independent review and the checkpoint's one frozen Full remain pending.

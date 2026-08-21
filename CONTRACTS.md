@@ -165,6 +165,20 @@ duplicate=-5, filler=-15, rerollCost=8, rerollHoldThreshold=25), `defaultSetting
 anchorSpellId=nil, leverOptOut={}), `defaultFlags` (DISABLE_SUPPRESSES_GUARANTEE=true
 -- user-confirmed 2026-07-23, runtime-demotable; REROLL_HOLDS_GUARANTEED=nil).
 
+## core/Identity.lua — canonical authority and public presentation identity
+
+`Identity.PublicRecordKey(record, field)` and
+`Identity.PresentPublicRecords(rows, field, options)` are presentation-only
+consumers of the established `VerifiedOwnerKey` authority. Verified identities
+are keyed and labeled by exact canonical `name@realm`; ambiguous records retain
+their full realm/claim/relay evidence tuple and never gain authority through
+short-name similarity. A public character batch may shadow an ambiguous
+same-short-name row when a verified representative is visible, but it does not
+mutate or delete the durable source. Community build batches retain distinct
+build records while applying realm-qualified verified author labels and explicit
+collision-safe `legacy/unverified` labels. This policy does not call or broaden
+`SamePlayer()` and owns no score, loadout, persistence, transport, or paging rule.
+
 ## core/Store.lua — `Nexus.Store` (SavedVariables: `NexusDB`)
 
 `Store.Init()` owns a two-phase legacy-name decision before its existing

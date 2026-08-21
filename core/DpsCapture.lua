@@ -2420,7 +2420,7 @@ function DPS.DpsBoardCursorNext(cursor)
     if key == nil then cursor.done = true; return true end
     local entry = DpsBoardEntry(row, cursor.category, true)
     if entry then
-        local player = CharacterKey(entry.player, entry.ownerKey, entry.realm)
+        local player = Identity.PublicRecordKey(entry, "player")
         local existing = cursor.seen[player]
         if not existing then
             cursor.rows[#cursor.rows + 1] = entry
@@ -2434,7 +2434,9 @@ end
 
 function DPS.DpsBoardCursorResult(cursor)
     if type(cursor) ~= "table" or not cursor.done then return nil end
-    return cursor.rows
+    return Identity.PresentPublicRecords(cursor.rows, "player", {
+        shadowAmbiguous=true,
+    })
 end
 
 -- Public board: one row per character for the selected encounter. The row is
@@ -2453,7 +2455,7 @@ function DPS.GetDpsBoard(category)
     for _, row in pairs(CharacterBestStore()[category] or {}) do
         local entry = DpsBoardEntry(row, category)
         if entry then
-            local pkey = CharacterKey(entry.player, entry.ownerKey, entry.realm)
+            local pkey = Identity.PublicRecordKey(entry, "player")
             local existing = seenPlayer[pkey]
             if not existing then
                 out[#out + 1] = entry
@@ -2463,6 +2465,7 @@ function DPS.GetDpsBoard(category)
             end
         end
     end
+    out = Identity.PresentPublicRecords(out, "player", {shadowAmbiguous=true})
     table.sort(out, function(a, b)
         if a.dps ~= b.dps then return a.dps > b.dps end
         if a.ts ~= b.ts then return a.ts < b.ts end

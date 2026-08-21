@@ -300,7 +300,7 @@ local function Rows()
             and row.resolvedClass:upper() or nil
         local classOk = classFilter == "ALL" or class == classFilter
         local searchOk = query == ""
-            or tostring(row.player or ""):lower():find(query,1,true)
+            or tostring(row.displayPlayer or row.player or ""):lower():find(query,1,true)
             or tostring(build.title or ""):lower():find(query,1,true)
             or tostring(build.author or ""):lower():find(query,1,true)
         if classOk and searchOk then out[#out+1] = row end
@@ -699,7 +699,7 @@ local function RenderDetail(row)
     detail.empty:Hide()
     for _,x in ipairs({detail.title,detail.owner,detail.record,detail.desc,detail.echoTitle,detail.more,detail.copy,detail.open}) do x:Show() end
     local b=row.build or {}; local class=type(row.resolvedClass)=="string" and row.resolvedClass:upper() or nil; local c=CLASS_COLOR[class] or {0.8,0.8,0.8}
-    detail.title:SetText(b.title or "Record Loadout"); detail.title:SetTextColor(c[1],c[2],c[3]); detail.owner:SetText("by "..tostring(b.author or row.player or "?")..(class and "" or " - Class unavailable"))
+    detail.title:SetText(b.title or "Record Loadout"); detail.title:SetTextColor(c[1],c[2],c[3]); detail.owner:SetText("by "..tostring(row.displayPlayer or b.displayAuthor or b.author or row.player or "?")..(class and "" or " - Class unavailable"))
     if row.category=="combined" then
         detail.record:SetText("|cff4dff80Average "..DpsText(row.average).." DPS|r\nDummy "..DpsText(row.dummyDps).."  •  Lich King "..DpsText(row.lkDps))
     else
@@ -767,7 +767,7 @@ local function BindRows(reason)
             r.classUnavailable=class==nil
             r.classLabel=class and (CLASS_LABEL[class] or class)
                 or "Class unavailable"
-            r.player:SetText(tostring(row.player or "?"))
+            r.player:SetText(tostring(row.displayPlayer or row.player or "?"))
             r.player:SetTextColor(c[1],c[2],c[3])
             r.build:SetText(tostring((row.build or {}).title or "Record Loadout")
                 ..(class and "" or " - Class unavailable"))

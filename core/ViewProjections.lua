@@ -409,6 +409,7 @@ local function BuildProjection(filters)
             summary.pending = summary.pending + 1
         end
     end
+    out = Identity.PresentPublicRecords(out, "author")
     counters.builds.sorts = counters.builds.sorts + 1
     table.sort(out, function(left, right)
         if filters.sortMode == "recent" then
@@ -539,7 +540,10 @@ local function CombinedRows()
                 lrow.resolvedFingerprintRevision)
             local ownerKey = Identity.VerifiedOwnerKey(lrow)
             out[#out + 1] = {
-                player=lrow.player, dps=average, average=average,
+                player=lrow.player,displayPlayer=lrow.displayPlayer,
+                publicIdentityKey=lrow.publicIdentityKey,
+                publicIdentityVerified=lrow.publicIdentityVerified,
+                dps=average, average=average,
                 dummyDps=drow.dps, lkDps=lrow.dps,
                 dummyDuration=drow.duration, lkDuration=lrow.duration,
                 level=math.max(tonumber(drow.level) or 0,
@@ -750,6 +754,7 @@ local function PumpBuildJob(job, unit)
             sourceRows = sourceRows + 1
             if err then return nil, err end
             if done then
+                job.rows = Identity.PresentPublicRecords(job.rows, "author")
                 job.summary.filtered = #job.rows
                 job.summary.qualifyingCount = job.summary.qualifying
                 job.summary.resultCount = #job.rows
@@ -889,7 +894,10 @@ local function CombinedRow(drow, lrow)
     local classConflict = dummyClass and lkClass and dummyClass ~= lkClass
     local ownerKey = Identity.VerifiedOwnerKey(lrow)
     return {
-        player=lrow.player,dps=average,average=average,
+        player=lrow.player,displayPlayer=lrow.displayPlayer,
+        publicIdentityKey=lrow.publicIdentityKey,
+        publicIdentityVerified=lrow.publicIdentityVerified,
+        dps=average,average=average,
         dummyDps=drow.dps,lkDps=lrow.dps,
         dummyDuration=drow.duration,lkDuration=lrow.duration,
         level=math.max(tonumber(drow.level) or 0,tonumber(lrow.level) or 0),

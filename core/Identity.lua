@@ -266,6 +266,95 @@ function Identity.VerifiedOwnerKey(record)
     return Identity.CoherentRecordOwnerKey(record)
 end
 
+local function PublicTyped(value)
+    local kind, text = type(value), tostring(value == nil and "" or value)
+    return kind .. ":" .. tostring(#text) .. ":" .. text
+end
+
+local function PublicBaseName(record, field)
+    local raw = type(record) == "table" and record[field] or nil
+    local display = Identity.DisplayPlayer(raw)
+    return display or (type(raw) == "string" and raw ~= "" and raw) or "?"
+end
+
+local function PublicPlayerKey(record, field)
+    return Identity.PlayerKey(type(record) == "table" and record[field] or nil)
+end
+
+-- Stable public identity for presentation snapshots. Unlike SamePlayer(), this
+-- never grants authority: verified owners are exact name@realm identities and
+-- all other rows retain their complete ambiguity/provenance tuple.
+function Identity.PublicRecordKey(record, field)
+    if type(record) ~= "table" then return "invalid" end
+    local verified = Identity.VerifiedOwnerKey(record)
+    if verified then return "verified:" .. verified end
+    return table.concat({"legacy",PublicTyped(PublicPlayerKey(record, field)),
+        PublicTyped(record.realm),PublicTyped(record.ownerKey),
+        PublicTyped(record.claimedOwnerKey),PublicTyped(record.relaySender)}, "|")
+end
+
+local function VerifiedPublicLabel(record, field, ownerKey)
+    local realm = ownerKey and ownerKey:match("@(.+)$") or nil
+    return PublicBaseName(record, field) .. "-" .. tostring(realm or "unknown")
+end
+
+local function AmbiguousPublicLabel(record, field, ordinal, repeated)
+    local base = PublicBaseName(record, field)
+    local realm = type(record.realm) == "string"
+        and record.realm ~= "" and record.realm:lower() ~= "unknown"
+        and record.realm or nil
+    if realm then base = base .. "-" .. realm end
+    local suffix = "legacy/unverified"
+    if repeated then
+        local discriminator = record.id or record.buildId or ordinal
+        suffix = suffix .. " " .. tostring(discriminator)
+    end
+    return base .. " (" .. suffix .. ")"
+end
+
+-- Apply one shared public presentation policy to an owned batch of snapshots.
+-- Ambiguous evidence is only shadowed from ordinary public rows when an exact
+-- verified owner with the same short name is already visible; the durable
+-- source remains untouched. Distinct builds can opt out of shadowing while
+-- still receiving collision-safe author labels.
+function Identity.PresentPublicRecords(rows, field, options)
+    rows = type(rows) == "table" and rows or {}
+    options = type(options) == "table" and options or {}
+    local verifiedNames, ambiguousCounts = {}, {}
+    for _, record in ipairs(rows) do
+        local name = PublicPlayerKey(record, field)
+        if name then
+            if Identity.VerifiedOwnerKey(record) then verifiedNames[name] = true
+            else ambiguousCounts[name] = (ambiguousCounts[name] or 0) + 1 end
+        end
+    end
+
+    local out, shadowed = {}, 0
+    for ordinal, record in ipairs(rows) do
+        local name = PublicPlayerKey(record, field)
+        local ownerKey = Identity.VerifiedOwnerKey(record)
+        local ambiguous = ownerKey == nil
+        local hidden = options.shadowAmbiguous == true and ambiguous
+            and name ~= nil and verifiedNames[name] == true
+        if hidden then
+            shadowed = shadowed + 1
+        else
+            record.publicIdentityKey = Identity.PublicRecordKey(record, field)
+            record.publicIdentityVerified = ownerKey ~= nil
+            if name ~= nil then
+                local label = ownerKey
+                    and VerifiedPublicLabel(record, field, ownerKey)
+                    or AmbiguousPublicLabel(record, field, ordinal,
+                        (ambiguousCounts[name] or 0) > 1)
+                if field == "author" then record.displayAuthor = label
+                else record.displayPlayer = label end
+            end
+            out[#out + 1] = record
+        end
+    end
+    return out, {shadowed=shadowed,visible=#out}
+end
+
 -- Keep Saved-mirror marker interpretation type-stable across mutation,
 -- projection, relation, and renderer boundaries. Explicit false retains
 -- ordinary-build compatibility; any other non-boolean value is malformed.
