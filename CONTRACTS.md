@@ -185,10 +185,31 @@ scheduled Changelog likewise remains persistence-passive
 until `NexusDB` is a table. `Nexus.toc` continues declaring both SavedVariables
 names pending a separate compatibility decision.
 
-`Store.Settings()`,
-`Store.State()` (per-char keyed subtable: tomeTogglePending per lever w/ timestamps,
-priorAutoAccept, flagDemotions, recordedPicks for the current session). Char key from
-`UnitName("player")` guarded — if unavailable, defer (never latch "Unknown").
+`Store.Settings()`, `Store.State()`, `Store.CurrentOwnerKey()`,
+`Store.RegisterCurrentCharacter()`, `Store.IsAccountOwnerKey(ownerKey)`, and
+`Store.AccountCharacters()`. Durable mutable character state is keyed only by a
+canonical local `name@realm`. Until both name and realm are available, `State()`
+returns one session-only transient table and creates no durable short-name or
+`name@unknown` key; that transient table and preserved legacy short-key rows are
+never promoted into canonical state. Existing canonical state remains authoritative
+and is filled only for missing owned shape fields. Registration writes only a
+coherent exact current-character row, preserves contradictory and `@unknown`
+evidence, and stands down before allocating account storage when Store settings,
+legacy-migration metadata, or a downstream read-only owner is future/active.
+
+## core/LegacyDataMigration.lua — `Nexus.LegacyDataMigration`
+
+The ordered bounded converter stages account and DPS data before one atomic table
+swap. Canonical account map keys are authoritative only when their row evidence is
+coherent. An unresolved/short source may move to a canonical owner only through one
+explicit coherent `source.ownerKey` bridge, only when no canonical source row or
+competing bridge already owns that destination. Existing canonical fields always
+win; distinct ambiguous sources remain under deterministic collision-safe recovery
+keys with unknown nested fields deep-copied. The durable account-source snapshot is
+rechecked before commit, so replacement or nested mutation restarts staging instead
+of overwriting newer evidence. `AccountWritesAllowed(database)` is the Store
+registration guard and rejects active/incompatible migration metadata plus every
+settings schema newer than `Store.SettingsVersion()`.
 
 ## core/Errors.lua — `Nexus.Errors`
 

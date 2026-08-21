@@ -52,7 +52,7 @@ local canonicalA = {
     name="Twin",realm="realma",lastSeen=2,
     futureCanonical={keep=true},note="canonical-a",
 }
-NexusDB = {settingsVersion=5,settings={},chars={},accountCharacters={
+NexusDB = {settingsVersion=2,settings={},chars={},accountCharacters={
     ["twin@unknown"]=unknown,["twin@realma"]=canonicalA,
 }}
 Store.RegisterCurrentCharacter()
@@ -62,6 +62,20 @@ Check(NexusDB.accountCharacters["twin@unknown"] == unknown
 Check(NexusDB.accountCharacters["twin@realma"] == canonicalA
         and canonicalA.futureCanonical.keep,
     "registration replaced the existing canonical RealmA row")
+
+-- A canonical map slot containing contradictory identity is recovery evidence,
+-- not a writable current-character row.
+local contradictory = {
+    name="Twin-RealmB",realm="RealmB",ownerKey="twin@realmb",
+    lastSeen=3,futureContradiction={keep=true},
+}
+local contradictoryBefore = Copy(contradictory)
+NexusDB.accountCharacters["twin@realma"] = contradictory
+Store.RegisterCurrentCharacter()
+Check(NexusDB.accountCharacters["twin@realma"] == contradictory
+        and Equal(contradictory, contradictoryBefore),
+    "registration rewrote contradictory canonical-slot evidence")
+NexusDB.accountCharacters["twin@realma"] = canonicalA
 
 currentRealm = "RealmB"
 Store.RegisterCurrentCharacter()
@@ -84,6 +98,25 @@ currentName, currentRealm = "Future", "RealmA"
 Store.RegisterCurrentCharacter()
 Check(Equal(futureOwned, futureBefore),
     "registration mutated a future-owned migration/account database")
+
+for settingsVersion = 3, 5 do
+    local futureSettings = {
+        settingsVersion=settingsVersion,settings={future={keep=true}},chars={},
+        futureRoot={keep=true},
+    }
+    local before = Copy(futureSettings)
+    NexusDB = futureSettings
+    Store.RegisterCurrentCharacter()
+    Check(Equal(futureSettings, before),
+        "direct registration mutated future settings version "
+            .. tostring(settingsVersion))
+    Store.Init()
+    Check(futureSettings.accountCharacters == nil
+            and futureSettings.settings.future.keep
+            and futureSettings.futureRoot.keep,
+        "Store.Init allocated account ownership for future settings version "
+            .. tostring(settingsVersion))
+end
 currentName, currentRealm = "Twin", "RealmA"
 
 local function MigrationInput()
@@ -100,6 +133,18 @@ local function MigrationInput()
                 futureOrphan={keep=true}},
             ["bridged@unknown"]={name="Bridged",realm="unknown",lastSeen=40,
                 ownerKey="bridged@realma",futureBridge={keep=true}},
+            ["collision@realma"]={name="Collision",realm="realma",lastSeen=1,
+                note="canonical-collision",futureCanonical={keep=true}},
+            ["collision@unknown"]={name="Collision",realm="unknown",lastSeen=999,
+                ownerKey="collision@realma",note="legacy-collision",
+                futureBridge={keep=true}},
+            ["realmonly@unknown"]={name="RealmOnly",realm="RealmA",lastSeen=50,
+                futureRealmOnly={keep=true}},
+            ["contradictory@unknown"]={name="Contradictory-RealmB",
+                realm="RealmA",ownerKey="contradictory@realma",lastSeen=60,
+                futureContradiction={keep=true}},
+            [1]={name="NumericTwin",note="numeric-one",future={one=true}},
+            [2]={name="NumericTwin",note="numeric-two",future={two=true}},
         },
         dpsCapture={personalBest={},buildBest={},
             characterBest={dummy={},lk={}}},
@@ -156,6 +201,29 @@ local function CheckResult(database, label)
             and type(rows["bridged@realma"]) == "table"
             and rows["bridged@realma"].futureBridge.keep,
         label .. " migration did not consume the explicit exact owner bridge once")
+    Check(rows["collision@realma"].note == "canonical-collision"
+            and rows["collision@realma"].futureCanonical.keep
+            and type(rows["collision@unknown"]) == "table"
+            and rows["collision@unknown"].note == "legacy-collision"
+            and rows["collision@unknown"].futureBridge.keep,
+        label .. " exact bridge overwrote or erased an established canonical row")
+    Check(type(rows["realmonly@unknown"]) == "table"
+            and rows["realmonly@unknown"].futureRealmOnly.keep
+            and rows["realmonly@realma"] == nil,
+        label .. " realm metadata alone promoted unresolved identity")
+    Check(type(rows["contradictory@unknown"]) == "table"
+            and rows["contradictory@unknown"].futureContradiction.keep
+            and rows["contradictory@realma"] == nil,
+        label .. " contradictory name/realm evidence gained canonical authority")
+    local numericOne, numericTwo = false, false
+    for _, row in pairs(rows) do
+        numericOne = numericOne or (type(row) == "table"
+            and row.note == "numeric-one" and row.future.one == true)
+        numericTwo = numericTwo or (type(row) == "table"
+            and row.note == "numeric-two" and row.future.two == true)
+    end
+    Check(numericOne and numericTwo,
+        label .. " distinct ambiguous source keys collapsed into one row")
 end
 
 CheckResult(migratedA, "RealmA-first")
@@ -170,6 +238,28 @@ local replay = Nexus.LegacyDataMigration.Init(migratedA)
 Check(replay.complete == true and replay.pending ~= true
         and Codec.JSONEncode(migratedA) == encoded,
     "completed exact bridge or ambiguous preservation replayed after restart")
+
+-- A source edit after its account row is staged must restart from the changed
+-- source instead of committing a shallow, stale nested-table alias.
+local changedDuringStaging = MigrationInput()
+NexusDB = changedDuringStaging
+dofile("core/LegacyDataMigration.lua")
+local changedSummary = Nexus.LegacyDataMigration.Init(changedDuringStaging)
+Check(changedSummary.pending == true, "changed-source fixture did not stage")
+Nexus.LegacyDataMigration.Pump(1)
+changedDuringStaging.accountCharacters[1].future = {one="changed"}
+local changedPumps = 0
+while not Nexus.LegacyDataMigration.Pump(32) do
+    changedPumps = changedPumps + 1
+    assert(changedPumps < 100, "changed-source migration did not converge")
+end
+local changedPreserved = false
+for _, row in pairs(changedDuringStaging.accountCharacters) do
+    changedPreserved = changedPreserved or (type(row) == "table"
+        and row.note == "numeric-one" and row.future.one == "changed")
+end
+Check(changedPreserved,
+    "migration committed stale nested account data after a staged source edit")
 
 if #failures > 0 then
     error("EXPECTED RED conservative account identity:\n - "

@@ -8,7 +8,7 @@
 
 - Stage: 47
 - Checkpoint: 47.4
-- Status: IN_REVIEW
+- Status: IN_PROGRESS
 - Branch: `bugfix/test19-wp3-realm-persistence`
 - Starting head: exact reviewed WP2 receipt head `7c95911a7d8584d46a62f2aca20268affef4cfcf`; WP2 product/test/workflow head `1fe8e7f2c0461b92ab1543cbd0b29f31d888950a`
 - Worktree: `.test19-wp3-worktree`
@@ -58,6 +58,8 @@ Key mutable character state by canonical `name@realm` and make every registratio
 
 ## Work log
 
+- ISSUE-47.4-R1 resolved: exact account authority now requires a coherent canonical map key or one explicit non-conflicting `source.ownerKey` bridge; existing canonical rows and contradictory/unresolved evidence remain separate; deterministic recovery keys preserve distinct ambiguous sources; deep source snapshots restart on nested change; Store registration stands down for future settings and contradictory rows. The expanded public repair runner, `18/18` related runners, Lua parse `287/287`, workflow policy, and replacement Fast `22/22` pass; the repaired candidate is ready for a fresh committed review.
+- Checkpoint 47.4 frozen review FAIL at exact `37d4e5e`: the single Full gate failed the Lua suite at `209/214` because five existing public fixtures lacked canonical realm identity, while independent Spec/Standards/adversarial review found canonical-destination overwrite, inferred/contradictory bridge promotion, pre-migration registration mutation, future-owner guard gaps, ambiguous-key collisions, staged nested-table aliasing, and stale Store/migration contract documentation. The checkpoint returned to implementation; ISSUE-47.4-R1 owns one bounded repair and replacement validation.
 - Checkpoint 47.4 implementation is ready for review. `Store.State()` now uses only proven canonical `name@realm` persistence and retains realm-unavailable state in the session-only table; registration preserves same-name `@unknown` rows and stands down for active/future-owned migration state; staged account normalization no longer consults login identity, retains ambiguous rows under non-authoritative keys, and consumes only coherent exact bridges. Focused state/registration/login-order/restart/future-schema coverage and exact-base Fast `19/19` pass; Full remains reserved for frozen review.
 - Manual dispatcher advance moved completed WP2 checkpoint 47.3 to executable WP3 checkpoint 47.4 on isolated branch `bugfix/test19-wp3-realm-persistence` at exact fixed base `7c95911a7d8584d46a62f2aca20268affef4cfcf`; the new user WP3 authorization supersedes the earlier terminal WP2 stop without modifying the frozen WP2 worktree or PR #53.
 - Terminal WP2 stop is active: installed Vibe status reports Stage 47 / checkpoint 47.3 `DONE`, `stopped: true`, dispatcher `stop`, no prompt, and no active loop. Only final `.vibe/` receipts changed after the reviewed product/test/workflow head and Full gate.

@@ -249,13 +249,15 @@ function Store.Init()
     if Nexus.BuildCatalog and Nexus.BuildCatalog.Init then
         catalogSummary = Nexus.BuildCatalog.Init(db, Nexus.BundledBuilds)
     end
-    if not (catalogSummary and catalogSummary.readOnly) then
+    if not futureSettingsOwner
+        and not (catalogSummary and catalogSummary.readOnly) then
         db.accountCharacters = type(db.accountCharacters) == "table"
             and db.accountCharacters or {}
         Store.RegisterCurrentCharacter()
     end
     local migrationSummary
     if Nexus.LegacyDataMigration and Nexus.LegacyDataMigration.Init
+        and not futureSettingsOwner
         and not (catalogSummary and catalogSummary.readOnly) then
         migrationSummary = Nexus.LegacyDataMigration.Init(db)
     end
@@ -299,10 +301,36 @@ function Store.CurrentOwnerKey()
     return CurrentIdentity()
 end
 
+local function AccountRowMatchesCurrent(row, ownerKey, name)
+    if row == nil then return true end
+    if type(row) ~= "table" then return false end
+    if row.ownerKey ~= nil
+        and Identity.CanonicalOwnerKey(row.ownerKey) ~= ownerKey then return false end
+    if row.name ~= nil then
+        if type(row.name) ~= "string"
+            or not Identity.OwnerKeyMatchesAuthor(ownerKey, row.name) then
+            return false
+        end
+        if row.name:find("-", 1, true)
+            and Identity.CanonicalOwnerFromTransport(row.name) ~= ownerKey then
+            return false
+        end
+    end
+    if row.realm ~= nil then
+        if type(row.realm) ~= "string" then return false end
+        local rowRealm = row.realm:lower()
+        if rowRealm ~= "" and rowRealm ~= "unknown"
+            and Identity.CanonicalOwnerKey(Identity.OwnerKey(name, row.realm))
+                ~= ownerKey then return false end
+    end
+    return true
+end
+
 function Store.RegisterCurrentCharacter()
     local ownerKey, name, realm = CurrentIdentity()
     local database = NexusDB
-    if not ownerKey or type(database) ~= "table" then return nil end
+    if not ownerKey or type(database) ~= "table"
+        or HasFutureSettingsOwner(database) then return nil end
     local migration = Nexus and Nexus.LegacyDataMigration
     if migration and type(migration.AccountWritesAllowed) == "function" then
         local ok, allowed = pcall(migration.AccountWritesAllowed, database)
@@ -311,8 +339,9 @@ function Store.RegisterCurrentCharacter()
     local characters = type(database.accountCharacters) == "table"
         and database.accountCharacters or {}
     database.accountCharacters = characters
-    local row = type(characters[ownerKey]) == "table"
-        and characters[ownerKey] or {}
+    local row = characters[ownerKey]
+    if not AccountRowMatchesCurrent(row, ownerKey, name) then return nil end
+    row = type(row) == "table" and row or {}
     row.name, row.realm = name, realm
     local class = UnitClass and select(2, UnitClass("player")) or nil
     if class and class ~= "" then row.class = tostring(class):upper() end
