@@ -150,15 +150,21 @@ end})
 local malformedA, malformedB = {player=explosive}, {player={}}
 local malformedOk, malformedRows = pcall(Identity.PresentPublicRecords,
     {malformedA,malformedB}, "player")
-assert(malformedOk and #malformedRows == 2
-        and malformedRows[1].publicIdentityKey
-            == malformedRows[2].publicIdentityKey,
-    "unsupported identity values invoked tostring or produced unstable keys")
+assert(malformedOk and #malformedRows == 0,
+    "unsupported identity values invoked tostring or entered public rows")
+local invalidA, invalidB = {player="Bad\nA"}, {player="Bad\nB"}
+local invalidRows = Identity.PresentPublicRecords(
+    {invalidA,invalidB}, "player")
+assert(#invalidRows == 2
+        and invalidA.publicIdentityKey ~= invalidB.publicIdentityKey
+        and invalidA.displayPlayer ~= invalidB.displayPlayer,
+    "distinct bounded malformed identities collapsed in presentation")
 local oversized = {player=string.rep("x", 4096),ownerVerified=false}
-Identity.PresentPublicRecords({oversized}, "player")
-assert(#oversized.publicIdentityKey < 256
-        and oversized.publicIdentityKey:find(":4096:invalid",1,true),
-    "oversized malformed identity escaped the bounded public key")
+local oversizedKey = Identity.PublicRecordKey(oversized, "player")
+local oversizedRows = Identity.PresentPublicRecords({oversized}, "player")
+assert(#oversizedKey < 256 and #oversizedRows == 0
+        and oversizedKey:find(":4096:oversized",1,true),
+    "oversized malformed identity escaped bounded quarantine")
 
 -- A stronger realm-less Sync record remains durable evidence but cannot
 -- displace or visually duplicate either proven Twin.
@@ -212,6 +218,29 @@ assert(not NexusDB.dpsCapture.characterBest.dummy.missingbridge
         and type(missingCanonical.lockedEchoes) == "table",
     "missing historical metadata blocked or weakened exact promotion")
 
+local function AssertMalformedHistorical(name, spellId, field, value)
+    local short = WireRecord(name, spellId, 22400000, spellId, "dummy",
+        name:lower().."@realmc", "realmc")
+    assert(Deliver(name, name.."-malformed-short", short),
+        name.." malformed fixture was not retained")
+    NexusDB.dpsCapture.characterBest.dummy[name:lower()][field] = value
+    assert(Deliver(name.."-RealmC", name.."-malformed-exact", short),
+        name.." exact evidence was not retained separately")
+    local bucket = NexusDB.dpsCapture.characterBest.dummy
+    assert(bucket[name:lower()] and bucket[name:lower().."@realmc"],
+        name.." malformed represented metadata was treated as missing")
+end
+AssertMalformedHistorical("MalformedDuration", 810010,
+    "duration", "not-a-duration")
+AssertMalformedHistorical("MalformedHash", 810011,
+    "loadoutHash", {future=true})
+AssertMalformedHistorical("MalformedLocked", 810012,
+    "lockedEchoes", {future=true})
+AssertMalformedHistorical("MalformedDurationType", 810013,
+    "duration", false)
+AssertMalformedHistorical("MalformedLockedType", 810014,
+    "lockedEchoes", false)
+
 -- A direct exact sender may promote only a byte-for-byte equivalent public
 -- evidence set. Equal headline score metadata is insufficient when duration,
 -- build identity, or locked evidence differs.
@@ -240,7 +269,7 @@ DPS.Init({}, Sync)
 assert(NexusDB.dpsCapture.characterBest.dummy.twin,
     "reload erased ambiguous historical evidence")
 dummy = DPS.GetDpsBoard("dummy")
-assert(#dummy == 7, "reload changed public identity reconciliation")
+assert(#dummy == 12, "reload changed public identity reconciliation")
 
 -- The shared projection policy applies to Dummy, LK, Combined, and Community
 -- before sorting/counting/paging. Community builds remain distinct records,
@@ -277,7 +306,7 @@ local function Board(category)
 end
 local projectedDummy, projectedLk, combined =
     Board("dummy"), Board("lk"), Board("combined")
-assert(#projectedDummy == 7 and #projectedLk == 2 and #combined == 2,
+assert(#projectedDummy == 12 and #projectedLk == 2 and #combined == 2,
     "Dummy/LK/Combined did not share canonical identity policy")
 for _, rows in ipairs({projectedDummy,projectedLk,combined}) do
     local labels = {}

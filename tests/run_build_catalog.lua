@@ -223,5 +223,16 @@ assert(summaries.malformed and summaries.malformed.title
         and Nexus.Identity.PublicRecordKey(summaries.malformed, "author")
             ~= Nexus.Identity.PublicRecordKey(summaries.malformedTwin, "author"),
     "summary cursor did not restore the durable map key as a missing id")
+local syncSummaries = Nexus.BuildCatalog.Summaries()
+local exactMalformed = Nexus.BuildCatalog.Get("malformed")
+local exactSummary = Nexus.BuildCatalog.GetSummary("malformedTwin")
+assert(syncSummaries.malformed.id == "malformed"
+        and syncSummaries.malformedTwin.id == "malformedTwin"
+        and exactMalformed.id == "malformed"
+        and exactSummary.id == "malformedTwin"
+        and Nexus.Identity.PublicRecordKey(syncSummaries.malformed, "author")
+            ~= Nexus.Identity.PublicRecordKey(
+                syncSummaries.malformedTwin, "author"),
+    "sync summary or exact hydration lost durable missing-id identity")
 
 print("BuildCatalog precedence and defensive copies -- OK")

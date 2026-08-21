@@ -3032,17 +3032,31 @@ local function ReceiveRecord(record, transportSender, relayed)
     if not existing and legacyKey ~= characterKey then
         local legacy = bucket[legacyKey]
         local incomingBuildId = record.b or record.buildId
-        local legacyDuration = legacy and tonumber(legacy.duration) or nil
+        local legacyDuration = legacy and legacy.duration
         local legacyHash = legacy and type(legacy.loadoutHash) == "string"
             and legacy.loadoutHash or nil
         local incomingHash = tostring(hash or EchoHashFromKey(fingerprint) or "")
-        local legacyLockedKey = legacy
-            and LockedKey(StoredEchoes(legacy, true)) or nil
+        local rawLegacyLocked = legacy and legacy.lockedEchoes
+        local resolvedLegacyLocked = legacy and StoredEchoes(legacy, true) or nil
+        local rawLockedMissing = rawLegacyLocked == nil
+            or type(rawLegacyLocked) == "table"
+                and next(rawLegacyLocked) == nil
+        local legacyLockedValid = rawLockedMissing
+            or ValidWireEchoList(rawLegacyLocked)
+        if resolvedLegacyLocked ~= nil then
+            legacyLockedValid = legacyLockedValid
+                and ValidWireEchoList(resolvedLegacyLocked)
+        end
+        local legacyLockedMissing = rawLockedMissing
+            and resolvedLegacyLocked == nil
+        local legacyLockedKey = resolvedLegacyLocked
+            and LockedKey(resolvedLegacyLocked) or nil
         local sameLegacyRecord = legacy
             and math.floor(tonumber(legacy.dps) or 0) == math.floor(dps)
             and tonumber(legacy.ts or 0) == tonumber(ts or 0)
             and (legacyDuration == nil or legacyDuration == 0
-                or legacyDuration == tonumber(duration or 0))
+                or type(legacyDuration) == "number"
+                    and legacyDuration == tonumber(duration or 0))
             and tostring(legacy.fingerprint or "") == tostring(fingerprint or "")
             and (legacy.loadoutHash == nil or legacyHash == ""
                 or legacyHash == incomingHash)
@@ -3051,7 +3065,8 @@ local function ReceiveRecord(record, transportSender, relayed)
                     and legacy.buildId == incomingBuildId)
             -- Missing legacy metadata may be enriched during an otherwise
             -- exact bridge. Conflicting represented metadata cannot retire it.
-            and (legacyLockedKey == "0"
+            and legacyLockedValid
+            and (legacyLockedMissing
                 or legacyLockedKey == LockedKey(incomingLocked))
         if sameLegacyRecord then
             existing, existingKey = legacy, legacyKey

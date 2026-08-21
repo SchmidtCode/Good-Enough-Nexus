@@ -266,22 +266,52 @@ function Identity.VerifiedOwnerKey(record)
     return Identity.CoherentRecordOwnerKey(record)
 end
 
-local function PublicTyped(value, maxBytes)
+local function PublicScalarText(value, maxBytes)
     local kind = type(value)
-    if value == nil then return "nil:0:" end
+    if value == nil then return "nil", "", true end
     if kind ~= "string" and kind ~= "number" and kind ~= "boolean" then
-        return kind .. ":7:invalid"
+        return kind, nil, false
     end
     local text = kind == "number" and value ~= value and "nan"
         or tostring(value)
+    return kind, text, #text <= (maxBytes or 177)
+end
+
+local function HexBytes(text)
+    local out = {}
+    for index=1,#text do
+        out[index] = string.format("%02x", text:byte(index))
+    end
+    return table.concat(out)
+end
+
+local function PublicTyped(value, maxBytes)
+    local kind, text, bounded = PublicScalarText(value, maxBytes)
+    if text == nil then return kind .. ":7:invalid" end
+    if not bounded then
+        return kind .. ":" .. tostring(#text) .. ":oversized"
+    end
     -- Public identity is computed inside bounded projection work.  Retain the
-    -- exact typed scalar only while it is a bounded valid wire/display token;
-    -- malformed durable text stays ambiguous without copying an unbounded
-    -- SavedVariables string into every projected key.
+    -- exact scalar when safe, and an injective bounded hex form otherwise.
+    -- Oversized/unsupported shapes are rejected from public projection below.
     if not Identity.ValidDisplayText(text, maxBytes or 177, true) then
-        return kind .. ":" .. tostring(#text) .. ":invalid"
+        return kind .. ":" .. tostring(#text) .. ":invalid:" .. HexBytes(text)
     end
     return kind .. ":" .. tostring(#text) .. ":" .. text
+end
+
+local function PublicRecordShape(record, field)
+    local fields = {{field,80},{"realm",96},{"ownerKey",177},
+        {"claimedOwnerKey",177},{"relaySender",80}}
+    if field == "author" then
+        fields[#fields + 1] = {"id",96}
+        fields[#fields + 1] = {"buildId",96}
+    end
+    for _, item in ipairs(fields) do
+        local _, text, bounded = PublicScalarText(record[item[1]], item[2])
+        if text == nil or not bounded then return false end
+    end
+    return true
 end
 
 local function PublicBaseName(record, field)
@@ -320,17 +350,7 @@ local function VerifiedPublicLabel(record, field, ownerKey)
 end
 
 local function SafePublicToken(value, maxBytes)
-    if value == nil then return "nil:0:" end
-    local kind = type(value)
-    if kind ~= "string" and kind ~= "number" and kind ~= "boolean" then
-        return kind .. ":7:invalid"
-    end
-    local text = kind == "number" and value ~= value and "nan"
-        or tostring(value)
-    if not Identity.ValidDisplayText(text, maxBytes or 177, true) then
-        return kind .. ":7:invalid"
-    end
-    return kind .. ":" .. tostring(#text) .. ":" .. text
+    return PublicTyped(value, maxBytes)
 end
 
 local function AmbiguousPublicLabel(record, field)
@@ -366,6 +386,10 @@ function Identity.IndexPublicRecord(context, record)
         if type(context) == "table" then context.invalid = context.invalid + 1 end
         return false
     end
+    if not PublicRecordShape(record, context.field) then
+        context.invalid = context.invalid + 1
+        return false
+    end
     local name = PublicPlayerKey(record, context.field)
     if name and Identity.VerifiedOwnerKey(record) then
         context.verifiedNames[name] = true
@@ -377,6 +401,7 @@ end
 function Identity.PresentPublicRecord(context, record)
     if type(context) ~= "table" or type(record) ~= "table" then return nil end
     local field, options = context.field, context.options
+    if not PublicRecordShape(record, field) then return nil end
     local name = PublicPlayerKey(record, field)
     local ownerKey = Identity.VerifiedOwnerKey(record)
     local hidden = options.shadowAmbiguous == true and ownerKey == nil
