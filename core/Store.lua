@@ -83,6 +83,16 @@ local function HasFutureSettingsOwner(db)
         and NormalizeVersion(rawget(db, "settingsVersion")) > SETTINGS_VERSION
 end
 
+local function AccountWritesAllowed(database)
+    if HasFutureSettingsOwner(database) then return false end
+    local migration = Nexus and Nexus.LegacyDataMigration
+    if migration and type(migration.AccountWritesAllowed) == "function" then
+        local ok, allowed = pcall(migration.AccountWritesAllowed, database)
+        return ok and allowed == true
+    end
+    return true
+end
+
 local function ReadLegacyMigrationMarker(db)
     local migrations = rawget(db, LEGACY_MIGRATION_NAMESPACE)
     if migrations == nil then return nil, nil end
@@ -249,7 +259,7 @@ function Store.Init()
     if Nexus.BuildCatalog and Nexus.BuildCatalog.Init then
         catalogSummary = Nexus.BuildCatalog.Init(db, Nexus.BundledBuilds)
     end
-    if not futureSettingsOwner
+    if AccountWritesAllowed(db)
         and not (catalogSummary and catalogSummary.readOnly) then
         db.accountCharacters = type(db.accountCharacters) == "table"
             and db.accountCharacters or {}
@@ -330,12 +340,7 @@ function Store.RegisterCurrentCharacter()
     local ownerKey, name, realm = CurrentIdentity()
     local database = NexusDB
     if not ownerKey or type(database) ~= "table"
-        or HasFutureSettingsOwner(database) then return nil end
-    local migration = Nexus and Nexus.LegacyDataMigration
-    if migration and type(migration.AccountWritesAllowed) == "function" then
-        local ok, allowed = pcall(migration.AccountWritesAllowed, database)
-        if not ok or allowed ~= true then return nil end
-    end
+        or not AccountWritesAllowed(database) then return nil end
     local characters = type(database.accountCharacters) == "table"
         and database.accountCharacters or {}
     database.accountCharacters = characters

@@ -117,6 +117,18 @@ for settingsVersion = 3, 5 do
         "Store.Init allocated account ownership for future settings version "
             .. tostring(settingsVersion))
 end
+
+local futureMigrationOwned = {
+    settingsVersion=2,settings={},chars={},futureRoot={keep=true},
+    legacyDataMigration={schemaVersion=99,version=1,state="future",
+        future={keep=true}},
+}
+NexusDB = futureMigrationOwned
+Store.Init()
+Check(futureMigrationOwned.accountCharacters == nil
+        and futureMigrationOwned.legacyDataMigration.state == "future"
+        and futureMigrationOwned.legacyDataMigration.future.keep,
+    "Store.Init allocated account storage before future migration refusal")
 currentName, currentRealm = "Twin", "RealmA"
 
 local function MigrationInput()
@@ -135,9 +147,17 @@ local function MigrationInput()
                 ownerKey="bridged@realma",futureBridge={keep=true}},
             ["collision@realma"]={name="Collision",realm="realma",lastSeen=1,
                 note="canonical-collision",futureCanonical={keep=true}},
+            ["Collision@RealmA"]={name="Collision",realm="realma",lastSeen=1000,
+                note="canonical-case-alias",futureAlias={keep=true}},
             ["collision@unknown"]={name="Collision",realm="unknown",lastSeen=999,
                 ownerKey="collision@realma",note="legacy-collision",
                 futureBridge={keep=true}},
+            ["Twin@Unknown"]={name="Twin",realm="unknown",lastSeen=101,
+                note="unknown-case-alias",futureAlias={keep=true}},
+            ["bridgealias@unknown"]={name="BridgeAlias",realm="unknown",
+                ownerKey="bridgealias@realma",note="bridge-alias-lower"},
+            ["BridgeAlias@Unknown"]={name="BridgeAlias",realm="unknown",
+                ownerKey="bridgealias@realma",note="bridge-alias-upper"},
             ["realmonly@unknown"]={name="RealmOnly",realm="RealmA",lastSeen=50,
                 futureRealmOnly={keep=true}},
             ["contradictory@unknown"]={name="Contradictory-RealmB",
@@ -207,6 +227,23 @@ local function CheckResult(database, label)
             and rows["collision@unknown"].note == "legacy-collision"
             and rows["collision@unknown"].futureBridge.keep,
         label .. " exact bridge overwrote or erased an established canonical row")
+    local caseAlias, unknownAlias, bridgeLower, bridgeUpper = false, false, false, false
+    for _, row in pairs(rows) do
+        caseAlias = caseAlias or (type(row) == "table"
+            and row.note == "canonical-case-alias" and row.futureAlias.keep)
+        unknownAlias = unknownAlias or (type(row) == "table"
+            and row.note == "unknown-case-alias" and row.futureAlias.keep)
+        bridgeLower = bridgeLower or (type(row) == "table"
+            and row.note == "bridge-alias-lower")
+        bridgeUpper = bridgeUpper or (type(row) == "table"
+            and row.note == "bridge-alias-upper")
+    end
+    Check(rows["collision@realma"].note == "canonical-collision" and caseAlias,
+        label .. " normalized canonical alias displaced or erased exact evidence")
+    Check(rows["twin@unknown"].note == "ambiguous" and unknownAlias,
+        label .. " normalized @unknown alias collapsed distinct recovery evidence")
+    Check(bridgeLower and bridgeUpper and rows["bridgealias@realma"] == nil,
+        label .. " competing bridge aliases collapsed or gained authority")
     Check(type(rows["realmonly@unknown"]) == "table"
             and rows["realmonly@unknown"].futureRealmOnly.keep
             and rows["realmonly@realma"] == nil,
@@ -247,7 +284,9 @@ dofile("core/LegacyDataMigration.lua")
 local changedSummary = Nexus.LegacyDataMigration.Init(changedDuringStaging)
 Check(changedSummary.pending == true, "changed-source fixture did not stage")
 Nexus.LegacyDataMigration.Pump(1)
-changedDuringStaging.accountCharacters[1].future = {one="changed"}
+local replacementAccounts = Copy(changedDuringStaging.accountCharacters)
+replacementAccounts[1].future = {one="changed"}
+changedDuringStaging.accountCharacters = replacementAccounts
 local changedPumps = 0
 while not Nexus.LegacyDataMigration.Pump(32) do
     changedPumps = changedPumps + 1
@@ -259,7 +298,23 @@ for _, row in pairs(changedDuringStaging.accountCharacters) do
         and row.note == "numeric-one" and row.future.one == "changed")
 end
 Check(changedPreserved,
-    "migration committed stale nested account data after a staged source edit")
+    "migration committed stale account data after a staged source replacement")
+
+-- Malformed numeric evidence cannot trap the bounded migration in a perpetual
+-- whole-registry equality restart.
+local nanMigration = MigrationInput()
+nanMigration.accountCharacters[3] = {
+    name="NanEvidence",future={value=0/0},note="nan-evidence",
+}
+NexusDB = nanMigration
+dofile("core/LegacyDataMigration.lua")
+Check(Nexus.LegacyDataMigration.Init(nanMigration).pending == true,
+    "NaN fixture did not enter migration")
+local nanDone = false
+for _ = 1, 20 do
+    if Nexus.LegacyDataMigration.Pump(32) then nanDone = true; break end
+end
+Check(nanDone, "unchanged NaN evidence caused a perpetual migration restart")
 
 if #failures > 0 then
     error("EXPECTED RED conservative account identity:\n - "

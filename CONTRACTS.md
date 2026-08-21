@@ -205,11 +205,11 @@ coherent. An unresolved/short source may move to a canonical owner only through 
 explicit coherent `source.ownerKey` bridge, only when no canonical source row or
 competing bridge already owns that destination. Existing canonical fields always
 win; distinct ambiguous sources remain under deterministic collision-safe recovery
-keys with unknown nested fields deep-copied. The durable account-source snapshot is
-rechecked before commit, so replacement or nested mutation restarts staging instead
-of overwriting newer evidence. `AccountWritesAllowed(database)` is the Store
-registration guard and rejects active/incompatible migration metadata plus every
-settings schema newer than `Store.SettingsVersion()`.
+keys with unknown nested fields retained. The exact account-table owner is rechecked
+before commit, so source replacement restarts staging without an unbounded whole-save
+copy or comparison. `AccountWritesAllowed(database)` is checked before Store allocates
+account storage and rejects active/incompatible migration metadata plus every settings
+schema newer than `Store.SettingsVersion()`.
 
 ## core/Errors.lua — `Nexus.Errors`
 

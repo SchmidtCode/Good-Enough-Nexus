@@ -73,21 +73,6 @@ local function DeepCopy(value, seen)
     return out
 end
 
-local function DeepEqual(left, right, seen)
-    if left == right then return true end
-    if type(left) ~= type(right) or type(left) ~= "table" then return false end
-    seen = seen or {}
-    if seen[left] then return seen[left] == right end
-    seen[left] = right
-    for key, value in pairs(left) do
-        if not DeepEqual(value, right[key], seen) then return false end
-    end
-    for key in pairs(right) do
-        if left[key] == nil then return false end
-    end
-    return true
-end
-
 local function CurrentDpsRevision()
     local revisions = Nexus and Nexus.Revisions
     return revisions and type(revisions.Get) == "function"
@@ -270,9 +255,9 @@ local function IsLocalRow(row)
 end
 
 local function MergeAccount(target, incoming)
-    if not target then return DeepCopy(incoming) end
+    if not target then return ShallowCopy(incoming) end
     for key, value in pairs(incoming) do
-        if target[key] == nil then target[key] = DeepCopy(value) end
+        if target[key] == nil then target[key] = value end
     end
     return target
 end
@@ -322,7 +307,8 @@ local function ProvenAccountOwner(sourceKey, source)
     local indexedExact = indexedOwner and not indexedOwner:match("@unknown$")
     local declaredExact = declaredOwner and not declaredOwner:match("@unknown$")
 
-    if indexedExact and (not declaredExact or declaredOwner == indexedOwner)
+    if indexedExact and sourceKey == indexedOwner
+        and (not declaredExact or declaredOwner == indexedOwner)
         and AccountEvidenceMatches(indexedOwner, source, name) then
         return indexedOwner, "canonical", name
     end
@@ -335,7 +321,8 @@ end
 
 local function AmbiguousAccountKey(sourceKey)
     local indexedOwner = Identity.CanonicalOwnerKey(sourceKey)
-    if indexedOwner and indexedOwner:match("@unknown$") then return indexedOwner end
+    if indexedOwner and indexedOwner:match("@unknown$")
+        and sourceKey == indexedOwner then return indexedOwner end
     if type(sourceKey) == "string" then
         return "legacy:string:" .. tostring(#sourceKey) .. ":" .. sourceKey
     end
@@ -361,7 +348,7 @@ local function NormalizeAccount(job, sourceKey, source)
     end
 
     if ownerKey then
-        local out = DeepCopy(source)
+        local out = ShallowCopy(source)
         out.ownerKey = nil -- the canonical map key is the sole identity index
         out.name = source.name or name
         out.realm = ownerKey:match("@(.+)$")
@@ -377,7 +364,7 @@ local function NormalizeAccount(job, sourceKey, source)
         return nil
     end
 
-    local out = DeepCopy(source)
+    local out = ShallowCopy(source)
     out.name = source.name or name
     AddStat(meta, "accountRowsPreservedAmbiguous", 1)
     return ambiguousKey, out
@@ -429,12 +416,8 @@ local function Begin(database, meta, reason, restarting)
         database.dpsCapture = {}
         dps = database.dpsCapture
     end
-    local accountSource = type(database.accountCharacters) == "table"
-        and database.accountCharacters or {}
     local canResume = not restarting and meta.state == "staging"
         and ValidStaging(meta.staging) and VALID_PHASE[meta.phase]
-        and type(meta.accountSourceSnapshot) == "table"
-        and DeepEqual(meta.accountSourceSnapshot, accountSource)
     if canResume then
         -- A reload has no trustworthy Lua cursor. Replaying only the durable
         -- current phase is safe because every staging write is a max/merge.
@@ -443,7 +426,6 @@ local function Begin(database, meta, reason, restarting)
         meta.phase = "classHints"
         meta.stats = {}
         meta.quarantine = nil
-        meta.accountSourceSnapshot = DeepCopy(accountSource)
     end
     meta.schemaVersion = SCHEMA_VERSION
     meta.version = 0
@@ -457,7 +439,6 @@ local function Begin(database, meta, reason, restarting)
     return {
         database=database,meta=meta,dps=dps,phase=meta.phase,
         items=nil,index=1,dpsRevision=CurrentDpsRevision(),
-        accountSnapshot=DeepCopy(meta.accountSourceSnapshot),
         canonicalAccountOwners={},accountBridgeCounts={},
         source={
             accountCharacters=database.accountCharacters,
@@ -474,8 +455,8 @@ end
 
 local function SnapshotAccounts(job)
     local out = {}
-    for key, row in pairs(type(job.accountSnapshot) == "table"
-        and job.accountSnapshot or {}) do
+    for key, row in pairs(type(job.source.accountCharacters) == "table"
+        and job.source.accountCharacters or {}) do
         out[#out + 1] = {key=key,row=row}
         local ownerKey, proof = ProvenAccountOwner(key, row)
         if proof == "canonical" then
@@ -675,11 +656,13 @@ end
 local function SourceChanged(job)
     if job.dpsRevision ~= CurrentDpsRevision() then return true end
     local dps = DpsStore(job.database)
+    -- Store registration is refused while this transaction is active. Account
+    -- normalization shallow-copies only the row shell and never mutates nested
+    -- unknown values, so exact table replacement is the bounded ownership
+    -- signal; recursively walking the whole SavedVariables graph here would
+    -- escape the Pump budget and can never be made safe for arbitrary graphs.
     return dps ~= job.dps
         or job.source.accountCharacters ~= job.database.accountCharacters
-        or not DeepEqual(job.accountSnapshot,
-            type(job.database.accountCharacters) == "table"
-                and job.database.accountCharacters or {})
         or job.source.communityBuilds ~= job.database.communityBuilds
         or job.source.personalBest ~= dps.personalBest
         or job.source.characterBest ~= dps.characterBest
@@ -716,7 +699,6 @@ local function Finish(job)
         lkCharacters=Count(staging.characterBest.lk),
         quarantined=tonumber(meta.stats and meta.stats.quarantined) or 0,
     }
-    meta.accountSourceSnapshot = nil
     meta.staging = nil
     runtime.pending = false
     runtime.completed = runtime.completed + 1
