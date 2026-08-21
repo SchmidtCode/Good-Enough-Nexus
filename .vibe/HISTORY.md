@@ -13,6 +13,7 @@ This file is non-authoritative. Archive completed checkpoints, resolved issues, 
 
 ## Resolved issues
 
+- ISSUE-47.5-R7: Community sync/async public identity quarantine now precedes every public count, filter, DPS join, sort, and page decision, so retained malformed evidence cannot create hidden availability or search matches. Exact count-parity and bounded 1,000-row regressions, 12 affected suites, parse `288/288`, and Fast `45/45` pass; final review and Full remain checkpoint evidence.
 - ISSUE-47.5-R6: Opaque catalog ID contradictions no longer supply legacy fingerprint identity, public author/nameplate identity, merged availability, or status-delta authority. Direct catalog and 11 surrounding identity/migration/projection runners, parse `288/288`, Fast `45/45`, strict Vibe, and diff checks pass; final review and Full remain checkpoint evidence.
 - ISSUE-47.5-R5: Opaque catalog ID contradictions no longer enter public or maintained authority indexes; build-ID strings reject controls/pipes; exact Community detail consumes quarantine. Focused authority/detail/public/work-budget suites, parse `288/288`, and Fast `45/45` pass; final review and Full remain checkpoint evidence.
 - ISSUE-47.5-R4: Malformed build IDs, unresolved/conflicting locked-evidence references, and explicit catalog map/row ID contradictions are preservation/quarantine states, never bridge or public-selection authority. Focused evidence/catalog/public/UI/work-budget tests, parse `288/288`, and Fast `45/45` pass; final review and Full remain checkpoint evidence.

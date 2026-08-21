@@ -299,10 +299,14 @@ local builds = {
     ["1"]={id="1",title="String identity",author="Other",class="MAGE",
         ownerVerified=false,ordinaryComplete=true,buildId="shared",
         echoes=Echoes(820005),fingerprint=DPS.GetEchoKey(Echoes(820005))},
+    oversized={id="oversized",title="Quarantined identity",
+        author=string.rep("x",4096),class="MAGE",ownerVerified=false,
+        ordinaryComplete=true,echoes=Echoes(820006),
+        fingerprint=DPS.GetEchoKey(Echoes(820006))},
 }
 Nexus.BuildCatalog = {
     Summaries=function() return builds end,
-    Status=function() return {availableCount=5} end,
+    Status=function() return {availableCount=6} end,
 }
 dofile("core/ViewProjections.lua")
 local P = Nexus.ViewProjections
@@ -329,8 +333,10 @@ end
 local community, summary = P.Builds({currentClassOnly=false,
     qualifiedOnly=false,scope="all",sortMode="title",page=1})
 assert(#community == 5 and summary.filteredTotal == 5
-        and summary.displayedCount == 5,
-    "Community public counts/paging omitted distinct build records")
+        and summary.displayedCount == 5 and summary.total == 5
+        and summary.ready == 5 and summary.availableCount == 5
+        and summary.filterMatchedCount == 5,
+    "Community public counts included quarantined identity evidence")
 local authorLabels = {}
 for _, build in ipairs(community) do
     assert(type(build.displayAuthor) == "string"

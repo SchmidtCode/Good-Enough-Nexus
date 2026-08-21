@@ -35,6 +35,9 @@ for index = 1, 1000 do
         postedAt=index,lastModified=index,fingerprint=fingerprint,
         echoes={{spellId=720000+index,quality=3,stacks=1}},
     }
+    if index == 979 then
+        NexusDB.communityBuilds[id].author = string.rep("x",4096)
+    end
     if index <= 600 then
         for _, category in ipairs({"dummy", "lk"}) do
             NexusDB.dpsCapture.characterBest[category]
@@ -439,7 +442,7 @@ assert(communityVirtual.results <= 20 and communityVirtual.active <= 7
     "bounded construction lost the public Community limit or fixed row pools")
 assert(communityStatus.bundledCount == 0
     and communityStatus.overlayCount == 1000
-    and communityStatus.availableCount == 1000
+    and communityStatus.availableCount == 999
     and communityStatus.filterMatchedCount > 0
     and communityStatus.filterMatchedCount <= communityStatus.availableCount
     and communityStatus.resultCount == communityStatus.filterMatchedCount

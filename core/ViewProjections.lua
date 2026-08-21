@@ -350,7 +350,13 @@ local function BuildProjection(filters)
     if type(all) ~= "table" then error("BuildCatalog projection reader returned invalid data") end
     local eligibility = CommunityEligibility()
     local out = {}
+    local presentation = Identity.NewPublicPresentation("author")
     for _, build in pairs(all) do
+        if type(build) == "table" and IsLoaded(build) then
+            local indexed = Identity.IndexPublicRecord(presentation, build)
+            build = indexed and Identity.PresentPublicRecord(
+                presentation, build) or nil
+        end
         if type(build) == "table" and IsLoaded(build) then
             local savedKind = Identity.SavedMirrorKind(build)
             summary.total = summary.total + 1
@@ -409,7 +415,6 @@ local function BuildProjection(filters)
             summary.pending = summary.pending + 1
         end
     end
-    out = Identity.PresentPublicRecords(out, "author")
     counters.builds.sorts = counters.builds.sorts + 1
     table.sort(out, function(left, right)
         if filters.sortMode == "recent" then
@@ -778,14 +783,20 @@ local function PumpBuildJob(job, unit)
                 job.sortSource, job.sortTarget, job.merge = job.rows, {}, nil
                 break
             end
+            if fromBaseline then
+                job.summary.bundledCount = job.summary.bundledCount + 1
+            end
+            if fromOverlay then
+                job.summary.overlayCount = job.summary.overlayCount + 1
+            end
+            if type(build) == "table" and IsLoaded(build) then
+                local indexed = Identity.IndexPublicRecord(
+                    job.presentation, build)
+                build = indexed and Identity.PresentPublicRecord(
+                    job.presentation, build) or nil
+            end
             if type(build) == "table" and IsLoaded(build) then
                 local filters, summary = job.filters, job.summary
-                if fromBaseline then
-                    summary.bundledCount = summary.bundledCount + 1
-                end
-                if fromOverlay then
-                    summary.overlayCount = summary.overlayCount + 1
-                end
                 summary.total = summary.total + 1
                 summary.availableCount = summary.availableCount + 1
                 summary.ready = summary.ready + 1
@@ -834,10 +845,7 @@ local function PumpBuildJob(job, unit)
                         or dummy <= 0 and lk <= 0 and "missing both"
                         or dummy <= 0 and "missing Dummy" or "missing Lich King"
                     build._nexusBestDps = build._nexusDps.best
-                    Identity.IndexPublicRecord(job.presentation, build)
-                    local presented = Identity.PresentPublicRecord(
-                        job.presentation, build)
-                    if presented then job.rows[#job.rows + 1] = presented end
+                    job.rows[#job.rows + 1] = build
                     workStats.copies = workStats.copies + 1
                     unit.copies = (unit.copies or 0) + 1
                 end
