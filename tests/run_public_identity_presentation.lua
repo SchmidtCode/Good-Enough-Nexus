@@ -242,6 +242,8 @@ AssertMalformedHistorical("MalformedLockedType", 810014,
     "lockedEchoes", false)
 AssertMalformedHistorical("MalformedBuildId", 810015,
     "buildId", {future=true})
+AssertMalformedHistorical("MalformedBuildText", 810018,
+    "buildId", "bad\nid")
 AssertMalformedHistorical("UnresolvedLockedReference", 810016,
     "lockedEvidenceKey", "future-or-missing-reference")
 AssertMalformedHistorical("ConflictingLockedReference", 810017,
@@ -276,7 +278,7 @@ DPS.Init({}, Sync)
 assert(NexusDB.dpsCapture.characterBest.dummy.twin,
     "reload erased ambiguous historical evidence")
 dummy = DPS.GetDpsBoard("dummy")
-assert(#dummy == 15, "reload changed public identity reconciliation")
+assert(#dummy == 16, "reload changed public identity reconciliation")
 
 -- The shared projection policy applies to Dummy, LK, Combined, and Community
 -- before sorting/counting/paging. Community builds remain distinct records,
@@ -313,7 +315,7 @@ local function Board(category)
 end
 local projectedDummy, projectedLk, combined =
     Board("dummy"), Board("lk"), Board("combined")
-assert(#projectedDummy == 15 and #projectedLk == 2 and #combined == 2,
+assert(#projectedDummy == 16 and #projectedLk == 2 and #combined == 2,
     "Dummy/LK/Combined did not share canonical identity policy")
 for _, rows in ipairs({projectedDummy,projectedLk,combined}) do
     local labels = {}

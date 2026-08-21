@@ -322,13 +322,17 @@ local function ScalarRecordId(id)
     end
 end
 
-local function RestoreRecordId(record, id)
-    if type(record) ~= "table" then return nil end
+local function RecordIdCoherent(record, id)
+    if type(record) ~= "table" then return false end
     local durableId = ScalarRecordId(id)
-    if durableId == nil then return nil end
-    if record.id == nil then record.id = durableId
-    elseif type(record.id) ~= type(durableId)
-        or record.id ~= durableId then return nil end
+    return durableId ~= nil and (record.id == nil
+        or type(record.id) == type(durableId) and record.id == durableId)
+end
+
+local function RestoreRecordId(record, id)
+    if not RecordIdCoherent(record, id) then return nil end
+    local durableId = ScalarRecordId(id)
+    if record.id == nil then record.id = durableId end
     return record
 end
 
@@ -620,7 +624,9 @@ local function RecomputeExactWinner(bucket)
     bucket.winnerId, bucket.winnerRecord, bucket.winnerSource = nil, nil, nil
     for id in pairs(bucket.ids or {}) do
         local record, source = SelectedRaw(id)
-        ConsiderExactWinner(bucket, id, record, source)
+        if RecordIdCoherent(record, id) then
+            ConsiderExactWinner(bucket, id, record, source)
+        end
     end
 end
 
@@ -649,7 +655,7 @@ local function RemoveRelatedRow(id)
 end
 
 local function AddRelatedRow(id, record)
-    if type(record) ~= "table" then return end
+    if not RecordIdCoherent(record, id) then return end
     local savedKind = Identity.SavedMirrorKind(record)
     if savedKind == "invalid" then return end
     -- The exact-content resolver is a public-build relationship seam. Saved
@@ -931,9 +937,10 @@ local function FindExactFingerprintId(fingerprint)
     debugStats.exactCandidates = debugStats.exactCandidates + candidates
     debugStats.maxExactCandidates = math.max(
         debugStats.maxExactCandidates, candidates)
-    return bucket and bucket.winnerId or nil,
-        bucket and bucket.winnerRecord or nil,
-        bucket and bucket.winnerSource or nil
+    local id = bucket and bucket.winnerId or nil
+    local record = bucket and bucket.winnerRecord or nil
+    if not RecordIdCoherent(record, id) then return nil, nil end
+    return id, record, bucket and bucket.winnerSource or nil
 end
 
 function Catalog.FindExactFingerprintId(fingerprint)
@@ -1023,7 +1030,8 @@ function Catalog.ResolveFingerprintIdentity(rawId, fingerprint, options)
                 debugStats.identityResolutionFailures + 1
             return nil, "historical build identity is tombstoned"
         end
-        if raw and Identity.SavedMirrorKind(raw) == "ordinary"
+        if RecordIdCoherent(raw, rawId)
+            and Identity.SavedMirrorKind(raw) == "ordinary"
             and ExactFingerprint(raw) == fingerprint
             and (OrdinaryComplete(raw) or
                 (allowClassOnly and HasStringClass(raw))) then

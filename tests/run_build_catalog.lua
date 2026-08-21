@@ -120,8 +120,12 @@ local allocationDb = {
             future={keep=true}},
         mismatched={id="different-id",future={keep=true}},
         slotA={id="shared",title="Contradictory A",author="Twin",
+            ownerKey="twin@realma",realm="realma",ownerVerified=true,
+            class="MAGE",fingerprint="96x1",
             echoes={{spellId=96,stacks=1}}},
         slotB={id="shared",title="Contradictory B",author="Twin",
+            ownerKey="twin@realma",realm="realma",ownerVerified=true,
+            class="MAGE",fingerprint="97x1",
             echoes={{spellId=97,stacks=1}}},
         visible={id="visible",title="Visible",echoes={{spellId=91,stacks=1}}},
         shadowed={id="shadowed",title="Overlay on bundled ID",
@@ -242,5 +246,10 @@ assert(syncSummaries.slotA == nil and syncSummaries.slotB == nil
         and Nexus.BuildCatalog.Get("slotA") == nil
         and Nexus.BuildCatalog.GetSummary("slotB") == nil,
     "contradictory embedded IDs escaped opaque public quarantine")
+assert(Nexus.BuildCatalog.FindExactFingerprintId("96x1") == nil
+        and Nexus.BuildCatalog.ResolveFingerprintIdentity(nil, "96x1") == nil
+        and Nexus.BuildCatalog.ResolveOwnerClass({player="Twin",
+            ownerKey="twin@realma",realm="realma",ownerVerified=true}) == nil,
+    "opaque contradictory IDs entered exact or owner authority indexes")
 
 print("BuildCatalog precedence and defensive copies -- OK")

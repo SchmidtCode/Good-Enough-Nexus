@@ -3037,7 +3037,7 @@ local function ReceiveRecord(record, transportSender, relayed)
         local legacyBuildKind = type(legacyBuildId)
         local legacyBuildValid = legacyBuildMissing
             or legacyBuildKind == "string" and #legacyBuildId <= 96
-                and Identity.ValidWireText(legacyBuildId, 96, false, true)
+                and Identity.ValidDisplayText(legacyBuildId, 96, false)
             or legacyBuildKind == "number" and FiniteNumber(legacyBuildId)
         local legacyDuration = legacy and legacy.duration
         local legacyHash = legacy and type(legacy.loadoutHash) == "string"

@@ -276,6 +276,16 @@ assert(changedIdentity.build.displayAuthor:find("Twin-RealmB",1,true) == 1
                 changedIdentity.build, "author"),
     "exact detail borrowed a stale/off-page list identity")
 
+local oversizedIdentityId = "community-oversized-identity"
+exact[oversizedIdentityId] = {
+    id=oversizedIdentityId,title="Oversized identity",
+    author=string.rep("x",4096),class="MAGE",
+    echoes={{spellId=899999,stacks=1}},
+}
+R.Advance(R.BUILD_LIBRARY_CHANGED, {scope="detail-oversized-identity"})
+assert(projection.Detail(oversizedIdentityId, context) == nil,
+    "exact detail ignored public identity quarantine")
+
 local incompleteId = "community-incomplete"
 exact[incompleteId] = {
     id=incompleteId,title="Incomplete",author="Peer",
