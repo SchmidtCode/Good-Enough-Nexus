@@ -8,7 +8,7 @@
 
 - Stage: 47
 - Checkpoint: 47.5
-- Status: IN_PROGRESS
+- Status: IN_REVIEW
 - Branch: `bugfix/test19-wp3-realm-persistence`
 - Starting head: exact reviewed WP2 receipt head `7c95911a7d8584d46a62f2aca20268affef4cfcf`; WP2 product/test/workflow head `1fe8e7f2c0461b92ab1543cbd0b29f31d888950a`
 - Worktree: `.test19-wp3-worktree`
@@ -160,14 +160,7 @@ Present and reconcile public records by proven canonical identity while retainin
 
 ## Active issues
 
-- [x] ISSUE-47.5-R1: Complete collision-safe bounded public identity proof
-  - Impact: MAJOR
-  - Status: RESOLVED
-  - Owner: agent
-  - Unblock Condition: Exact bridge retirement compares the complete represented evidence; ambiguous raw identities and labels are injective/stable/safe; async projection presentation stays inside its work budget; stable realm tie ordering and current detail/list parity hold; expanded adversarial tests plus replacement Fast/review/Full pass.
-  - Evidence Needed: Expected-red/green bridge/collision/malformed/budget/tie/detail matrix, mapped tests, strict Vibe, replacement Fast, independent cumulative PASS, and one replacement Full on frozen bytes.
-  - Notes: The first frozen Full was green but rejected by independent review; #30/#37 invariants and #23/#26 aggregation semantics remain intact.
-  - Resolution: Exact promotion now rejects conflicting duration, explicit build ID, or locked evidence while retaining missing-metadata enrichment. Typed raw ambiguity keys and stable sanitized typed labels preserve realm and ID distinctions. Leaderboard cursor presentation is incremental and bounded, tie order ends on the stable public key, and exact Community detail no longer borrows page-cache identity. Expanded adversarial, stale-detail, work-budget, compatibility, Fast `41/41`, Lua `215/215`, parse `288/288`, workflow, and diff checks pass. Replacement independent review and one replacement frozen Full remain pending.
+- None.
 
 ## Blockers
 
