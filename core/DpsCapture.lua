@@ -2403,7 +2403,10 @@ function DPS.BeginDpsBoardCursor(category)
     return {
         category=category,revisionSource=revisionSource,revision=revision,
         store=store,bucket=type(store[category]) == "table" and store[category] or {},
-        key=nil,rows={},seen={},done=false,
+        key=nil,rows={},presented={},presentedByKey={},ambiguous={},
+        ambiguousByKey={},presentIndex=1,seen={},done=false,
+        phase="acquire",presentation=Identity.NewPublicPresentation(
+            "player", {shadowAmbiguous=true}),
     }
 end
 
@@ -2415,28 +2418,55 @@ function DPS.DpsBoardCursorNext(cursor)
         or cursor.store ~= CharacterBestStore() then
         return true, "DPS changed"
     end
-    local key, row = next(cursor.bucket, cursor.key)
-    cursor.key = key
-    if key == nil then cursor.done = true; return true end
-    local entry = DpsBoardEntry(row, cursor.category, true)
-    if entry then
-        local player = Identity.PublicRecordKey(entry, "player")
-        local existing = cursor.seen[player]
-        if not existing then
-            cursor.rows[#cursor.rows + 1] = entry
-            cursor.seen[player] = #cursor.rows
-        elseif BetterRow(entry, cursor.rows[existing]) then
-            cursor.rows[existing] = entry
+    if cursor.phase == "acquire" then
+        local key, row = next(cursor.bucket, cursor.key)
+        cursor.key = key
+        if key == nil then cursor.phase = "present"; return false end
+        local entry = DpsBoardEntry(row, cursor.category, true)
+        if entry then
+            local player = Identity.PublicRecordKey(entry, "player")
+            local existing = cursor.seen[player]
+            if not existing then
+                cursor.rows[#cursor.rows + 1] = entry
+                cursor.seen[player] = #cursor.rows
+                if Identity.VerifiedOwnerKey(entry) then
+                    Identity.IndexPublicRecord(cursor.presentation, entry)
+                    local presented = Identity.PresentPublicRecord(
+                        cursor.presentation, entry)
+                    cursor.presented[#cursor.presented + 1] = presented
+                    cursor.presentedByKey[player] = #cursor.presented
+                else
+                    cursor.ambiguous[#cursor.ambiguous + 1] = entry
+                    cursor.ambiguousByKey[player] = #cursor.ambiguous
+                end
+            elseif BetterRow(entry, cursor.rows[existing]) then
+                cursor.rows[existing] = entry
+                local presentedIndex = cursor.presentedByKey[player]
+                local ambiguousIndex = cursor.ambiguousByKey[player]
+                if presentedIndex then
+                    cursor.presentation.visible =
+                        math.max(0, cursor.presentation.visible - 1)
+                    cursor.presented[presentedIndex] =
+                        Identity.PresentPublicRecord(cursor.presentation, entry)
+                elseif ambiguousIndex then
+                    cursor.ambiguous[ambiguousIndex] = entry
+                end
+            end
         end
+        return false
     end
+    local entry = cursor.ambiguous[cursor.presentIndex]
+    if not entry then cursor.done = true; return true end
+    cursor.presentIndex = cursor.presentIndex + 1
+    local presented = Identity.PresentPublicRecord(cursor.presentation, entry)
+    if presented then cursor.presented[#cursor.presented + 1] = presented end
     return false
 end
 
 function DPS.DpsBoardCursorResult(cursor)
     if type(cursor) ~= "table" or not cursor.done then return nil end
-    return Identity.PresentPublicRecords(cursor.rows, "player", {
-        shadowAmbiguous=true,
-    })
+    return cursor.presented, {shadowed=cursor.presentation.shadowed,
+        visible=cursor.presentation.visible,invalid=cursor.presentation.invalid}
 end
 
 -- Public board: one row per character for the selected encounter. The row is
@@ -2469,7 +2499,10 @@ function DPS.GetDpsBoard(category)
     table.sort(out, function(a, b)
         if a.dps ~= b.dps then return a.dps > b.dps end
         if a.ts ~= b.ts then return a.ts < b.ts end
-        return tostring(a.player):lower() < tostring(b.player):lower()
+        local left, right = tostring(a.player):lower(), tostring(b.player):lower()
+        if left ~= right then return left < right end
+        return tostring(a.publicIdentityKey or "")
+            < tostring(b.publicIdentityKey or "")
     end)
     return out
 end
@@ -2984,6 +3017,12 @@ local function ReceiveRecord(record, transportSender, relayed)
         storageOwner, storageRealm = canonicalOwner, realm or ownerRealm
     end
 
+    local rawLocked = record.lk or record.lockedEchoes
+    if rawLocked ~= nil and not ValidWireEchoList(rawLocked) then
+        return RejectReceive("schema")
+    end
+    local incomingLocked = NormalizeEchoes(rawLocked)
+
     MigrateLegacyLeaderboard()
     local bucket = CharacterBestStore()[category]
     local characterKey = CharacterKey(player, storageOwner, storageRealm)
@@ -2992,19 +3031,27 @@ local function ReceiveRecord(record, transportSender, relayed)
     local legacyKey = PlayerKey(player)
     if not existing and legacyKey ~= characterKey then
         local legacy = bucket[legacyKey]
+        local incomingBuildId = record.b or record.buildId
+        local legacyLockedKey = legacy
+            and LockedKey(StoredEchoes(legacy, true)) or nil
         local sameLegacyRecord = legacy
             and math.floor(tonumber(legacy.dps) or 0) == math.floor(dps)
             and tonumber(legacy.ts or 0) == tonumber(ts or 0)
+            and tonumber(legacy.duration or 0) == tonumber(duration or 0)
             and tostring(legacy.fingerprint or "") == tostring(fingerprint or "")
+            and tostring(legacy.loadoutHash or "")
+                == tostring(hash or EchoHashFromKey(fingerprint) or "")
+            and (incomingBuildId == nil
+                or type(legacy.buildId) == type(incomingBuildId)
+                    and legacy.buildId == incomingBuildId)
+            -- Missing legacy metadata may be enriched during an otherwise
+            -- exact bridge. Conflicting represented metadata cannot retire it.
+            and (legacyLockedKey == "0"
+                or legacyLockedKey == LockedKey(incomingLocked))
         if sameLegacyRecord then
             existing, existingKey = legacy, legacyKey
         end
     end
-    local rawLocked = record.lk or record.lockedEchoes
-    if rawLocked ~= nil and not ValidWireEchoList(rawLocked) then
-        return RejectReceive("schema")
-    end
-    local incomingLocked = NormalizeEchoes(rawLocked)
     local legacyLocal = not relayed and transportSender == nil
     local existingVerifiedOwner = existing and DPS.VerifiedOwnerKey(existing)
     local promotedBuildId = directOwner and existing

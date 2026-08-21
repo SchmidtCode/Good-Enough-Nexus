@@ -261,6 +261,21 @@ failDetailDps = false
 assert(projection.Detail(selected, context),
     "selected detail did not recover after DPS dependency failure")
 
+-- Exact detail presentation is derived from the current exact record, not a
+-- stale or off-page list-cache label for the same typed ID.
+local changedIdentityId = "community-0020"
+exact[changedIdentityId].author = "Twin-RealmB"
+exact[changedIdentityId].ownerKey = nil
+exact[changedIdentityId].realm = nil
+exact[changedIdentityId].ownerVerified = false
+R.Advance(R.BUILD_LIBRARY_CHANGED, {scope="detail-identity"})
+local changedIdentity = assert(projection.Detail(changedIdentityId, context))
+assert(changedIdentity.build.displayAuthor:find("Twin-RealmB",1,true) == 1
+        and changedIdentity.build.publicIdentityKey
+            == Nexus.Identity.PublicRecordKey(
+                changedIdentity.build, "author"),
+    "exact detail borrowed a stale/off-page list identity")
+
 local incompleteId = "community-incomplete"
 exact[incompleteId] = {
     id=incompleteId,title="Incomplete",author="Peer",

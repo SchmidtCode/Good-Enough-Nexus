@@ -8,7 +8,7 @@
 
 - Stage: 47
 - Checkpoint: 47.5
-- Status: IN_REVIEW
+- Status: IN_PROGRESS
 - Branch: `bugfix/test19-wp3-realm-persistence`
 - Starting head: exact reviewed WP2 receipt head `7c95911a7d8584d46a62f2aca20268affef4cfcf`; WP2 product/test/workflow head `1fe8e7f2c0461b92ab1543cbd0b29f31d888950a`
 - Worktree: `.test19-wp3-worktree`
@@ -36,9 +36,9 @@ Present and reconcile public records by proven canonical identity while retainin
 ## Evidence
 
 - path: .vibe/EVIDENCE.md
-- Checkpoint 47.5 expected-red: `run_public_identity_presentation.lua` failed twice because verified same-name RealmA/RealmB rows had no distinct public labels.
-- Checkpoint 47.5 focused/mapped: public identity, DPS boards, Leaderboard UI, canonical authority, projection, renderer, class, completeness, virtualization, and work-budget runners pass; normal Lua is `215/215`, parse is `288/288`, integration is `70/70`, and module contracts remain `11/208/14/162/17/0`.
-- Checkpoint 47.5 Fast: exact WP2 base `7c95911a7d8584d46a62f2aca20268affef4cfcf` passed `39/39` with zero failed, unavailable, or skipped checks; final cumulative review and the one frozen Full remain pending.
+- Checkpoint 47.5 repair expected-red: the expanded `run_public_identity_presentation.lua` failed twice on the raw RealmA/RealmB ambiguity-key collision before product repair; its duration/build/locked bridge, malformed text, typed ID, stable label, and equal-tie cases now pass.
+- Checkpoint 47.5 repaired focused/mapped: public identity, DPS boards, Leaderboard UI, canonical authority, projection/detail/renderer, class, completeness, virtualization, Stage 30 startup, revisions, and work-budget runners pass; replacement normal Lua is `215/215`, parse is `288/288`, integration is `70/70`, and module contracts remain `11/208/14/162/17/0`.
+- Checkpoint 47.5 repaired Fast: exact WP2 base `7c95911a7d8584d46a62f2aca20268affef4cfcf` passed `41/41` with zero failed, unavailable, or skipped checks; replacement cumulative review and the one replacement frozen Full remain pending.
 - Checkpoint 47.4 final review PASS: cumulative Spec, Standards, and adversarial identity/migration review pass at frozen product/test/contract commit `8dbdd7d`; final exact-head Full passed `18` blocking checks with Lua `214/214`, parse `287/287`, integration `70/70`, zero failures/unavailable, and one explicit manual SavedVariables skip.
 - Checkpoint 47.4 expected-red: the two focused public runners failed deterministically twice on short-key state sharing/name-only persistence and on registration deletion/login-order migration promotion before the repair.
 - Checkpoint 47.4 focused green: realm-qualified Store, conservative account identity, staged legacy migration, Store additive/retirement, GameAdapter, retention, Wishlist/automation, WP2 authority, module contract, and integration `70/70` checks pass; Lua 5.1 parse is `69/69`.
@@ -63,7 +63,8 @@ Present and reconcile public records by proven canonical identity while retainin
 
 ## Work log
 
-- Checkpoint 47.5 implementation is ready for review. One presentation-only Identity batch policy qualifies verified names by exact realm, shadows same-short-name ambiguous leaderboard evidence without touching storage, and collision-labels retained Community ambiguity. DpsCapture applies it before public ranking, Combined carries the same identity, Community applies it before sort/count/page and hydrates the label into card/detail rendering, and the exact bridge/stronger ambiguous/realm/reload/Sync matrix plus Fast `39/39` pass. Full remains reserved for the frozen review candidate.
+- Checkpoint 47.5 frozen review FAIL at `764893f`: the candidate Full passed all `18` blocking checks with zero failed/unavailable and one explicit nonblocking manual SavedVariables skip, but cumulative Spec/Standards/adversarial review proved incomplete exact-bridge equality, ambiguous raw-player/public-label collisions, malformed-label handling, an unmetered end-of-job presentation scan, unstable equal-score realm ordering, and stale/off-page Community detail labeling. ISSUE-47.5-R1 owns one bounded repair; the green Full is not final because product/test bytes must change.
+- Checkpoint 47.5 repair implementation is ready for replacement review. One presentation-only Identity policy retains typed raw ambiguity, uses stable safe typed labels, and incrementally presents async rows inside normal work units. DpsCapture preserves conflicting bridge evidence, processes verified cursor rows during acquisition and only ambiguous rows afterward, and uses stable public-key tie breaks. Community exact detail is independent of list-cache pages. The expanded matrix, compatibility suite, Fast `41/41`, and Lua `215/215` pass; Full remains reserved for the frozen replacement candidate.
 - Checkpoint 47.4 hygiene CLEAN: bounded review found no correctness/security issue, redundant authority path, stale debug/TODO artifact, or behavior-preserving quick win worth post-Full churn. The small Store/migration string-coherence duplication remains an accepted nonblocking judgment call because extracting it would broaden the Identity interface. Artifact policy checked `368` tracked paths with zero violations; exact-range and working diff checks pass; product/test bytes remain frozen.
 - Checkpoint 47.4 is DONE and auto-advanced to 47.5. Final cumulative Spec, Standards, and adversarial review found no actionable persistence/migration defect at `8dbdd7d`; exact receipt head `3875e96` passed Full `18` blocking checks in `407.284s` with Lua `214/214`, parse `287/287`, integration `70/70`, zero failed/unavailable, and the one explicit nonblocking manual SavedVariables skip. No product/test/workflow/contract byte changed after Full.
 - Checkpoint 47.4 second repair is frozen for review at product/test/contract commit `8dbdd7d`; expected-red and all affected/Fast gates pass, no active issue remains, and product/test/workflow/contract bytes are fixed pending cumulative independent review plus the next final Full.
@@ -159,7 +160,14 @@ Present and reconcile public records by proven canonical identity while retainin
 
 ## Active issues
 
-- None.
+- [x] ISSUE-47.5-R1: Complete collision-safe bounded public identity proof
+  - Impact: MAJOR
+  - Status: RESOLVED
+  - Owner: agent
+  - Unblock Condition: Exact bridge retirement compares the complete represented evidence; ambiguous raw identities and labels are injective/stable/safe; async projection presentation stays inside its work budget; stable realm tie ordering and current detail/list parity hold; expanded adversarial tests plus replacement Fast/review/Full pass.
+  - Evidence Needed: Expected-red/green bridge/collision/malformed/budget/tie/detail matrix, mapped tests, strict Vibe, replacement Fast, independent cumulative PASS, and one replacement Full on frozen bytes.
+  - Notes: The first frozen Full was green but rejected by independent review; #30/#37 invariants and #23/#26 aggregation semantics remain intact.
+  - Resolution: Exact promotion now rejects conflicting duration, explicit build ID, or locked evidence while retaining missing-metadata enrichment. Typed raw ambiguity keys and stable sanitized typed labels preserve realm and ID distinctions. Leaderboard cursor presentation is incremental and bounded, tie order ends on the stable public key, and exact Community detail no longer borrows page-cache identity. Expanded adversarial, stale-detail, work-budget, compatibility, Fast `41/41`, Lua `215/215`, parse `288/288`, workflow, and diff checks pass. Replacement independent review and one replacement frozen Full remain pending.
 
 ## Blockers
 

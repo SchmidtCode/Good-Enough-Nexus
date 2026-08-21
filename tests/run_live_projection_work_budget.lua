@@ -312,7 +312,10 @@ local activeLeaderboard = L.VirtualStats()
 local communityFrame = activeCommunityFrame
 assert(duringReceive.publications == beforeReceive.publications + 1
     and duringReceive.binds == beforeReceive.binds + 1,
-    "active Sync did not publish exactly one explicit Leaderboard query")
+    string.format("active Sync did not publish exactly one explicit Leaderboard query (publications %d->%d, binds %d->%d, pending=%s)",
+        beforeReceive.publications,duringReceive.publications,
+        beforeReceive.binds,duringReceive.binds,
+        tostring(activeLeaderboard.interactivePending)))
 assert(activeCommunity.results == beforeCommunityRows
     and activeLeaderboard.publishedRows > 0
     and activeLeaderboard.category == "combined"

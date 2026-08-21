@@ -344,16 +344,6 @@ function Projection.New(options)
             publicBuild.class = NormalizeClass(build.class) or "UNKNOWN"
         end
         Identity.PresentPublicRecords({publicBuild}, "author")
-        for _, listed in ipairs(listCache and listCache.rows or {}) do
-            if type(listed) == "table" and type(listed.id) == type(publicBuild.id)
-                and listed.id == publicBuild.id then
-                publicBuild.displayAuthor = listed.displayAuthor
-                publicBuild.publicIdentityKey = listed.publicIdentityKey
-                publicBuild.publicIdentityVerified =
-                    listed.publicIdentityVerified
-                break
-            end
-        end
 
         local dummy, lk, dummyPersonal, lkPersonal = {}, {}, nil, nil
         if recordId ~= nil then

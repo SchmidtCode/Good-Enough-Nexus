@@ -26,6 +26,7 @@ UnitClass = function() return "Mage", "MAGE" end
 GetNormalizedRealmName = function() return "ViewerRealm" end
 
 local DPS, Codec, Sync = Nexus.DpsCapture, Nexus.Codec, Nexus.Sync
+local Identity = Nexus.Identity
 local function Echoes(spellId)
     return {{spellId=spellId,quality=3,stacks=1}}
 end
@@ -93,14 +94,16 @@ assert(byOwner["twin@realma"].displayPlayer ~= byOwner["twin@realmb"].displayPla
     "different verified realms are not visibly distinguishable")
 
 local function WireRecord(player, spellId, dps, stamp, category,
-        ownerKey, realm)
+        ownerKey, realm, extras)
     local echoes = Echoes(spellId)
-    return {
+    local record = {
         v=7,f=DPS.GetEchoKey(echoes),h=DPS.GetEchoHash(echoes),e=echoes,
         c=category,d=dps,u=category == "lk" and 240 or 65,t=stamp,
         p=player,l=80,k="MAGE",o=ownerKey,r=realm,
         lk={{spellId=spellId+1000,quality=4,stacks=1}},
     }
+    for key, value in pairs(extras or {}) do record[key] = value end
+    return record
 end
 local function Deliver(sender, transferId, record)
     local encoded = Codec.Base64Encode(Codec.JSONEncode(record))
@@ -115,6 +118,32 @@ local function Deliver(sender, transferId, record)
     end
     return result
 end
+
+-- A realm carried only by the durable player field is still part of the
+-- ambiguity tuple. It must not collapse with a different raw realm, and the
+-- resulting public labels must remain distinct without granting authority.
+local qualifiedA = {player="Twin-RealmA",ownerVerified=false}
+local qualifiedB = {player="Twin-RealmB",ownerVerified=false}
+assert(Identity.PublicRecordKey(qualifiedA, "player")
+        ~= Identity.PublicRecordKey(qualifiedB, "player"),
+    "qualified ambiguous players collapsed to the same public identity")
+local qualifiedRows = Identity.PresentPublicRecords(
+    {qualifiedA,qualifiedB}, "player", {shadowAmbiguous=true})
+assert(#qualifiedRows == 2
+        and qualifiedRows[1].displayPlayer ~= qualifiedRows[2].displayPlayer,
+    "qualified ambiguous realms rendered as one public identity")
+
+-- Presentation rejects malformed batch elements and sanitizes hostile durable
+-- text for display without mutating the raw evidence.
+local hostile = {id="hostile",author="Twin\n|cffff0000Spoof|r",
+    ownerVerified=false}
+local safeRows = Identity.PresentPublicRecords({"bad",42,hostile}, "author")
+assert(#safeRows == 1 and safeRows[1] == hostile
+        and hostile.author == "Twin\n|cffff0000Spoof|r"
+        and type(hostile.displayAuthor) == "string"
+        and not hostile.displayAuthor:find("\n",1,true)
+        and not hostile.displayAuthor:find("|c",1,true),
+    "malformed public identity text escaped validation or crashed presentation")
 
 -- A stronger realm-less Sync record remains durable evidence but cannot
 -- displace or visually duplicate either proven Twin.
@@ -144,13 +173,35 @@ assert(not NexusDB.dpsCapture.characterBest.dummy.bridge
         and NexusDB.dpsCapture.characterBest.dummy["bridge@realmc"].ownerVerified,
     "exact bridge did not atomically promote only its matching row")
 
+-- A direct exact sender may promote only a byte-for-byte equivalent public
+-- evidence set. Equal headline score metadata is insufficient when duration,
+-- build identity, or locked evidence differs.
+local function AssertDivergentBridge(name, spellId, shortExtras, exactExtras)
+    local short = WireRecord(name, spellId, 22000000, spellId, "dummy",
+        name:lower().."@realmc", "realmc", shortExtras)
+    assert(Deliver(name, name.."-short", short),
+        name.." ambiguous evidence was not retained")
+    local exact = WireRecord(name, spellId, 22000000, spellId, "dummy",
+        name:lower().."@realmc", "realmc", exactExtras)
+    assert(Deliver(name.."-RealmC", name.."-exact", exact),
+        name.." direct evidence was not retained")
+    local bucket = NexusDB.dpsCapture.characterBest.dummy
+    assert(bucket[name:lower()] and bucket[name:lower().."@realmc"],
+        name.." distinct ambiguous evidence was destructively promoted")
+end
+AssertDivergentBridge("DurationBridge", 810006, {u=65}, {u=66})
+AssertDivergentBridge("BuildBridge", 810007, {b="build-a"}, {b="build-b"})
+AssertDivergentBridge("LockedBridge", 810008,
+    {lk={{spellId=811008,quality=4,stacks=1}}},
+    {lk={{spellId=811009,quality=4,stacks=1}}})
+
 -- Reload retains both proven realms and the shadowed ambiguous evidence.
 Sync.Init(Codec, {})
 DPS.Init({}, Sync)
 assert(NexusDB.dpsCapture.characterBest.dummy.twin,
     "reload erased ambiguous historical evidence")
 dummy = DPS.GetDpsBoard("dummy")
-assert(#dummy == 3, "reload changed public identity reconciliation")
+assert(#dummy == 6, "reload changed public identity reconciliation")
 
 -- The shared projection policy applies to Dummy, LK, Combined, and Community
 -- before sorting/counting/paging. Community builds remain distinct records,
@@ -165,10 +216,16 @@ local builds = {
     legacy={id="legacy",title="Legacy",author="Twin",class="MAGE",
         ownerVerified=false,ordinaryComplete=true,
         echoes=Echoes(820003),fingerprint=DPS.GetEchoKey(Echoes(820003))},
+    [1]={id=1,title="Numeric identity",author="Other",class="MAGE",
+        ownerVerified=false,ordinaryComplete=true,buildId="shared",
+        echoes=Echoes(820004),fingerprint=DPS.GetEchoKey(Echoes(820004))},
+    ["1"]={id="1",title="String identity",author="Other",class="MAGE",
+        ownerVerified=false,ordinaryComplete=true,buildId="shared",
+        echoes=Echoes(820005),fingerprint=DPS.GetEchoKey(Echoes(820005))},
 }
 Nexus.BuildCatalog = {
     Summaries=function() return builds end,
-    Status=function() return {availableCount=3} end,
+    Status=function() return {availableCount=5} end,
 }
 dofile("core/ViewProjections.lua")
 local P = Nexus.ViewProjections
@@ -181,7 +238,7 @@ local function Board(category)
 end
 local projectedDummy, projectedLk, combined =
     Board("dummy"), Board("lk"), Board("combined")
-assert(#projectedDummy == 3 and #projectedLk == 2 and #combined == 2,
+assert(#projectedDummy == 6 and #projectedLk == 2 and #combined == 2,
     "Dummy/LK/Combined did not share canonical identity policy")
 for _, rows in ipairs({projectedDummy,projectedLk,combined}) do
     local labels = {}
@@ -194,8 +251,8 @@ end
 
 local community, summary = P.Builds({currentClassOnly=false,
     qualifiedOnly=false,scope="all",sortMode="title",page=1})
-assert(#community == 3 and summary.filteredTotal == 3
-        and summary.displayedCount == 3,
+assert(#community == 5 and summary.filteredTotal == 5
+        and summary.displayedCount == 5,
     "Community public counts/paging omitted distinct build records")
 local authorLabels = {}
 for _, build in ipairs(community) do
@@ -204,7 +261,42 @@ for _, build in ipairs(community) do
         "Community rendered indistinguishable Twin identities")
     authorLabels[build.displayAuthor] = true
 end
-assert(authorLabels["Twin (legacy/unverified)"],
+local legacyLabel
+for label in pairs(authorLabels) do
+    if label:find("Twin (legacy/unverified ",1,true) == 1 then
+        legacyLabel = label
+    end
+end
+assert(legacyLabel,
     "ambiguous Community evidence lacks an explicit diagnostic label")
+
+local reversed = Identity.PresentPublicRecords(
+    {builds["1"],builds[1]}, "author")
+local stableById = {}
+for _, build in ipairs(community) do
+    if build.id == 1 or build.id == "1" then
+        stableById[type(build.id)..":"..tostring(build.id)] = build.displayAuthor
+    end
+end
+for _, build in ipairs(reversed) do
+    local key = type(build.id)..":"..tostring(build.id)
+    assert(stableById[key] == build.displayAuthor,
+        "ambiguous public label changed with input order")
+end
+
+-- Equal headline scores use the stable public identity as the final rank key.
+local tieA = Row("Tie", "tie@realma", "realma", 830001,
+    18000000, 30, "dummy")
+local tieB = Row("Tie", "tie@realmb", "realmb", 830002,
+    18000000, 30, "dummy")
+local tieBucket = NexusDB.dpsCapture.characterBest.dummy
+tieBucket["tie@realma"],tieBucket["tie@realmb"] = tieA,tieB
+local tieRows = {}
+for _, row in ipairs(DPS.GetDpsBoard("dummy")) do
+    if row.player == "Tie" then tieRows[#tieRows + 1] = row end
+end
+assert(#tieRows == 2 and tieRows[1].publicIdentityKey
+        < tieRows[2].publicIdentityKey,
+    "equal-score realm identities retained hash-order ranking")
 
 print("canonical public reconciliation, realm labels, ambiguity shadowing, reload, and Sync -- OK")

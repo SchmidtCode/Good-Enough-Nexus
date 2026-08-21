@@ -167,17 +167,23 @@ anchorSpellId=nil, leverOptOut={}), `defaultFlags` (DISABLE_SUPPRESSES_GUARANTEE
 
 ## core/Identity.lua — canonical authority and public presentation identity
 
-`Identity.PublicRecordKey(record, field)` and
-`Identity.PresentPublicRecords(rows, field, options)` are presentation-only
+`Identity.PublicRecordKey(record, field)`, the synchronous
+`Identity.PresentPublicRecords(rows, field, options)`, and the incremental
+`NewPublicPresentation`/`IndexPublicRecord`/`PresentPublicRecord` path are
+presentation-only
 consumers of the established `VerifiedOwnerKey` authority. Verified identities
 are keyed and labeled by exact canonical `name@realm`; ambiguous records retain
-their full realm/claim/relay evidence tuple and never gain authority through
-short-name similarity. A public character batch may shadow an ambiguous
+their typed raw player/realm/claim/relay evidence tuple and never gain authority
+through short-name similarity. Labels use a stable typed discriminator, reject
+unsafe durable presentation text, and never depend on traversal order or a
+Community list page. A public character batch may shadow an ambiguous
 same-short-name row when a verified representative is visible, but it does not
 mutate or delete the durable source. Community build batches retain distinct
 build records while applying realm-qualified verified author labels and explicit
-collision-safe `legacy/unverified` labels. This policy does not call or broaden
-`SamePlayer()` and owns no score, loadout, persistence, transport, or paging rule.
+collision-safe `legacy/unverified` labels. Async callers index/present one owned
+row per normal bounded acquisition step; no completion callback rescans the full
+result set. This policy does not call or broaden `SamePlayer()` and owns no score,
+loadout, persistence, transport, or paging rule.
 
 ## core/Store.lua — `Nexus.Store` (SavedVariables: `NexusDB`)
 

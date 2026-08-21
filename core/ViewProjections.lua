@@ -590,7 +590,11 @@ local function CombinedRows()
     counters.leaderboard.sorts = counters.leaderboard.sorts + 1
     table.sort(out, function(left, right)
         if left.average ~= right.average then return left.average > right.average end
-        return tostring(left.player):lower() < tostring(right.player):lower()
+        local leftPlayer, rightPlayer = tostring(left.player):lower(),
+            tostring(right.player):lower()
+        if leftPlayer ~= rightPlayer then return leftPlayer < rightPlayer end
+        return tostring(left.publicIdentityKey or "")
+            < tostring(right.publicIdentityKey or "")
     end)
     return out
 end
@@ -637,11 +641,19 @@ local function LeaderboardBefore(left, right, combined, countComparison)
     if countComparison then countComparison() end
     if combined then
         if left.average ~= right.average then return left.average > right.average end
-        return tostring(left.player):lower() < tostring(right.player):lower()
+        local leftPlayer, rightPlayer = tostring(left.player):lower(),
+            tostring(right.player):lower()
+        if leftPlayer ~= rightPlayer then return leftPlayer < rightPlayer end
+        return tostring(left.publicIdentityKey or "")
+            < tostring(right.publicIdentityKey or "")
     end
     if left.dps ~= right.dps then return left.dps > right.dps end
     if left.ts ~= right.ts then return left.ts < right.ts end
-    return tostring(left.player):lower() < tostring(right.player):lower()
+    local leftPlayer, rightPlayer = tostring(left.player):lower(),
+        tostring(right.player):lower()
+    if leftPlayer ~= rightPlayer then return leftPlayer < rightPlayer end
+    return tostring(left.publicIdentityKey or "")
+        < tostring(right.publicIdentityKey or "")
 end
 
 local function InsertOrdered(rows, row, before, limit, countComparison)
@@ -680,6 +692,7 @@ local function NewBuildJob(filters, key)
     return {
         key=key,filters=filters,state="eligibility",eligibilityCursor=cursor,
         rows={},summary=summary,
+        presentation=Identity.NewPublicPresentation("author"),
     }
 end
 
@@ -754,7 +767,6 @@ local function PumpBuildJob(job, unit)
             sourceRows = sourceRows + 1
             if err then return nil, err end
             if done then
-                job.rows = Identity.PresentPublicRecords(job.rows, "author")
                 job.summary.filtered = #job.rows
                 job.summary.qualifyingCount = job.summary.qualifying
                 job.summary.resultCount = #job.rows
@@ -822,7 +834,10 @@ local function PumpBuildJob(job, unit)
                         or dummy <= 0 and lk <= 0 and "missing both"
                         or dummy <= 0 and "missing Dummy" or "missing Lich King"
                     build._nexusBestDps = build._nexusDps.best
-                    job.rows[#job.rows + 1] = build
+                    Identity.IndexPublicRecord(job.presentation, build)
+                    local presented = Identity.PresentPublicRecord(
+                        job.presentation, build)
+                    if presented then job.rows[#job.rows + 1] = presented end
                     workStats.copies = workStats.copies + 1
                     unit.copies = (unit.copies or 0) + 1
                 end
