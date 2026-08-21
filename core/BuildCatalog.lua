@@ -276,6 +276,20 @@ local function SelectedRaw(id)
     return nil, nil
 end
 
+local function ScalarRecordId(id)
+    local kind = type(id)
+    if kind == "string" or kind == "number" or kind == "boolean" then
+        return id
+    end
+end
+
+local function RecordIdCoherent(record, id)
+    if type(record) ~= "table" then return false end
+    local durableId = ScalarRecordId(id)
+    return durableId ~= nil and (record.id == nil
+        or type(record.id) == type(durableId) and record.id == durableId)
+end
+
 local function StatusState(id)
     local overlay = db and type(db.communityBuilds) == "table"
         and db.communityBuilds or {}
@@ -284,7 +298,7 @@ local function StatusState(id)
     return {
         overlay=overlay[id] ~= nil,
         tombstone=tombstones[id] ~= nil,
-        available=SelectedRaw(id) ~= nil,
+        available=RecordIdCoherent(SelectedRaw(id), id),
     }
 end
 
@@ -313,20 +327,6 @@ end
 local function Selected(id)
     EnsureBound()
     return SelectedRaw(id)
-end
-
-local function ScalarRecordId(id)
-    local kind = type(id)
-    if kind == "string" or kind == "number" or kind == "boolean" then
-        return id
-    end
-end
-
-local function RecordIdCoherent(record, id)
-    if type(record) ~= "table" then return false end
-    local durableId = ScalarRecordId(id)
-    return durableId ~= nil and (record.id == nil
-        or type(record.id) == type(durableId) and record.id == durableId)
 end
 
 local function RestoreRecordId(record, id)
@@ -451,12 +451,16 @@ local function MergedCountRaw()
     local count, seen = 0, {}
     for id in pairs(baseline) do
         seen[id] = true
-        if SelectedRaw(id) then count = count + 1 end
+        local record = SelectedRaw(id)
+        if RecordIdCoherent(record, id) then count = count + 1 end
     end
     local overlay = db and type(db.communityBuilds) == "table"
         and db.communityBuilds or {}
     for id in pairs(overlay) do
-        if not seen[id] and SelectedRaw(id) then count = count + 1 end
+        if not seen[id] then
+            local record = SelectedRaw(id)
+            if RecordIdCoherent(record, id) then count = count + 1 end
+        end
     end
     return count
 end
@@ -969,6 +973,9 @@ function Catalog.ValidateLegacyFingerprintClaim(rawId, record)
     if type(raw) ~= "table" then
         return nil, "exact represented build is unavailable"
     end
+    if not RecordIdCoherent(raw, rawId) then
+        return nil, "exact represented build identity is contradictory"
+    end
     if Identity.SavedMirrorKind(raw) ~= "ordinary" then
         return nil, "historical build identity is private"
     end
@@ -1269,13 +1276,15 @@ local function RebuildAuthorIndex()
     for id in pairs(baseline) do
         seen[id] = true
         local record = SelectedRaw(id)
-        local key = record and AuthorKey(record.author)
+        local key = RecordIdCoherent(record, id)
+            and AuthorKey(record.author) or nil
         if key then nextIndex[key] = true end
     end
     for id in pairs(db and db.communityBuilds or {}) do
         if not seen[id] then
             local record = SelectedRaw(id)
-            local key = record and AuthorKey(record.author)
+            local key = RecordIdCoherent(record, id)
+                and AuthorKey(record.author) or nil
             if key then nextIndex[key] = true end
         end
     end

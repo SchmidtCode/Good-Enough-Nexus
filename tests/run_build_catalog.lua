@@ -119,11 +119,11 @@ local allocationDb = {
         malformedTwin={title="Second missing identity",author="Twin",
             future={keep=true}},
         mismatched={id="different-id",future={keep=true}},
-        slotA={id="shared",title="Contradictory A",author="Twin",
+        slotA={id="shared",title="Contradictory A",author="Ghost",
             ownerKey="twin@realma",realm="realma",ownerVerified=true,
             class="MAGE",fingerprint="96x1",
             echoes={{spellId=96,stacks=1}}},
-        slotB={id="shared",title="Contradictory B",author="Twin",
+        slotB={id="shared",title="Contradictory B",author="Phantom",
             ownerKey="twin@realma",realm="realma",ownerVerified=true,
             class="MAGE",fingerprint="97x1",
             echoes={{spellId=97,stacks=1}}},
@@ -148,7 +148,7 @@ local allocationBundle = {
             echoes={{spellId=95,stacks=1}}},
     },
 }
-Nexus.BuildCatalog.Init(allocationDb, allocationBundle)
+local allocationSummary = Nexus.BuildCatalog.Init(allocationDb, allocationBundle)
 local occupancy, represented =
     Nexus.BuildCatalog.AllocationOccupancy("absent")
 assert(occupancy == "absent" and represented == nil,
@@ -251,5 +251,30 @@ assert(Nexus.BuildCatalog.FindExactFingerprintId("96x1") == nil
         and Nexus.BuildCatalog.ResolveOwnerClass({player="Twin",
             ownerKey="twin@realma",realm="realma",ownerVerified=true}) == nil,
     "opaque contradictory IDs entered exact or owner authority indexes")
+local slotAVerdict = Nexus.LoadoutEvidence.OrdinaryCompleteness(
+    allocationDb.communityBuilds.slotA)
+local slotAHash = Nexus.LoadoutEvidence.CompatibilityHash(
+    slotAVerdict and slotAVerdict.fingerprint)
+assert(slotAHash and Nexus.BuildCatalog.ResolveFingerprintIdentity(
+        "slotA", "@" .. slotAHash, {legacyRecord={
+            buildId="shared",fingerprint="@" .. slotAHash,
+            loadoutHash=slotAHash,echoes={{spellId=96,stacks=1}},
+        }}) == nil,
+    "opaque contradictory ID supplied legacy fingerprint authority")
+assert(Nexus.BuildCatalog.IsAuthor("Twin") == true
+        and Nexus.BuildCatalog.IsAuthor("Ghost") == false
+        and Nexus.BuildCatalog.IsAuthor("Phantom") == false,
+    "opaque contradictory IDs entered the public author index")
+local publicCount = 0
+for _ in pairs(syncSummaries) do publicCount = publicCount + 1 end
+local allocationStatus = Nexus.BuildCatalog.Status()
+assert(Nexus.BuildCatalog.Count() == publicCount
+        and allocationSummary.merged == publicCount
+        and allocationStatus.availableCount == publicCount,
+    "opaque catalog rows inflated public availability counts: summaries="
+        .. tostring(publicCount) .. ", count="
+        .. tostring(Nexus.BuildCatalog.Count()) .. ", init="
+        .. tostring(allocationSummary.merged) .. ", status="
+        .. tostring(allocationStatus.availableCount))
 
 print("BuildCatalog precedence and defensive copies -- OK")
