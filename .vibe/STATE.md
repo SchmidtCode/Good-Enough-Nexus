@@ -8,7 +8,7 @@
 
 - Stage: 47
 - Checkpoint: 47.4
-- Status: IN_PROGRESS
+- Status: IN_REVIEW
 - Branch: `bugfix/test19-wp3-realm-persistence`
 - Starting head: exact reviewed WP2 receipt head `7c95911a7d8584d46a62f2aca20268affef4cfcf`; WP2 product/test/workflow head `1fe8e7f2c0461b92ab1543cbd0b29f31d888950a`
 - Worktree: `.test19-wp3-worktree`
@@ -58,6 +58,7 @@ Key mutable character state by canonical `name@realm` and make every registratio
 
 ## Work log
 
+- Checkpoint 47.4 second repair is frozen for review at product/test/contract commit `8dbdd7d`; expected-red and all affected/Fast gates pass, no active issue remains, and product/test/workflow/contract bytes are fixed pending cumulative independent review plus the next final Full.
 - ISSUE-47.4-R2 resolved: Store now checks account write authority before allocation; only raw already-normalized canonical and `@unknown` keys gain direct key authority; case aliases use injective recovery keys; whole-registry deep copy/equality is removed in favor of the exact account-table ownership boundary and bounded shallow row-shell preservation. The expanded repair runner, related `18/18`, Lua parse `287/287`, workflow policy, strict diff checks, and Fast `22/22` pass.
 - Checkpoint 47.4 repeat review FAIL at exact receipt head `8fb6767`: replacement Full passed all `18` blocking checks with Lua `214/214`, parse `287/287`, integration `70/70`, zero failed/unavailable, and one explicit manual skip, while Spec/adversarial review still proved pre-guard account allocation, normalized-case recovery/canonical collisions, and an unbounded/graph-unsafe deep snapshot mechanism. Standards passed. ISSUE-47.4-R2 owns the remaining bounded repair; the green Full is not final because product/test bytes must change.
 - Checkpoint 47.4 repair is frozen for repeat review at product/test/docs commit `3e4c0ef`. ISSUE-47.4-R1 is resolved with expected-red proof, related `18/18`, Lua parse `287/287`, workflow policy, strict Vibe, diff checks, and exact-base Fast `22/22`; no product, test, workflow, or contract byte may change during the replacement review.
