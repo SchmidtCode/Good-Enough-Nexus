@@ -1222,7 +1222,13 @@ function Catalog.SummaryCursorNext(cursor)
         fromOverlay = true
     end
     local record = id ~= nil and SelectedRaw(id) or nil
-    return record and SummaryRecord(record) or nil, false, nil,
+    local summary = record and SummaryRecord(record) or nil
+    local idKind = type(id)
+    if summary and summary.id == nil and (idKind == "string"
+            or idKind == "number" or idKind == "boolean") then
+        summary.id = id
+    end
+    return summary, false, nil,
         fromBaseline, fromOverlay
 end
 

@@ -114,7 +114,10 @@ local allocationDb = {
         opaque="future-owned-row",
         booleanOpaque=false,
         opaqueBundled="future-owned-bundled-row",
-        malformed={title="Missing durable identity",future={keep=true}},
+        malformed={title="Missing durable identity",author="Twin",
+            future={keep=true}},
+        malformedTwin={title="Second missing identity",author="Twin",
+            future={keep=true}},
         mismatched={id="different-id",future={keep=true}},
         visible={id="visible",title="Visible",echoes={{spellId=91,stacks=1}}},
         shadowed={id="shadowed",title="Overlay on bundled ID",
@@ -201,5 +204,24 @@ assert(occupancy == "tombstone" and represented == nil
     and allocationDb.syncTombstones.tombstoned.future.keep == true
     and allocationBundle.builds.tombstoned.title == "Tombstone target",
     "tombstone evidence was exposed, cleared, or reported free")
+
+-- A malformed historical row can be retained under a durable typed map key
+-- without carrying an id field.  The resumable public summary restores that
+-- key so distinct records cannot receive the same presentation identity.
+local cursor = Nexus.BuildCatalog.BeginSummaryCursor()
+local summaries = {}
+while true do
+    local item, done, err = Nexus.BuildCatalog.SummaryCursorNext(cursor)
+    assert(not err, err)
+    if item then summaries[item.id] = item end
+    if done then break end
+end
+assert(summaries.malformed and summaries.malformed.title
+        == "Missing durable identity"
+        and summaries.malformedTwin
+        and summaries.malformedTwin.title == "Second missing identity"
+        and Nexus.Identity.PublicRecordKey(summaries.malformed, "author")
+            ~= Nexus.Identity.PublicRecordKey(summaries.malformedTwin, "author"),
+    "summary cursor did not restore the durable map key as a missing id")
 
 print("BuildCatalog precedence and defensive copies -- OK")

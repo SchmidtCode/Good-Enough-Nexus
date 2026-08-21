@@ -266,8 +266,21 @@ function Identity.VerifiedOwnerKey(record)
     return Identity.CoherentRecordOwnerKey(record)
 end
 
-local function PublicTyped(value)
-    local kind, text = type(value), tostring(value == nil and "" or value)
+local function PublicTyped(value, maxBytes)
+    local kind = type(value)
+    if value == nil then return "nil:0:" end
+    if kind ~= "string" and kind ~= "number" and kind ~= "boolean" then
+        return kind .. ":7:invalid"
+    end
+    local text = kind == "number" and value ~= value and "nan"
+        or tostring(value)
+    -- Public identity is computed inside bounded projection work.  Retain the
+    -- exact typed scalar only while it is a bounded valid wire/display token;
+    -- malformed durable text stays ambiguous without copying an unbounded
+    -- SavedVariables string into every projected key.
+    if not Identity.ValidDisplayText(text, maxBytes or 177, true) then
+        return kind .. ":" .. tostring(#text) .. ":invalid"
+    end
     return kind .. ":" .. tostring(#text) .. ":" .. text
 end
 
@@ -287,9 +300,18 @@ function Identity.PublicRecordKey(record, field)
     if type(record) ~= "table" then return "invalid" end
     local verified = Identity.VerifiedOwnerKey(record)
     if verified then return "verified:" .. verified end
-    return table.concat({"legacy",PublicTyped(record[field]),
-        PublicTyped(record.realm),PublicTyped(record.ownerKey),
-        PublicTyped(record.claimedOwnerKey),PublicTyped(record.relaySender)}, "|")
+    local parts = {"legacy",PublicTyped(record[field], 80),
+        PublicTyped(record.realm, 96),PublicTyped(record.ownerKey, 177),
+        PublicTyped(record.claimedOwnerKey, 177),
+        PublicTyped(record.relaySender, 80)}
+    -- Community rows are records rather than per-character aggregates.  Their
+    -- durable catalog identity must remain part of the public key even when
+    -- author/provenance fields are otherwise identical.
+    if field == "author" then
+        parts[#parts + 1] = PublicTyped(record.id, 96)
+        parts[#parts + 1] = PublicTyped(record.buildId, 96)
+    end
+    return table.concat(parts, "|")
 end
 
 local function VerifiedPublicLabel(record, field, ownerKey)
@@ -299,11 +321,12 @@ end
 
 local function SafePublicToken(value, maxBytes)
     if value == nil then return "nil:0:" end
-    local kind, text = type(value), tostring(value)
+    local kind = type(value)
     if kind ~= "string" and kind ~= "number" and kind ~= "boolean" then
         return kind .. ":7:invalid"
     end
-    if kind == "number" and value ~= value then text = "nan" end
+    local text = kind == "number" and value ~= value and "nan"
+        or tostring(value)
     if not Identity.ValidDisplayText(text, maxBytes or 177, true) then
         return kind .. ":7:invalid"
     end

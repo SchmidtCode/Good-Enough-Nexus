@@ -3032,16 +3032,21 @@ local function ReceiveRecord(record, transportSender, relayed)
     if not existing and legacyKey ~= characterKey then
         local legacy = bucket[legacyKey]
         local incomingBuildId = record.b or record.buildId
+        local legacyDuration = legacy and tonumber(legacy.duration) or nil
+        local legacyHash = legacy and type(legacy.loadoutHash) == "string"
+            and legacy.loadoutHash or nil
+        local incomingHash = tostring(hash or EchoHashFromKey(fingerprint) or "")
         local legacyLockedKey = legacy
             and LockedKey(StoredEchoes(legacy, true)) or nil
         local sameLegacyRecord = legacy
             and math.floor(tonumber(legacy.dps) or 0) == math.floor(dps)
             and tonumber(legacy.ts or 0) == tonumber(ts or 0)
-            and tonumber(legacy.duration or 0) == tonumber(duration or 0)
+            and (legacyDuration == nil or legacyDuration == 0
+                or legacyDuration == tonumber(duration or 0))
             and tostring(legacy.fingerprint or "") == tostring(fingerprint or "")
-            and tostring(legacy.loadoutHash or "")
-                == tostring(hash or EchoHashFromKey(fingerprint) or "")
-            and (incomingBuildId == nil
+            and (legacy.loadoutHash == nil or legacyHash == ""
+                or legacyHash == incomingHash)
+            and (legacy.buildId == nil or incomingBuildId == nil
                 or type(legacy.buildId) == type(incomingBuildId)
                     and legacy.buildId == incomingBuildId)
             -- Missing legacy metadata may be enriched during an otherwise

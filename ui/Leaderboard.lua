@@ -224,7 +224,10 @@ local function CombinedRows()
             })
             local ownerKey = Identity.VerifiedOwnerKey(lrow)
             out[#out+1] = {
-                player=lrow.player, dps=avg, average=avg, dummyDps=drow.dps, lkDps=lrow.dps,
+                player=lrow.player,displayPlayer=lrow.displayPlayer,
+                publicIdentityKey=lrow.publicIdentityKey,
+                publicIdentityVerified=lrow.publicIdentityVerified,
+                dps=avg, average=avg, dummyDps=drow.dps, lkDps=lrow.dps,
                 dummyDuration=drow.duration, lkDuration=lrow.duration,
                 level=math.max(tonumber(drow.level) or 0, tonumber(lrow.level) or 0),
                 ts=math.min(tonumber(drow.ts) or 0, tonumber(lrow.ts) or 0),
@@ -263,7 +266,11 @@ local function CombinedRows()
     end
     table.sort(out,function(a,b)
         if a.average ~= b.average then return a.average > b.average end
-        return tostring(a.player):lower() < tostring(b.player):lower()
+        local leftPlayer, rightPlayer = tostring(a.player):lower(),
+            tostring(b.player):lower()
+        if leftPlayer ~= rightPlayer then return leftPlayer < rightPlayer end
+        return tostring(a.publicIdentityKey or "")
+            < tostring(b.publicIdentityKey or "")
     end)
     return out
 end

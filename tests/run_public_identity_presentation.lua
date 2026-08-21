@@ -144,6 +144,21 @@ assert(#safeRows == 1 and safeRows[1] == hostile
         and not hostile.displayAuthor:find("\n",1,true)
         and not hostile.displayAuthor:find("|c",1,true),
     "malformed public identity text escaped validation or crashed presentation")
+local explosive = setmetatable({}, {__tostring=function()
+    error("hostile tostring")
+end})
+local malformedA, malformedB = {player=explosive}, {player={}}
+local malformedOk, malformedRows = pcall(Identity.PresentPublicRecords,
+    {malformedA,malformedB}, "player")
+assert(malformedOk and #malformedRows == 2
+        and malformedRows[1].publicIdentityKey
+            == malformedRows[2].publicIdentityKey,
+    "unsupported identity values invoked tostring or produced unstable keys")
+local oversized = {player=string.rep("x", 4096),ownerVerified=false}
+Identity.PresentPublicRecords({oversized}, "player")
+assert(#oversized.publicIdentityKey < 256
+        and oversized.publicIdentityKey:find(":4096:invalid",1,true),
+    "oversized malformed identity escaped the bounded public key")
 
 -- A stronger realm-less Sync record remains durable evidence but cannot
 -- displace or visually duplicate either proven Twin.
@@ -173,6 +188,30 @@ assert(not NexusDB.dpsCapture.characterBest.dummy.bridge
         and NexusDB.dpsCapture.characterBest.dummy["bridge@realmc"].ownerVerified,
     "exact bridge did not atomically promote only its matching row")
 
+-- Historical short rows may predate derived metadata.  Missing duration/hash,
+-- build ID, or locked evidence can be enriched only when every represented
+-- identity and score field is otherwise exact.
+local missing = WireRecord("MissingBridge", 810009, 22500000, 22, "dummy",
+    "missingbridge@realmc", "realmc")
+assert(Deliver("MissingBridge", "missing-short", missing),
+    "historical missing-metadata fixture was not retained")
+local missingRow = NexusDB.dpsCapture.characterBest.dummy.missingbridge
+missingRow.duration,missingRow.loadoutHash,missingRow.buildId,
+    missingRow.lockedEchoes = nil,nil,nil,nil
+missing.b = "new-build-id"
+assert(Deliver("MissingBridge-RealmC", "missing-exact", missing),
+    "exact historical bridge was not accepted")
+local missingCanonical =
+    NexusDB.dpsCapture.characterBest.dummy["missingbridge@realmc"]
+assert(not NexusDB.dpsCapture.characterBest.dummy.missingbridge
+        and missingCanonical and missingCanonical.ownerVerified == true
+        and missingCanonical.duration == 65
+        and type(missingCanonical.loadoutHash) == "string"
+        and missingCanonical.loadoutHash ~= ""
+        and missingCanonical.buildId == "new-build-id"
+        and type(missingCanonical.lockedEchoes) == "table",
+    "missing historical metadata blocked or weakened exact promotion")
+
 -- A direct exact sender may promote only a byte-for-byte equivalent public
 -- evidence set. Equal headline score metadata is insufficient when duration,
 -- build identity, or locked evidence differs.
@@ -201,7 +240,7 @@ DPS.Init({}, Sync)
 assert(NexusDB.dpsCapture.characterBest.dummy.twin,
     "reload erased ambiguous historical evidence")
 dummy = DPS.GetDpsBoard("dummy")
-assert(#dummy == 6, "reload changed public identity reconciliation")
+assert(#dummy == 7, "reload changed public identity reconciliation")
 
 -- The shared projection policy applies to Dummy, LK, Combined, and Community
 -- before sorting/counting/paging. Community builds remain distinct records,
@@ -238,7 +277,7 @@ local function Board(category)
 end
 local projectedDummy, projectedLk, combined =
     Board("dummy"), Board("lk"), Board("combined")
-assert(#projectedDummy == 6 and #projectedLk == 2 and #combined == 2,
+assert(#projectedDummy == 7 and #projectedLk == 2 and #combined == 2,
     "Dummy/LK/Combined did not share canonical identity policy")
 for _, rows in ipairs({projectedDummy,projectedLk,combined}) do
     local labels = {}
