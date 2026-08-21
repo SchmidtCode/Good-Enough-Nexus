@@ -225,11 +225,11 @@ depends_on: [47.1]
 - Evidence:
   - Stale/collision expected-red matrix, focused green, and independent review receipt.
 
-### 47.4 — Qualify mutable character state and preserve ambiguous legacy evidence (#30, #37)
+### (DONE) 47.4 — Qualify mutable character state and preserve ambiguous legacy evidence (#30, #37)
 
 depends_on: [47.1]
 
-- Status: `NOT_STARTED`
+- Status: `DONE`
 - Objective:
   - Key mutable character state by canonical `name@realm` and make every registration/migration path preserve ambiguous short-name and `@unknown` evidence.
 - Deliverables:
@@ -237,11 +237,11 @@ depends_on: [47.1]
   - Coordinated conservative handling in `core/Store.lua` and `core/LegacyDataMigration.lua`.
   - Focused realm-unavailable, two-realm, login-order, canonical-wins, ambiguous-legacy, and reload coverage.
 - Acceptance:
-  - [ ] RealmA and RealmB mutable state remain independent under the same short name.
-  - [ ] Realm-unavailable startup creates no durable `name@unknown` mutable key.
-  - [ ] Existing canonical state wins without deleting or absorbing ambiguous legacy evidence.
-  - [ ] Both registration and legacy migration preserve `@unknown`/short-key evidence regardless of login order.
-  - [ ] Focused Store/migration tests, mapped tests, Lua 5.1 parse, Fast, required review/Full, and diff checks pass.
+  - [x] RealmA and RealmB mutable state remain independent under the same short name.
+  - [x] Realm-unavailable startup creates no durable `name@unknown` mutable key.
+  - [x] Existing canonical state wins without deleting or absorbing ambiguous legacy evidence.
+  - [x] Both registration and legacy migration preserve `@unknown`/short-key evidence regardless of login order.
+  - [x] Focused Store/migration tests, mapped tests, Lua 5.1 parse, Fast, required review/Full, and diff checks pass.
 - Demo commands:
   - `luajit tests/run_store_legacy_retirement.lua && luajit tests/run_legacy_data_migration.lua`
   - `luajit tests/run_realm_qualified_state.lua`
@@ -249,11 +249,11 @@ depends_on: [47.1]
 - Evidence:
   - Realm/login-order expected-red matrix, focused green, and independent review receipt.
 
-### 47.5 — Reconcile public same-name evidence without erasure (#19)
+### (DONE) 47.5 — Reconcile public same-name evidence without erasure (#19)
 
 depends_on: [47.2, 47.3, 47.4]
 
-- Status: `NOT_STARTED`
+- Status: `DONE`
 - Objective:
   - Present and reconcile public records by proven canonical identity while retaining distinguishable ambiguous legacy and better historical evidence.
 - Deliverables:
@@ -261,12 +261,12 @@ depends_on: [47.2, 47.3, 47.4]
   - Focused verified-same, verified-different-realm, ambiguous-legacy, reload, and Sync reintroduction coverage.
   - No destructive historical-DPS cleanup for visual convenience.
 - Acceptance:
-  - [ ] The same proven canonical identity may reconcile deterministically.
-  - [ ] Proven different realms remain separate and visibly distinguishable.
-  - [ ] Verified and ambiguous legacy evidence never render as indistinguishable duplicate rows.
-  - [ ] Better historical DPS is preserved when authority is insufficient to merge or discard it.
-  - [ ] Dummy, LK, Combined, Community, reload, and Sync use one identity policy.
-  - [ ] Focused UI/board tests, mapped tests, Fast, required review/Full, and diff checks pass.
+  - [x] The same proven canonical identity may reconcile deterministically.
+  - [x] Proven different realms remain separate and visibly distinguishable.
+  - [x] Verified and ambiguous legacy evidence never render as indistinguishable duplicate rows.
+  - [x] Better historical DPS is preserved when authority is insufficient to merge or discard it.
+  - [x] Dummy, LK, Combined, Community, reload, and Sync use one identity policy.
+  - [x] Focused UI/board tests, mapped tests, Fast, required review/Full, and diff checks pass.
 - Demo commands:
   - `luajit tests/run_dps_boards.lua && luajit tests/run_leaderboard_ui.lua`
   - `luajit tests/run_public_identity_presentation.lua`

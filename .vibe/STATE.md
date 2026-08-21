@@ -8,7 +8,7 @@
 
 - Stage: 47
 - Checkpoint: 47.5
-- Status: IN_REVIEW
+- Status: DONE
 - Branch: `bugfix/test19-wp3-realm-persistence`
 - Starting head: exact reviewed WP2 receipt head `7c95911a7d8584d46a62f2aca20268affef4cfcf`; WP2 product/test/workflow head `1fe8e7f2c0461b92ab1543cbd0b29f31d888950a`
 - Worktree: `.test19-wp3-worktree`
@@ -31,7 +31,7 @@ Present and reconcile public records by proven canonical identity while retainin
 - [x] Verified and ambiguous legacy evidence never render as indistinguishable duplicate rows.
 - [x] Better historical DPS is preserved when authority is insufficient to merge or discard it.
 - [x] Dummy, LK, Combined, Community, reload, and Sync use one identity policy.
-- [ ] Focused UI/board tests, mapped tests, Fast, required review/Full, and diff checks pass.
+- [x] Focused UI/board tests, mapped tests, Fast, required review/Full, and diff checks pass.
 
 ## Evidence
 
@@ -50,6 +50,8 @@ Present and reconcile public records by proven canonical identity while retainin
 - Checkpoint 47.5 sixth repair is frozen at product/test candidate `e6f4d37`; no product/test/workflow/contract byte may change during the next cumulative review. Full remains unrun.
 - Checkpoint 47.5 seventh repair: synchronous and resumable Community projections now apply public-identity quarantine before total/ready/available/filter/ownership counts, DPS joins, sort, and paging. Exact sync and 1,000-row async fixtures prove that one oversized retained author remains internal while every public count matches the visible eligible corpus; 12 affected suites, parse `288/288`, and Fast `45/45` pass. Review and Full remain pending.
 - Checkpoint 47.5 seventh repair is frozen at product/test candidate `915a313`; no product/test/workflow/contract byte may change during the next cumulative review. Full remains unrun.
+- Checkpoint 47.5 final PASS: Spec, Standards, and adversarial review accepted exact receipt `c841937` / product-test candidate `915a313`; the replacement Full passed all `18` blocking checks in `410.618s` with Lua `215/215`, parse `288/288`, integration `70/70`, zero failed/unavailable, and the one explicit nonblocking manual SavedVariables skip.
+- Checkpoint 47.5 hygiene CLEAN: the bounded 30-file WP3 surface has no remaining correctness/security finding, redundant policy owner, stale temporary marker, or behavior-preserving quick win worth post-Full churn. Product/test/workflow/contract bytes remain frozen at `915a313`.
 - Checkpoint 47.4 final review PASS: cumulative Spec, Standards, and adversarial identity/migration review pass at frozen product/test/contract commit `8dbdd7d`; final exact-head Full passed `18` blocking checks with Lua `214/214`, parse `287/287`, integration `70/70`, zero failures/unavailable, and one explicit manual SavedVariables skip.
 - Checkpoint 47.4 expected-red: the two focused public runners failed deterministically twice on short-key state sharing/name-only persistence and on registration deletion/login-order migration promotion before the repair.
 - Checkpoint 47.4 focused green: realm-qualified Store, conservative account identity, staged legacy migration, Store additive/retirement, GameAdapter, retention, Wishlist/automation, WP2 authority, module contract, and integration `70/70` checks pass; Lua 5.1 parse is `69/69`.
@@ -74,6 +76,7 @@ Present and reconcile public records by proven canonical identity while retainin
 
 ## Work log
 
+- Checkpoint 47.5 is DONE. Exact candidate `915a313` passed cumulative Spec, Standards, and adversarial review at receipt `c841937`; the one replacement Full passed `18` blocking checks with zero failed/unavailable and one explicit manual SavedVariables skip; bounded hygiene was CLEAN. No governed byte changed after review or Full.
 - Checkpoint 47.5 frozen review FAIL at `764893f`: the candidate Full passed all `18` blocking checks with zero failed/unavailable and one explicit nonblocking manual SavedVariables skip, but cumulative Spec/Standards/adversarial review proved incomplete exact-bridge equality, ambiguous raw-player/public-label collisions, malformed-label handling, an unmetered end-of-job presentation scan, unstable equal-score realm ordering, and stale/off-page Community detail labeling. ISSUE-47.5-R1 owns one bounded repair; the green Full is not final because product/test bytes must change.
 - Checkpoint 47.5 repair implementation is ready for replacement review. One presentation-only Identity policy retains typed raw ambiguity, uses stable safe typed labels, and incrementally presents async rows inside normal work units. DpsCapture preserves conflicting bridge evidence, processes verified cursor rows during acquisition and only ambiguous rows afterward, and uses stable public-key tie breaks. Community exact detail is independent of list-cache pages. The expanded matrix, compatibility suite, Fast `41/41`, and Lua `215/215` pass; Full remains reserved for the frozen replacement candidate.
 - Checkpoint 47.5 second repair is frozen for exact-head review at product/test candidate `9df2da6`. Repeated red fixtures covered hostile scalar serialization and projection-free Combined presentation; the expanded matrix also covers bounded oversized text, historical missing duration/hash/build/locked metadata, and missing catalog IDs. Focused tests, the complete Lua inventory `215/215`, Lua parse `288/288`, and exact-base Fast `44/44` pass. Full remains reserved until all three repeat reviews accept the committed candidate.
