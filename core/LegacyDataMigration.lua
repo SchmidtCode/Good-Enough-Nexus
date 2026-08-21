@@ -271,32 +271,63 @@ local function NormalizeAccount(meta, sourceKey, source)
         Quarantine(meta, "account", sourceKey, "malformed account row")
         return nil
     end
-    local ownerKey = Identity.CanonicalOwnerKey(source.ownerKey)
-        or Identity.CanonicalOwnerKey(sourceKey)
+    local declaredOwner = Identity.CanonicalOwnerKey(source.ownerKey)
+    local indexedOwner = Identity.CanonicalOwnerKey(sourceKey)
     local name = Identity.DisplayPlayer(source.name)
-    if not name and ownerKey then name = ownerKey:match("^([^@]+)@") end
-    if not ownerKey and name and type(source.realm) == "string" then
-        ownerKey = Identity.OwnerKey(name, source.realm)
+    if not name and declaredOwner then
+        name = declaredOwner:match("^([^@]+)@")
     end
-    local localOwner = CurrentOwnerKey()
-    if ownerKey and ownerKey:match("@unknown$") then
-        if localOwner and Identity.PlayerKey(name or sourceKey)
-            == localOwner:match("^([^@]+)@") then
-            ownerKey = localOwner
-        else
-            ownerKey = nil
+    if not name and indexedOwner then name = indexedOwner:match("^([^@]+)@") end
+    if not name then name = Identity.DisplayPlayer(sourceKey) end
+
+    local realmOwner
+    if name and type(source.realm) == "string" then
+        realmOwner = Identity.OwnerKey(name, source.realm)
+    end
+
+    local ownerKey
+    local candidates = {declaredOwner, indexedOwner, realmOwner}
+    for index = 1, 3 do
+        local candidate = candidates[index]
+        if candidate and not candidate:match("@unknown$") then
+            if ownerKey and ownerKey ~= candidate then
+                ownerKey = nil
+                break
+            end
+            ownerKey = candidate
         end
     end
-    if not ownerKey or not name
-        or not Identity.OwnerKeyMatchesAuthor(ownerKey, name) then
+
+    if ownerKey and name and Identity.OwnerKeyMatchesAuthor(ownerKey, name) then
+        local out = ShallowCopy(source)
+        out.ownerKey = nil -- the canonical map key is the sole identity index
+        out.name = source.name or name
+        out.realm = ownerKey:match("@(.+)$")
+        return ownerKey, out
+    end
+
+    -- Realm-less, @unknown, or contradictory account evidence remains in the
+    -- staged map under a non-authoritative key. Login identity is deliberately
+    -- absent from this decision, so restart and login order cannot claim it.
+    local ambiguousKey
+    if indexedOwner and indexedOwner:match("@unknown$") then
+        ambiguousKey = indexedOwner
+    elseif type(sourceKey) == "string" and not indexedOwner then
+        ambiguousKey = sourceKey
+    elseif type(sourceKey) == "string" then
+        ambiguousKey = "legacy:" .. sourceKey
+    elseif name then
+        ambiguousKey = Identity.PlayerKey(name) .. "@unknown"
+    end
+    if not ambiguousKey or not name then
         Quarantine(meta, "account", sourceKey, "unresolved account identity")
         return nil
     end
+
     local out = ShallowCopy(source)
-    out.ownerKey = nil -- the canonical map key is the sole identity index
     out.name = source.name or name
-    out.realm = ownerKey:match("@(.+)$")
-    return ownerKey, out
+    AddStat(meta, "accountRowsPreservedAmbiguous", 1)
+    return ambiguousKey, out
 end
 
 local function NeedsMigration(database)
@@ -758,6 +789,25 @@ function Migration.Init(database)
         return {complete=false,needed=true,reason=why or "scheduler unavailable"}
     end
     return {complete=false,pending=true,needed=true,reason="scheduled"}
+end
+
+-- Store registration runs before a new migration starts so the exact current
+-- character is part of the staged snapshot. It must stand down for active or
+-- future-owned migration state and for an unknown future settings owner.
+function Migration.AccountWritesAllowed(database)
+    database = type(database) == "table" and database
+        or type(NexusDB) == "table" and NexusDB or nil
+    if not database then return false, "database unavailable" end
+    if (tonumber(database.settingsVersion) or 0)
+        > LAST_KNOWN_LEGACY_SETTINGS_VERSION then
+        return false, "future settings schema is read-only"
+    end
+    local existing, metaError = Meta(database, false)
+    if metaError then return false, metaError end
+    if existing and existing.state ~= "complete" then
+        return false, "legacy migration is active"
+    end
+    return true
 end
 
 function Migration.BlocksDpsMigration(database)

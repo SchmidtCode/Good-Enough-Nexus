@@ -303,11 +303,14 @@ function Store.RegisterCurrentCharacter()
     local ownerKey, name, realm = CurrentIdentity()
     local database = NexusDB
     if not ownerKey or type(database) ~= "table" then return nil end
+    local migration = Nexus and Nexus.LegacyDataMigration
+    if migration and type(migration.AccountWritesAllowed) == "function" then
+        local ok, allowed = pcall(migration.AccountWritesAllowed, database)
+        if not ok or allowed ~= true then return nil end
+    end
     local characters = type(database.accountCharacters) == "table"
         and database.accountCharacters or {}
     database.accountCharacters = characters
-    local playerKey = ownerKey:match("^([^@]+)@")
-    if playerKey then characters[playerKey .. "@unknown"] = nil end
     local row = type(characters[ownerKey]) == "table"
         and characters[ownerKey] or {}
     row.name, row.realm = name, realm
@@ -361,22 +364,20 @@ function Store.Settings()
     return transientSettings
 end
 
--- Per-char live subtable. The key is re-read from UnitName on EVERY
--- call: while it reads nil/"Unknown" (login order) a transient table is
--- returned instead, and the first call with a real name switches to the
--- persisted one -- a bad key is never latched (addendum B5).
+-- Per-character live subtable. The full local identity is re-read on every
+-- call. Until both name and realm are proven, callers share only the transient
+-- session table; transient or ambiguous short-key state is never promoted.
 function Store.State()
-    local name = UnitName and UnitName("player") or nil
+    local ownerKey = CurrentIdentity()
     local db = NexusDB
-    if not name or name == "" or name == "Unknown"
-        or not db or HasFutureSettingsOwner(db)
+    if not ownerKey or not db or HasFutureSettingsOwner(db)
         or type(db.chars) ~= "table" then
         transientState = transientState or FreshState()
         return transientState
     end
-    local state = db.chars[name]
+    local state = db.chars[ownerKey]
     state = EnsureStateShape(state)
-    db.chars[name] = state
+    db.chars[ownerKey] = state
     Store.RegisterCurrentCharacter()
     return state
 end

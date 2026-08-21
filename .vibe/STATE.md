@@ -7,34 +7,37 @@
 ## Current focus
 
 - Stage: 47
-- Checkpoint: 47.3
-- Status: DONE
-- Branch: `refactor/test19-wp2-wp5`
-- Starting head: `1b4bdd513d24267a25e24b8e5c57dbb5df1c2446`; checkpoint 47.2 product/test head `8c05b81977595919f860d4586b241972f9ce53dc`
-- Worktree: `.test19-wp2-wp5-worktree`
-- Base: published WP1 head `03870e75254848c941dcd3534a9c79a90a644fe3`
+- Checkpoint: 47.4
+- Status: IN_REVIEW
+- Branch: `bugfix/test19-wp3-realm-persistence`
+- Starting head: exact reviewed WP2 receipt head `7c95911a7d8584d46a62f2aca20268affef4cfcf`; WP2 product/test/workflow head `1fe8e7f2c0461b92ab1543cbd0b29f31d888950a`
+- Worktree: `.test19-wp3-worktree`
+- Base: exact reviewed WP2 receipt head `7c95911a7d8584d46a62f2aca20268affef4cfcf`
 
 ## Objective (current checkpoint)
 
-Require verified canonical owner equality before any fingerprint, title, subset, or stale persisted-ID relationship may enrich a Saved Build.
+Key mutable character state by canonical `name@realm` and make every registration/migration path preserve ambiguous short-name and `@unknown` evidence.
 
 ## Deliverables (current checkpoint)
 
-- One authority-first related-record resolver in the Saved Build/Community owner.
-- Revalidation of persisted related IDs before class, DPS, or relationship metadata is reused.
-- Focused exact-owner, cross-realm, stale-ID, collision, reload, and valid-local coverage.
+- Realm-qualified `Store.State` and current-character registration ownership.
+- Coordinated conservative handling in `core/Store.lua` and `core/LegacyDataMigration.lua`.
+- Focused realm-unavailable, two-realm, login-order, canonical-wins, ambiguous-legacy, and reload coverage.
 
 ## Acceptance (current checkpoint)
 
-- [x] Exact verified owner equality precedes all content-similarity scoring.
-- [x] Cross-realm and unverified candidates cannot contribute class, DPS, ownership, or related IDs.
-- [x] Persisted relationships are cleared or ignored when authority no longer validates.
-- [x] Valid exact-owner relationships and current-session local capture remain functional.
-- [x] Focused association/identity tests, mapped tests, Fast, required review/Full, and diff checks pass.
+- [ ] RealmA and RealmB mutable state remain independent under the same short name.
+- [ ] Realm-unavailable startup creates no durable `name@unknown` mutable key.
+- [ ] Existing canonical state wins without deleting or absorbing ambiguous legacy evidence.
+- [ ] Both registration and legacy migration preserve `@unknown`/short-key evidence regardless of login order.
+- [ ] Focused Store/migration tests, mapped tests, Lua 5.1 parse, Fast, required review/Full, and diff checks pass.
 
 ## Evidence
 
 - path: .vibe/EVIDENCE.md
+- Checkpoint 47.4 expected-red: the two focused public runners failed deterministically twice on short-key state sharing/name-only persistence and on registration deletion/login-order migration promotion before the repair.
+- Checkpoint 47.4 focused green: realm-qualified Store, conservative account identity, staged legacy migration, Store additive/retirement, GameAdapter, retention, Wishlist/automation, WP2 authority, module contract, and integration `70/70` checks pass; Lua 5.1 parse is `69/69`.
+- Checkpoint 47.4 Fast: exact WP2 base `7c95911a7d8584d46a62f2aca20268affef4cfcf` passed `19/19` with zero failed, unavailable, or skipped checks; workflow inventory now guards `214` normal runners.
 - Stage 42.1: four exact inherited findings remain advisory; owner/message drift, duplicates, stale entries, and improvements are distinguished; focused policy and Fast `15/15` pass.
 - Stage 42.2: ZIP/tar layout validation, exact executable selection, hash-locked Python wheels, and failure-safe cleanup pass; Security `12` blocking checks and Fast `15/15` pass.
 - Stage 43 maintenance: fresh-checkout Linux bootstrap/Fast and receipt-independent Vibe terminal probes remain the highest-impact gaps and are already acceptance-owned by 43.1/43.2.
@@ -55,6 +58,8 @@ Require verified canonical owner equality before any fingerprint, title, subset,
 
 ## Work log
 
+- Checkpoint 47.4 implementation is ready for review. `Store.State()` now uses only proven canonical `name@realm` persistence and retains realm-unavailable state in the session-only table; registration preserves same-name `@unknown` rows and stands down for active/future-owned migration state; staged account normalization no longer consults login identity, retains ambiguous rows under non-authoritative keys, and consumes only coherent exact bridges. Focused state/registration/login-order/restart/future-schema coverage and exact-base Fast `19/19` pass; Full remains reserved for frozen review.
+- Manual dispatcher advance moved completed WP2 checkpoint 47.3 to executable WP3 checkpoint 47.4 on isolated branch `bugfix/test19-wp3-realm-persistence` at exact fixed base `7c95911a7d8584d46a62f2aca20268affef4cfcf`; the new user WP3 authorization supersedes the earlier terminal WP2 stop without modifying the frozen WP2 worktree or PR #53.
 - Terminal WP2 stop is active: installed Vibe status reports Stage 47 / checkpoint 47.3 `DONE`, `stopped: true`, dispatcher `stop`, no prompt, and no active loop. Only final `.vibe/` receipts changed after the reviewed product/test/workflow head and Full gate.
 - WP2 final candidate `1fe8e7f2c0461b92ab1543cbd0b29f31d888950a` passed cumulative Spec, Standards, and adversarial/security review across `03870e75254848c941dcd3534a9c79a90a644fe3..1fe8e7f`; no excluded WP3/later semantic package was implemented. The final cache review repairs reject fabricated, mutated, revoked, cross-mode, cross-context, stale-relation, stale-locked-evidence, and stale-record prepared DPS responses while preserving unchanged exact direct-owner and verified-relay retries.
 - Final exact-head validation passed the focused WP2 authority matrix, all `212/212` normal Lua runners, Lua 5.1 parse `285/285`, integration `70/70`, Fast `108/108`, and Full `18` blocking checks with zero failures/unavailable checks plus the one explicit nonblocking manual SavedVariables skip in `378.870s`. Release policy, workflow policy, artifact policy `366/366`, and range/staged/working diff checks pass; no product/test/workflow byte changed after Full.
@@ -131,7 +136,7 @@ Require verified canonical owner equality before any fingerprint, title, subset,
 
 ## Workflow state
 
-- [x] RUN_STOPPED
+- [ ] RUN_STOPPED
 - [ ] RUN_CONTEXT_CAPTURE
 - [x] STAGE_DESIGNED
 - [x] MAINTENANCE_CYCLE_DONE
