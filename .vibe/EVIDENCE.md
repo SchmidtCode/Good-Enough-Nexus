@@ -391,3 +391,9 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Expected red failed deterministically twice on pre-guard account allocation, normalized canonical and `@unknown` alias collisions, competing bridge-alias preservation, and NaN-triggered perpetual restart.
 - Repair: Store checks migration write authority before allocating account storage; raw key equality is required for direct canonical/`@unknown` key authority; case aliases route through injective typed recovery keys; synchronous whole-registry copy/equality was removed. Account transaction safety uses the exact table owner while shallow row shells retain nested unknown values without traversing or mutating arbitrary graphs.
 - Verification: expanded conservative-account runner passes; related Store/migration/public lifecycle matrix is `18/18`; integration is `70/70`; module inventory is clean; Lua parse is `287/287`; workflow policy and diff checks pass; exact-base Fast is `22/22` with zero failed, unavailable, or skipped checks.
+
+# 2026-08-20 — Checkpoint 47.4 final review PASS
+
+- Frozen product/test/contract candidate `8dbdd7d` and exact receipt head `3875e964c4663f95c2de6021ddc993ef76eef702` passed cumulative independent Spec, Standards, and adversarial identity/migration review with no actionable finding. The one small duplicated string-identity coherence shape is a nonblocking hygiene judgment call and does not justify churn.
+- Final Full at exact receipt head `3875e96` passed all `18` blocking checks in `407.284s`: normal Lua `214/214`, Lua 5.1 parse `287/287`, integration `70/70`, zero failed/unavailable, and the single explicit nonblocking manual SavedVariables backup skip. Artifact paths `15/15`, changed-test plan `15/15`, release/package/privacy/module/upvalue/hostile-Sync/diff policies all passed.
+- Checkpoint verdict: PASS. Stage 47 auto-advanced to checkpoint 47.5 `NOT_STARTED`; product/test/workflow/contract bytes remain frozen after Full.

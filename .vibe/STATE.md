@@ -7,8 +7,8 @@
 ## Current focus
 
 - Stage: 47
-- Checkpoint: 47.4
-- Status: IN_REVIEW
+- Checkpoint: 47.5
+- Status: NOT_STARTED
 - Branch: `bugfix/test19-wp3-realm-persistence`
 - Starting head: exact reviewed WP2 receipt head `7c95911a7d8584d46a62f2aca20268affef4cfcf`; WP2 product/test/workflow head `1fe8e7f2c0461b92ab1543cbd0b29f31d888950a`
 - Worktree: `.test19-wp3-worktree`
@@ -16,25 +16,27 @@
 
 ## Objective (current checkpoint)
 
-Key mutable character state by canonical `name@realm` and make every registration/migration path preserve ambiguous short-name and `@unknown` evidence.
+Present and reconcile public records by proven canonical identity while retaining distinguishable ambiguous legacy and better historical evidence.
 
 ## Deliverables (current checkpoint)
 
-- Realm-qualified `Store.State` and current-character registration ownership.
-- Coordinated conservative handling in `core/Store.lua` and `core/LegacyDataMigration.lua`.
-- Focused realm-unavailable, two-realm, login-order, canonical-wins, ambiguous-legacy, and reload coverage.
+- One shared public identity presentation/reconciliation policy for Leaderboard Dummy, LK, Combined, and Community surfaces.
+- Focused verified-same, verified-different-realm, ambiguous-legacy, reload, and Sync reintroduction coverage.
+- No destructive historical-DPS cleanup for visual convenience.
 
 ## Acceptance (current checkpoint)
 
-- [ ] RealmA and RealmB mutable state remain independent under the same short name.
-- [ ] Realm-unavailable startup creates no durable `name@unknown` mutable key.
-- [ ] Existing canonical state wins without deleting or absorbing ambiguous legacy evidence.
-- [ ] Both registration and legacy migration preserve `@unknown`/short-key evidence regardless of login order.
-- [ ] Focused Store/migration tests, mapped tests, Lua 5.1 parse, Fast, required review/Full, and diff checks pass.
+- [ ] The same proven canonical identity may reconcile deterministically.
+- [ ] Proven different realms remain separate and visibly distinguishable.
+- [ ] Verified and ambiguous legacy evidence never render as indistinguishable duplicate rows.
+- [ ] Better historical DPS is preserved when authority is insufficient to merge or discard it.
+- [ ] Dummy, LK, Combined, Community, reload, and Sync use one identity policy.
+- [ ] Focused UI/board tests, mapped tests, Fast, required review/Full, and diff checks pass.
 
 ## Evidence
 
 - path: .vibe/EVIDENCE.md
+- Checkpoint 47.4 final review PASS: cumulative Spec, Standards, and adversarial identity/migration review pass at frozen product/test/contract commit `8dbdd7d`; final exact-head Full passed `18` blocking checks with Lua `214/214`, parse `287/287`, integration `70/70`, zero failures/unavailable, and one explicit manual SavedVariables skip.
 - Checkpoint 47.4 expected-red: the two focused public runners failed deterministically twice on short-key state sharing/name-only persistence and on registration deletion/login-order migration promotion before the repair.
 - Checkpoint 47.4 focused green: realm-qualified Store, conservative account identity, staged legacy migration, Store additive/retirement, GameAdapter, retention, Wishlist/automation, WP2 authority, module contract, and integration `70/70` checks pass; Lua 5.1 parse is `69/69`.
 - Checkpoint 47.4 Fast: exact WP2 base `7c95911a7d8584d46a62f2aca20268affef4cfcf` passed `19/19` with zero failed, unavailable, or skipped checks; workflow inventory now guards `214` normal runners.
@@ -58,6 +60,7 @@ Key mutable character state by canonical `name@realm` and make every registratio
 
 ## Work log
 
+- Checkpoint 47.4 is DONE and auto-advanced to 47.5. Final cumulative Spec, Standards, and adversarial review found no actionable persistence/migration defect at `8dbdd7d`; exact receipt head `3875e96` passed Full `18` blocking checks in `407.284s` with Lua `214/214`, parse `287/287`, integration `70/70`, zero failed/unavailable, and the one explicit nonblocking manual SavedVariables skip. No product/test/workflow/contract byte changed after Full.
 - Checkpoint 47.4 second repair is frozen for review at product/test/contract commit `8dbdd7d`; expected-red and all affected/Fast gates pass, no active issue remains, and product/test/workflow/contract bytes are fixed pending cumulative independent review plus the next final Full.
 - ISSUE-47.4-R2 resolved: Store now checks account write authority before allocation; only raw already-normalized canonical and `@unknown` keys gain direct key authority; case aliases use injective recovery keys; whole-registry deep copy/equality is removed in favor of the exact account-table ownership boundary and bounded shallow row-shell preservation. The expanded repair runner, related `18/18`, Lua parse `287/287`, workflow policy, strict diff checks, and Fast `22/22` pass.
 - Checkpoint 47.4 repeat review FAIL at exact receipt head `8fb6767`: replacement Full passed all `18` blocking checks with Lua `214/214`, parse `287/287`, integration `70/70`, zero failed/unavailable, and one explicit manual skip, while Spec/adversarial review still proved pre-guard account allocation, normalized-case recovery/canonical collisions, and an unbounded/graph-unsafe deep snapshot mechanism. Standards passed. ISSUE-47.4-R2 owns the remaining bounded repair; the green Full is not final because product/test bytes must change.
