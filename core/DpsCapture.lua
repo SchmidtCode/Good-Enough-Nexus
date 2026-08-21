@@ -3032,12 +3032,34 @@ local function ReceiveRecord(record, transportSender, relayed)
     if not existing and legacyKey ~= characterKey then
         local legacy = bucket[legacyKey]
         local incomingBuildId = record.b or record.buildId
+        local legacyBuildId = legacy and legacy.buildId
+        local legacyBuildMissing = legacyBuildId == nil or legacyBuildId == ""
+        local legacyBuildKind = type(legacyBuildId)
+        local legacyBuildValid = legacyBuildMissing
+            or legacyBuildKind == "string" and #legacyBuildId <= 96
+                and Identity.ValidWireText(legacyBuildId, 96, false, true)
+            or legacyBuildKind == "number" and FiniteNumber(legacyBuildId)
         local legacyDuration = legacy and legacy.duration
         local legacyHash = legacy and type(legacy.loadoutHash) == "string"
             and legacy.loadoutHash or nil
         local incomingHash = tostring(hash or EchoHashFromKey(fingerprint) or "")
         local rawLegacyLocked = legacy and legacy.lockedEchoes
         local resolvedLegacyLocked = legacy and StoredEchoes(legacy, true) or nil
+        local lockedReference = legacy and legacy.lockedEvidenceKey
+        local lockedReferenceAbsent = lockedReference == nil
+            or lockedReference == ""
+        local lockedReferenceValid = lockedReferenceAbsent
+        if not lockedReferenceAbsent and type(lockedReference) == "string" then
+            local evidence = Nexus and Nexus.LoadoutEvidence
+            if evidence and type(evidence.Resolve) == "function" then
+                local ok, normalized, exact = pcall(evidence.Resolve,
+                    lockedReference, type(rawLegacyLocked) == "table"
+                        and rawLegacyLocked or nil, {forceLocked=true})
+                lockedReferenceValid = ok and type(normalized) == "table"
+                    and exact == lockedReference
+                    and resolvedLegacyLocked ~= nil
+            end
+        end
         local rawLockedMissing = rawLegacyLocked == nil
             or type(rawLegacyLocked) == "table"
                 and next(rawLegacyLocked) == nil
@@ -3048,7 +3070,7 @@ local function ReceiveRecord(record, transportSender, relayed)
                 and ValidWireEchoList(resolvedLegacyLocked)
         end
         local legacyLockedMissing = rawLockedMissing
-            and resolvedLegacyLocked == nil
+            and resolvedLegacyLocked == nil and lockedReferenceAbsent
         local legacyLockedKey = resolvedLegacyLocked
             and LockedKey(resolvedLegacyLocked) or nil
         local sameLegacyRecord = legacy
@@ -3060,12 +3082,13 @@ local function ReceiveRecord(record, transportSender, relayed)
             and tostring(legacy.fingerprint or "") == tostring(fingerprint or "")
             and (legacy.loadoutHash == nil or legacyHash == ""
                 or legacyHash == incomingHash)
-            and (legacy.buildId == nil or incomingBuildId == nil
-                or type(legacy.buildId) == type(incomingBuildId)
-                    and legacy.buildId == incomingBuildId)
+            and legacyBuildValid
+            and (legacyBuildMissing or incomingBuildId == nil
+                or type(legacyBuildId) == type(incomingBuildId)
+                    and legacyBuildId == incomingBuildId)
             -- Missing legacy metadata may be enriched during an otherwise
             -- exact bridge. Conflicting represented metadata cannot retire it.
-            and legacyLockedValid
+            and legacyLockedValid and lockedReferenceValid
             and (legacyLockedMissing
                 or legacyLockedKey == LockedKey(incomingLocked))
         if sameLegacyRecord then

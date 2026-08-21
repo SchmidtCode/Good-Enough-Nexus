@@ -119,6 +119,10 @@ local allocationDb = {
         malformedTwin={title="Second missing identity",author="Twin",
             future={keep=true}},
         mismatched={id="different-id",future={keep=true}},
+        slotA={id="shared",title="Contradictory A",author="Twin",
+            echoes={{spellId=96,stacks=1}}},
+        slotB={id="shared",title="Contradictory B",author="Twin",
+            echoes={{spellId=97,stacks=1}}},
         visible={id="visible",title="Visible",echoes={{spellId=91,stacks=1}}},
         shadowed={id="shadowed",title="Overlay on bundled ID",
             echoes={{spellId=93,stacks=2}}},
@@ -234,5 +238,9 @@ assert(syncSummaries.malformed.id == "malformed"
             ~= Nexus.Identity.PublicRecordKey(
                 syncSummaries.malformedTwin, "author"),
     "sync summary or exact hydration lost durable missing-id identity")
+assert(syncSummaries.slotA == nil and syncSummaries.slotB == nil
+        and Nexus.BuildCatalog.Get("slotA") == nil
+        and Nexus.BuildCatalog.GetSummary("slotB") == nil,
+    "contradictory embedded IDs escaped opaque public quarantine")
 
 print("BuildCatalog precedence and defensive copies -- OK")

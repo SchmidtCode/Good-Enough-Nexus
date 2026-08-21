@@ -323,9 +323,12 @@ local function ScalarRecordId(id)
 end
 
 local function RestoreRecordId(record, id)
-    if type(record) == "table" and record.id == nil then
-        record.id = ScalarRecordId(id)
-    end
+    if type(record) ~= "table" then return nil end
+    local durableId = ScalarRecordId(id)
+    if durableId == nil then return nil end
+    if record.id == nil then record.id = durableId
+    elseif type(record.id) ~= type(durableId)
+        or record.id ~= durableId then return nil end
     return record
 end
 
