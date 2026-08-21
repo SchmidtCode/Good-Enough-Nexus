@@ -397,3 +397,8 @@ Record concise command/result receipts here. A skipped or unavailable command is
 - Frozen product/test/contract candidate `8dbdd7d` and exact receipt head `3875e964c4663f95c2de6021ddc993ef76eef702` passed cumulative independent Spec, Standards, and adversarial identity/migration review with no actionable finding. The one small duplicated string-identity coherence shape is a nonblocking hygiene judgment call and does not justify churn.
 - Final Full at exact receipt head `3875e96` passed all `18` blocking checks in `407.284s`: normal Lua `214/214`, Lua 5.1 parse `287/287`, integration `70/70`, zero failed/unavailable, and the single explicit nonblocking manual SavedVariables backup skip. Artifact paths `15/15`, changed-test plan `15/15`, release/package/privacy/module/upvalue/hostile-Sync/diff policies all passed.
 - Checkpoint verdict: PASS. Stage 47 auto-advanced to checkpoint 47.5 `NOT_STARTED`; product/test/workflow/contract bytes remain frozen after Full.
+
+# 2026-08-20 — Checkpoint 47.4 hygiene CLEAN
+
+- Bounded inspection of Store, LegacyDataMigration, contracts, and focused fixtures found no correctness/security defect, stale debug/TODO artifact, redundant authority branch, or safe high-value quick win. The small duplicated name/realm coherence shape is tested and deliberately left local rather than broadening the shared Identity interface after final Full.
+- No product/test/contract/workflow byte changed. Artifact policy checked all `368` tracked paths with zero violations; exact-base range and working-tree diff checks pass. No debt item was added.
