@@ -6,7 +6,7 @@ Nexus = Nexus or {}
 local Workspace = {}
 Nexus.AccountBuildWorkspace = Workspace
 
-local Adapter
+local Adapter = Nexus and Nexus.GameAdapter
 local lastSavedLoadoutImport = 0
 local stats = { relatedScans=0, relatedHydrations=0, imports=0, mutations=0 }
 
@@ -21,6 +21,10 @@ local CLASS_LABEL = {
 }
 local VALID_CLASS = {}
 for class in pairs(CLASS_MASK) do VALID_CLASS[class] = true end
+
+local function CurrentAdapter()
+    return Adapter or (Nexus and Nexus.GameAdapter)
+end
 
 local function Catalog()
     return Nexus and Nexus.BuildCatalog
@@ -68,7 +72,8 @@ end
 
 local function InferBuildClass(echoes)
     local scores = {}
-    local cat = Adapter and Adapter.Catalog and Adapter.Catalog()
+    local adapter = CurrentAdapter()
+    local cat = adapter and adapter.Catalog and adapter.Catalog()
     local rows = cat and cat.rows
     if type(echoes) == "table" and type(rows) == "table" and bit and bit.band then
         for _, echo in ipairs(echoes) do
@@ -98,10 +103,18 @@ local function InferBuildClass(echoes)
     return bestScore > 0 and not tied and best or nil
 end
 
+local function PlayerIdentity()
+    local adapter = CurrentAdapter()
+    if not (adapter and type(adapter.PlayerIdentity) == "function") then
+        adapter = Nexus and Nexus.GameAdapter
+    end
+    if not (adapter and type(adapter.PlayerIdentity) == "function") then return {} end
+    local ok, identity = pcall(adapter.PlayerIdentity)
+    return ok and type(identity) == "table" and identity or {}
+end
+
 local function CurrentRealm()
-    local realm = GetNormalizedRealmName and GetNormalizedRealmName()
-    if not realm or realm == "" then realm = GetRealmName and GetRealmName() end
-    return tostring(realm or "unknown"):lower():gsub("%s+", "")
+    return tostring(PlayerIdentity().realm or "unknown"):lower():gsub("%s+", "")
 end
 
 local function OwnerKey(name, realm)
@@ -112,12 +125,28 @@ local function OwnerKey(name, realm)
 end
 
 local function CurrentOwnerKey()
-    local store = Nexus and Nexus.Store
-    if store and type(store.CurrentOwnerKey) == "function" then
-        local ok, value = pcall(store.CurrentOwnerKey)
-        if ok and value then return value end
+    local identity = PlayerIdentity()
+    return identity.ownerKey or OwnerKey(identity.name, identity.realm)
+end
+
+local function Now()
+    local adapter = CurrentAdapter()
+    if not (adapter and type(adapter.Now) == "function") then
+        adapter = Nexus and Nexus.GameAdapter
     end
-    return OwnerKey(UnitName and UnitName("player"), CurrentRealm())
+    if not (adapter and type(adapter.Now) == "function") then return 0 end
+    local ok, value = pcall(adapter.Now)
+    return ok and tonumber(value) or 0
+end
+
+local function Timestamp()
+    local adapter = CurrentAdapter()
+    if not (adapter and type(adapter.Timestamp) == "function") then
+        adapter = Nexus and Nexus.GameAdapter
+    end
+    if not (adapter and type(adapter.Timestamp) == "function") then return 0 end
+    local ok, value = pcall(adapter.Timestamp)
+    return ok and tonumber(value) or 0
 end
 
 local function IsOwnBuild(build)
@@ -126,7 +155,7 @@ local function IsOwnBuild(build)
     if not mine then return false end
     if build.ownerKey then return tostring(build.ownerKey):lower() == mine end
     if not build.isMine then return false end
-    local me = tostring((UnitName and UnitName("player")) or ""):lower()
+    local me = tostring(PlayerIdentity().name or ""):lower()
     return me ~= "" and tostring(build.author or ""):lower() == me
 end
 
@@ -142,7 +171,7 @@ local function IsAccountBuild(build)
 end
 
 local function NextStamp(previous)
-    local now = (time and time()) or 0
+    local now = Timestamp()
     local previousStamp = tonumber(previous) or 0
     return now > previousStamp and now or previousStamp + 1
 end
@@ -315,29 +344,44 @@ local function FindRelatedBuild(serverTitle, echoes, old, author, store)
     local preferred = {}
     if old and old.recordBuildId then preferred[#preferred + 1] = old.recordBuildId end
     if old and old.publishedBuildId then preferred[#preferred + 1] = old.publishedBuildId end
-    local best, bestScore, preferredIds = nil, -1, {}
+    local best, bestScore, bestId, bestPreferred = nil, -1, nil, false
+    local preferredIds = {}
+    local function BetterCandidate(score, candidateId, preferred)
+        if not score then return false end
+        if score ~= bestScore then return score > bestScore end
+        if preferred ~= bestPreferred then return preferred end
+        return tostring(candidateId) < tostring(bestId)
+    end
     for _, candidateId in ipairs(preferred) do
         preferredIds[candidateId] = true
         local candidate = store[candidateId] or LoadBuild(candidateId)
         local score, resolved = CandidateScore(candidate, candidateId, true)
-        if score and score > bestScore then best, bestScore = resolved or candidate, score end
+        if BetterCandidate(score, candidateId, true) then
+            best, bestScore, bestId, bestPreferred =
+                resolved or candidate, score, candidateId, true
+        end
     end
     for candidateId, candidate in pairs(store) do
         if not preferredIds[candidateId] then
             local score, resolved = CandidateScore(candidate, candidateId, false)
-            if score and score > bestScore then best, bestScore = resolved or candidate, score end
+            if BetterCandidate(score, candidateId, false) then
+                best, bestScore, bestId, bestPreferred =
+                    resolved or candidate, score, candidateId, false
+            end
         end
     end
     return best
 end
 
 local function ImportSavedLoadouts(force)
-    local now = GetTime and GetTime() or 0
+    local now = Now()
     if not force and now > 0 and now - lastSavedLoadoutImport < 1 then return 0 end
     lastSavedLoadoutImport = now
-    local slots = Adapter and Adapter.Slots and Adapter.Slots()
+    local adapter = CurrentAdapter()
+    local slots = adapter and adapter.Slots and adapter.Slots()
     if not (slots and type(slots.bySlot) == "table") then return 0 end
-    local me = tostring((UnitName and UnitName("player")) or "You")
+    local identity = PlayerIdentity()
+    local me = tostring(identity.name or "You")
     local meKey = me:lower():gsub("[^%w]", "_")
     local currentOwner = CurrentOwnerKey()
     if not currentOwner then return 0 end
@@ -364,13 +408,13 @@ local function ImportSavedLoadouts(force)
             local old = LoadBuild(id) or legacyId ~= id and LoadBuild(legacyId)
             local title = old and old.userTitle and old.userTitle ~= ""
                 and old.userTitle or serverTitle
-            local linked = Adapter.GetLoadoutWishlist
-                and Adapter.GetLoadoutWishlist(slot) or nil
+            local linked = adapter.GetLoadoutWishlist
+                and adapter.GetLoadoutWishlist(slot) or nil
             local destinationName = linked and linked.name or nil
             local destinationEchoes = linked and linked.echoes or nil
             local progress, destinationTotal = EchoProgress(echoes, destinationEchoes)
             local related = FindRelatedBuild(serverTitle, echoes, old, me, summaries)
-            local currentClass = select(2, UnitClass and UnitClass("player"))
+            local currentClass = identity.class
             local class = related and related.class or live.class or currentClass
                 or InferBuildClass(echoes) or "UNKNOWN"
             local recordBuildId = related and related.id or nil
@@ -444,8 +488,8 @@ local function EnsureDpsBuild(echoes, category, record)
     local key = capture.GetEchoKey(echoes)
     if not key then return nil end
     local explicitClass = NormalizeClass(record and (record.class or record.k))
-    local player = tostring(record and record.player
-        or UnitName and UnitName("player") or "Unknown")
+    local identity = PlayerIdentity()
+    local player = tostring(record and record.player or identity.name or "Unknown")
     local recordOwner = record and record.ownerKey
     local explicitId = record and (record.buildId or record.b)
     if type(explicitId) ~= "string" or explicitId == "" then explicitId = nil end
@@ -496,14 +540,18 @@ local function EnsureDpsBuild(echoes, category, record)
             if capture.GetEchoKey(build.echoes) == key then
                 if not build.autoDps then
                     if IsOwnBuild(build) then return id, build end
-                    manualId, manualBuild = manualId or id, manualBuild or build
+                    if not manualId or tostring(id) < tostring(manualId) then
+                        manualId, manualBuild = id, build
+                    end
                 else
                     local sameOwner = recordOwner and build.ownerKey
                         and tostring(recordOwner):lower() == tostring(build.ownerKey):lower()
                     local sameLegacyAuthor = not recordOwner
                         and tostring(build.author or ""):lower() == player:lower()
                     if sameOwner or sameLegacyAuthor then
-                        ownAutoId, ownAutoBuild = id, build
+                        if not ownAutoId or tostring(id) < tostring(ownAutoId) then
+                            ownAutoId, ownAutoBuild = id, build
+                        end
                     end
                 end
             end
@@ -529,10 +577,9 @@ local function EnsureDpsBuild(echoes, category, record)
             end
         end
     end
-    local me = tostring((UnitName and UnitName("player")) or "")
+    local me = tostring(identity.name or "")
     local playerIsLocal = player:lower() == me:lower()
-    local localClass
-    if playerIsLocal and UnitClass then localClass = NormalizeClass(select(2, UnitClass("player"))) end
+    local localClass = playerIsLocal and NormalizeClass(identity.class) or nil
     local class = explicitClass or InferBuildClass(copied) or localClass or "UNKNOWN"
     if ownAutoId then
         if explicitClass and ownAutoBuild.class ~= explicitClass then
@@ -565,12 +612,13 @@ local function EnsureDpsBuild(echoes, category, record)
 end
 
 local function PostCurrentWishlist(title, description, selectedWishlist, selectedClass)
-    if not (Adapter and Adapter.Wishlist) then return false, "adapter not ready" end
+    local adapter = CurrentAdapter()
+    if not (adapter and adapter.Wishlist) then return false, "adapter not ready" end
     local wishlist = selectedWishlist
     local sourceEchoes = WishlistEchoes(wishlist)
     if (not sourceEchoes or #sourceEchoes == 0) and wishlist and wishlist.slot
-        and Adapter.Slots then
-        local slots = Adapter.Slots()
+        and adapter.Slots then
+        local slots = adapter.Slots()
         local live = slots and slots.bySlot and slots.bySlot[wishlist.slot]
         if live and type(live.echoes) == "table" and #live.echoes > 0 then
             wishlist = {
@@ -581,7 +629,7 @@ local function PostCurrentWishlist(title, description, selectedWishlist, selecte
             sourceEchoes = wishlist.echoes
         end
     end
-    if not wishlist then wishlist = Adapter.Wishlist() end
+    if not wishlist then wishlist = adapter.Wishlist() end
     sourceEchoes = sourceEchoes or WishlistEchoes(wishlist)
     if not wishlist or not sourceEchoes or #sourceEchoes == 0 then
         return false, "no wishlist selected to post"
@@ -601,7 +649,7 @@ local function PostCurrentWishlist(title, description, selectedWishlist, selecte
     local id = string.format("mine-%d-%d", stamp, math.random(100000, 999999))
     local record = {
         id=id, title=title, description=description,
-        author=UnitName and UnitName("player") or "You",
+        author=PlayerIdentity().name or "You",
         ownerKey=CurrentOwnerKey(),
         class=NormalizeClass(selectedClass) or InferBuildClass(echoes)
             or NormalizeClass(wishlist.class),
@@ -648,7 +696,7 @@ local function PublishImportedBuild(id)
     local record = {
         id=publishedId, title=source.title or "Saved Build",
         description=source.userDescription or source.description or "",
-        author=UnitName and UnitName("player") or "You",
+        author=PlayerIdentity().name or "You",
         ownerKey=CurrentOwnerKey(),
         class=NormalizeClass(source.class) or InferBuildClass(echoes), echoes=echoes,
         postedAt=old and old.postedAt or stamp, lastModified=stamp, isMine=true,
@@ -705,8 +753,9 @@ local function UpdateFromWishlist(id)
     if HasLeaderboardRecord(build) then
         return false, "this exact loadout has a leaderboard record and is locked; post a new build to change its Echoes"
     end
-    if not (Adapter and Adapter.Wishlist) then return false, "adapter not ready" end
-    local wishlist = Adapter.Wishlist()
+    local adapter = CurrentAdapter()
+    if not (adapter and adapter.Wishlist) then return false, "adapter not ready" end
+    local wishlist = adapter.Wishlist()
     if not wishlist or not wishlist.entries or #wishlist.entries == 0 then
         return false, "no active wishlist"
     end
@@ -736,7 +785,7 @@ end
 local function DeleteBuild(id)
     local build = LoadBuild(id)
     if not build then return false, "not found" end
-    local admin = tostring(UnitName and UnitName("player") or ""):lower() == "explore"
+    local admin = tostring(PlayerIdentity().name or ""):lower() == "explore"
     if not IsOwnBuild(build) and not admin then return false, "not your build" end
     if build.importedSavedBuild then
         return false, "server Saved Builds cannot be deleted here"
@@ -744,7 +793,7 @@ local function DeleteBuild(id)
     if IsOwnBuild(build) and Nexus.Sync then pcall(Nexus.Sync.BroadcastDelete, build) end
     if LoadBuild(id) then
         SetTombstone(id, {
-            stamp=time and time() or 0, author=tostring(build.author or ""),
+            stamp=Timestamp(), author=tostring(build.author or ""),
             localOnly=not IsOwnBuild(build) or nil,
         })
     end

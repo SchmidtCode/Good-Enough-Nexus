@@ -1609,8 +1609,15 @@ local function EnsureFrame()
     frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
     local scheduler = assert(Nexus.Scheduler, "Scheduler required")
     local updateKey = "ui.wishlist-editor.tick"
+    local retryElapsed = 0
+    frame:SetScript("OnUpdate", function(_, elapsed)
+        retryElapsed = retryElapsed + elapsed
+        if retryElapsed >= 0.5 then
+            retryElapsed = 0
+            if M._PumpApplyRetry then M._PumpApplyRetry() end
+        end
+    end)
     local function ScheduledUpdate()
-        if M._PumpApplyRetry then M._PumpApplyRetry() end
         -- Go quiet during a PerkService sniff (/nexus sniff): this tick's
         -- Adapter.Slots() polling would otherwise flood the diagnostic ring.
         if not (Nexus and Nexus.sniffPaused) then

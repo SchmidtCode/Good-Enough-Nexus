@@ -3294,321 +3294,384 @@ end)
 SLASH_NEXUS1 = "/nexus"
 SLASH_NEXUS2 = "/nx"
 SLASH_NEXUS3 = "/wr"   -- legacy alias kept for muscle memory
-SlashCmdList["NEXUS"] = function(msg)
-    if not initialized then Print("not initialized yet") return end
-    msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
-    local settings = Store.Settings()
-    if msg == "auto" then
-        autoEnabled = not autoEnabled
-        RequestRecompute()
-        Print("auto " .. (autoEnabled and "ON" or "OFF"))
-        if Panel.SetAuto then Panel.SetAuto(autoEnabled) end
-    elseif msg == "panel" then
-        Panel.Toggle()
-    elseif msg == "restore" then
-        Print(Adapter.RestoreAutoAccept() and "client auto-accept restored"
-            or "nothing to restore")
-        RequestRecompute()
-    elseif msg == "flags" then
-        for k, v in pairs(EffectiveFlags()) do
-            Print(k .. " = " .. tostring(v))
-        end
-        local st = Store.State()
-        for k, why in pairs(st.flagDemotions or {}) do
-            Print("demoted " .. k .. ": " .. tostring(why))
-        end
-    elseif msg == "status" then
-        local catalog = Adapter.Catalog()
-        local wl = Adapter.Wishlist()
-        local slots = Adapter.Slots()
-        local owned = Adapter.Owned()
-        Print("v" .. Nexus.VERSION .. " -- level " .. Adapter.Level()
-            .. ", auto " .. (autoEnabled and "ON" or "OFF"))
-        -- Target (wishlist)
-        if wl then
-            local src = (wl.source == "designed" and "Echo Wishlist build")
-                or (wl.source == "active" and "active loadout") or "wishlist"
-            Print(string.format("TARGET: |cff7fff7f'%s'|r (your %s) -- %d echoes",
-                (wl.name ~= "" and wl.name) or "(unnamed)", src, #wl.entries))
-        else
-            local note = Adapter.WishlistNote and Adapter.WishlistNote()
-            Print("TARGET: none -- advisor only" .. (note and ("  (" .. note .. ")") or ""))
-        end
-        -- Loadout / snapshot data (the guarantee source)
-        if not slots then
-            Print("LOADOUTS: slot data not loaded yet (waiting on the server).")
-        else
-            local nsnap, ndesign = 0, 0
-            for _, s in pairs(slots.bySlot) do
-                if type(s.echoes) == "table" and #s.echoes > 0 then
-                    if s.verified then nsnap = nsnap + 1 else ndesign = ndesign + 1 end
-                end
-            end
-            local act = slots.activeSlot
-            if act ~= 0 and slots.bySlot[act] then
-                local s = slots.bySlot[act]
-                Print(string.format("ACTIVE slot %d '%s': %s, %d echoes", act,
-                    (s.name ~= "" and s.name) or "?",
-                    s.verified and "snapshot (arms the guarantee)"
-                        or "designed build (highlight only -- not a guarantee)",
-                    #s.echoes))
-            else
-                Print("ACTIVE: no build activated right now.")
-            end
-            Print(string.format("READABLE: %d loadout snapshot(s), %d designed wishlist build(s)",
-                nsnap, ndesign))
-            if wl and Ratchet and Ratchet.BestSlot then
-                local plan = Strategy.Compile(catalog, wl, Store.Settings())
-                local best = Ratchet.BestSlot(slots, plan, catalog)
-                Print(best and ("Would arm snapshot slot " .. best .. " at level 1.")
-                    or "No verified snapshot to arm -- first run seeds one.")
-            end
-        end
-        Print(string.format("OWNED this run: %d echoes (%s).", owned.distinct or 0,
-            owned.synced and "synced" or "not synced yet"))
-    elseif msg == "wishlist" or msg == "check" then
-        local wl = Adapter.Wishlist()
-        if not wl then
-            local note = Adapter.WishlistNote and Adapter.WishlistNote()
-            if note then
-                Print(note)
-            else
-                Print("no wishlist detected -- running as advisor only.")
-                Print("Design one in the Echo Journal: 'New Wishlist' (the 'Echo Wishlist'")
-                Print("section), pick its echoes, and save it. The addon reads that build.")
-            end
-        else
-            local cat = Adapter.Catalog()
-            local src = (wl.source == "designed" and "your Echo Wishlist build")
-                or (wl.source == "active" and "your active loadout")
-                or "your wishlist"
-            local famset = {}
-            for _, e in ipairs(wl.entries) do famset[e.family] = true end
-            local nfam = 0
-            for _ in pairs(famset) do nfam = nfam + 1 end
-            Print(string.format("reading |cff7fff7f'%s'|r (from %s) -- %d echoes, %d families",
-                (wl.name ~= "" and wl.name) or "(unnamed)", src, #wl.entries, nfam))
-            local names = {}
-            for _, e in ipairs(wl.entries) do
-                local row = cat and cat.rows[e.spellId]
-                names[#names + 1] = (row and row.name or ("spell " .. e.spellId))
-                    .. (e.stacks > 1 and (" x" .. e.stacks) or "")
-            end
-            table.sort(names)
-            Print("  " .. table.concat(names, ", "))
-        end
-    elseif msg == "progress" or msg == "missing" then
-        local catalog = Adapter.Catalog()
-        local wl = Adapter.Wishlist()
-        local owned = Adapter.Owned()
-        if not wl then
-            Print("no wishlist set -- advisor only, nothing to track.")
-        else
-            local plan = Strategy.Compile(catalog, WishlistWithLockTargets(wl, catalog), Store.Settings())
-            local haveN, totalN, missing = WishlistProgress(plan, owned, catalog)
-            local pct = (totalN > 0) and math.floor(haveN / totalN * 100 + 0.5) or 0
-            Print(string.format("this run: |cff7fff7f%d/%d|r echoes (%d%%) -- %d still short",
-                haveN, totalN, pct, #missing))
-            if msg == "missing" and #missing > 0 then
-                Print("  " .. table.concat(missing, ", "))
-            end
-        end
-    elseif msg == "editor" then
-        if Nexus.WishlistEditor then
-            Nexus.WishlistEditor.Toggle()
-        else
-            Print("wishlist editor unavailable")
-        end
-    elseif msg == "syncdebug" then
-        if Nexus.LogViewer then
-            Nexus.LogViewer.Show("sync")
-        else
-            Print("log viewer unavailable")
-        end
-    elseif msg:sub(1, 6) == "probe " then
-        local target = msg:sub(7):match("^%s*(.-)%s*$")
-        if target ~= "" and Nexus.Sync and Nexus.Sync.SendStatusTo then
-            pcall(Nexus.Sync.SendStatusTo, target)
-        end
-    elseif msg == "nameplate" then
-        local NP = Nexus.Nameplate
-        if NP then
-            Print("Mouseover tooltip: active.")
-            Print("Nexus users seen on the sync mesh are tagged, with leaderboard data when available.")
-        else
-            Print("Nameplate module not loaded.")
-        end
-    elseif msg == "dps" then
-        if Nexus.Emergency and Nexus.Emergency.dpsDisabled then
-            Print(Nexus.Emergency.reason)
-            return
-        end
-        -- Always-on: this just shows the current capture status
-        local D = Nexus.DpsCapture
-        if not D then Print("DPS capture module not loaded"); return end
-        if D.IsDetailsAvailable() then
-            Print("|cff4dff80DPS capture is active.|r")
-            Print("Fight the Lich King or hit a training dummy to record your best.")
-        else
-            Print("|cffff9040Details! damage meter is not installed.|r")
-            Print("Install Details! to enable DPS tracking on your builds.")
-        end
-        if Nexus.lastDpsNote then
-            Print("Last session: " .. Nexus.lastDpsNote)
-        end
-        local wl = Adapter.Wishlist()
-        if wl and D.GetEchoKey then
-            Print("Selected wishlist key: " .. tostring(D.GetEchoKey(wl.entries)))
-        end
-        if D.GetCurrentEchoKey then
-            Print("Current tracked Echo key: " .. tostring(D.GetCurrentEchoKey()))
-        end
-        Print("Open /nexus log and select DPS for the full capture trace.")
-    elseif msg:match("^syncmode") then
-        local requested = msg:match("^syncmode%s+(%S+)$")
-        if requested and requested ~= "off" and requested ~= "manual"
-            and requested ~= "automatic" and requested ~= "auto" then
-            Print("usage: /nexus syncmode <automatic|manual|off>")
-        elseif requested and Nexus.Sync and Nexus.Sync.SetMode then
-            local mode = Nexus.Sync.SetMode(requested)
-            Print("Sync mode set to " .. tostring(mode)
-                .. ". Sync runs only while resting and in a safe context.")
-        elseif Nexus.Sync and Nexus.Sync.GetEffectiveState then
-            local state = Nexus.Sync.GetEffectiveState()
-            Print("Sync: " .. tostring(state.label)
-                .. (state.reason and (" (" .. tostring(state.reason) .. ")") or ""))
-        else
-            Print("sync unavailable")
-        end
-    elseif msg:match("^synclimits") then
-        local retentionMode = msg:match("^synclimits%s+(%S+)$")
-        local top, perClass, average, averagePerClass, other, perAuthor = msg:match(
-            "^synclimits%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)$")
-        if retentionMode == "on" or retentionMode == "off" then
-            settings.communityRetentionEnabled = retentionMode == "on"
-            if Nexus.DataRetention and Nexus.DataRetention.Enforce then
-                pcall(Nexus.DataRetention.Enforce, NexusDB,
-                    "retention " .. retentionMode)
-            end
-        elseif top then
-            settings.communityRetentionEnabled = true
-            settings.communityRetentionTopPerCategory = tonumber(top)
-            settings.communityRetentionMinPerClassPerCategory = tonumber(perClass)
-            settings.communityRetentionTopAverage = tonumber(average)
-            settings.communityRetentionMinAveragePerClass = tonumber(averagePerClass)
-            settings.communityRetentionOtherRemoteBuilds = tonumber(other)
-            settings.communityRetentionMaxPerAuthor = tonumber(perAuthor)
-            local limits = Nexus.DataRetention and Nexus.DataRetention.Limits
-                and Nexus.DataRetention.Limits(NexusDB) or nil
-            if limits then
-                settings.communityRetentionTopPerCategory = limits.topPerCategory
-                settings.communityRetentionMinPerClassPerCategory = limits.minPerClassPerCategory
-                settings.communityRetentionTopAverage = limits.topAverage
-                settings.communityRetentionMinAveragePerClass = limits.minAveragePerClass
-                settings.communityRetentionOtherRemoteBuilds = limits.otherRemoteBuilds
-                settings.communityRetentionMaxPerAuthor = limits.remotePerAuthor
-                pcall(Nexus.DataRetention.Enforce, NexusDB, "settings changed")
-            end
-        elseif msg ~= "synclimits" then
-            Print("usage: /nexus synclimits <on|off> or <D/L top> <D/L class> <avg top> <avg class> <other> <author>")
-        end
-        local limits = Nexus.DataRetention and Nexus.DataRetention.Limits
-            and Nexus.DataRetention.Limits(NexusDB) or nil
-        if limits then
-            Print(limits.enabled
-                and "Ranked retention: ON (custom limits active)."
-                or "Ranked retention: OFF (relaxed hard safety ceilings remain).")
-            Print(string.format("DPS retention: %d overall + %d/class for Dummy and LK; %d overall + %d/class for Average.",
-                limits.topPerCategory, limits.minPerClassPerCategory,
-                limits.topAverage, limits.minAveragePerClass))
-            Print(string.format("Other community builds: %d total, %d per author.",
-                limits.otherRemoteBuilds, limits.remotePerAuthor))
-            Print("Set mode: /nexus synclimits <on|off>")
-            Print("Set custom limits (also enables): /nexus synclimits <raw-top> <raw-per-class> <avg-top> <avg-per-class> <other> <per-author>")
-        else
-            Print("retention settings unavailable")
-        end
-    elseif msg == "sync" then
-        if Nexus.Sync then
-            local ok, err = Nexus.Sync.RequestSync()
-            if ok then
-                Print("asking other players for their builds -- results appear in /nexus builds")
-            else
-                Print(tostring(err))
-            end
-        else
-            Print("sync unavailable")
-        end
-    elseif msg == "builds" then
-        if Nexus.CommunityBuilds then
-            Nexus.CommunityBuilds.Toggle()
-        else
-            Print("Nexus Builds unavailable")
-        end
-    elseif msg == "leaderboard" or msg == "ranks" then
-        if Nexus.Leaderboard then
-            Nexus.Leaderboard.Toggle()
-        else
-            Print("Nexus Leaderboard unavailable")
-        end
-    elseif msg == "log errors" or msg == "errors" then
-        if Nexus.LogViewer then
-            Nexus.LogViewer.Show("errors")
-        else
-            Print("log viewer unavailable")
-        end
-    elseif msg == "perf" or msg == "performance" then
-        if Nexus.LogViewer then
-            Nexus.LogViewer.Show("perf")
-        else
-            Print("performance diagnostics unavailable")
-        end
-    elseif msg == "log" or msg == "logs" then
-        if Nexus.LogViewer then
-            Nexus.LogViewer.Toggle()
-        else
-            Print("log viewer unavailable")
-        end
-    elseif msg == "err" then
-        local latest
-        if Nexus.Errors and type(Nexus.Errors.Latest) == "function" then
-            local okLatest, retained = pcall(Nexus.Errors.Latest)
-            if okLatest then latest = retained end
-        end
-        Print(latest and latest.message or ErrorText(Nexus.lastError))
-    elseif msg == "undemote" then
-        local st = Store.State()
-        st.flagDemotions = {}
-        RequestRecompute()
-        Print("flag demotions cleared (they re-arm on fresh evidence)")
-    elseif msg == "overlay" then
-        if Nexus.WishlistOverlay then
-            Nexus.WishlistOverlay.Toggle()
-        else
-            Print("overlay unavailable")
-        end
-    elseif msg:match("^anchor") then
-        local arg = msg:match("^anchor%s+(%S+)")
-        if arg == "off" or arg == nil then
-            settings.anchorSpellId = nil
-            Print("anchor cleared")
-        else
-            settings.anchorSpellId = tonumber(arg)
-            Print("anchor set to " .. tostring(settings.anchorSpellId))
-        end
-        RequestRecompute()
-    else
-        -- Showing the general status/help surface is an explicit user refresh.
-        -- This also keeps retired diagnostic command aliases harmless without
-        -- letting them suppress the next normal ownership snapshot.
-        RequestRecompute()
-        Print("v" .. Nexus.VERSION .. " -- " .. statusLine)
-        Print("|cffffd200Nexus v" .. Nexus.VERSION .. "|r  --  /nexus (or /nx, /wr)")
-        Print("|cffffd200Setup:|r  builds  |  leaderboard  |  editor  |  sync  |  overlay")
-        Print("|cffffd200Sync:|r   syncmode <automatic|manual|off>  |  sync")
-        Print("|cffffd200Limits:|r synclimits <on|off>  |  synclimits <D/L top> <D/L class> <avg top> <avg class> <other> <author>")
-        Print("|cffffd200Run:|r    auto  |  panel  |  status  |  wishlist  |  progress")
-        Print("|cffffd200Data:|r   log  |  perf  |  dps  |  nameplate  |  logclear")
-        Print("|cffffd200Fixes:|r  flags  |  undemote  |  anchor <id|off>  |  restore  |  err")
+
+local function CommandAuto()
+    autoEnabled = not autoEnabled
+    RequestRecompute()
+    Print("auto " .. (autoEnabled and "ON" or "OFF"))
+    if Panel.SetAuto then Panel.SetAuto(autoEnabled) end
+end
+
+local function CommandRestore()
+    Print(Adapter.RestoreAutoAccept() and "client auto-accept restored"
+        or "nothing to restore")
+    RequestRecompute()
+end
+
+local function CommandFlags()
+    for key, value in pairs(EffectiveFlags()) do
+        Print(key .. " = " .. tostring(value))
     end
+    for key, why in pairs(Store.State().flagDemotions or {}) do
+        Print("demoted " .. key .. ": " .. tostring(why))
+    end
+end
+
+local function PrintTargetStatus(wishlist)
+    if wishlist then
+        local source = wishlist.source == "designed" and "Echo Wishlist build"
+            or wishlist.source == "active" and "active loadout" or "wishlist"
+        Print(string.format("TARGET: |cff7fff7f'%s'|r (your %s) -- %d echoes",
+            wishlist.name ~= "" and wishlist.name or "(unnamed)",
+            source, #wishlist.entries))
+        return
+    end
+    local note = Adapter.WishlistNote and Adapter.WishlistNote()
+    Print("TARGET: none -- advisor only" .. (note and ("  (" .. note .. ")") or ""))
+end
+
+local function CountLoadoutKinds(slots)
+    local snapshots, designs = 0, 0
+    for _, slot in pairs(slots.bySlot) do
+        if type(slot.echoes) == "table" and #slot.echoes > 0 then
+            if slot.verified then snapshots = snapshots + 1 else designs = designs + 1 end
+        end
+    end
+    return snapshots, designs
+end
+
+local function PrintActiveLoadout(slots)
+    local active = slots.activeSlot
+    local slot = active ~= 0 and slots.bySlot[active] or nil
+    if not slot then Print("ACTIVE: no build activated right now."); return end
+    Print(string.format("ACTIVE slot %d '%s': %s, %d echoes", active,
+        slot.name ~= "" and slot.name or "?",
+        slot.verified and "snapshot (arms the guarantee)"
+            or "designed build (highlight only -- not a guarantee)", #slot.echoes))
+end
+
+local function PrintBestLoadout(slots, wishlist, catalog)
+    if not (wishlist and Ratchet and Ratchet.BestSlot) then return end
+    local plan = Strategy.Compile(catalog, wishlist, Store.Settings())
+    local best = Ratchet.BestSlot(slots, plan, catalog)
+    Print(best and ("Would arm snapshot slot " .. best .. " at level 1.")
+        or "No verified snapshot to arm -- first run seeds one.")
+end
+
+local function PrintLoadoutStatus(slots, wishlist, catalog)
+    if not slots then
+        Print("LOADOUTS: slot data not loaded yet (waiting on the server).")
+        return
+    end
+    local snapshots, designs = CountLoadoutKinds(slots)
+    PrintActiveLoadout(slots)
+    Print(string.format("READABLE: %d loadout snapshot(s), %d designed wishlist build(s)",
+        snapshots, designs))
+    PrintBestLoadout(slots, wishlist, catalog)
+end
+
+local function CommandStatus()
+    local catalog, wishlist = Adapter.Catalog(), Adapter.Wishlist()
+    local slots, owned = Adapter.Slots(), Adapter.Owned()
+    Print("v" .. Nexus.VERSION .. " -- level " .. Adapter.Level()
+        .. ", auto " .. (autoEnabled and "ON" or "OFF"))
+    PrintTargetStatus(wishlist)
+    PrintLoadoutStatus(slots, wishlist, catalog)
+    Print(string.format("OWNED this run: %d echoes (%s).", owned.distinct or 0,
+        owned.synced and "synced" or "not synced yet"))
+end
+
+local function PrintMissingWishlistHelp()
+    local note = Adapter.WishlistNote and Adapter.WishlistNote()
+    if note then Print(note); return end
+    Print("no wishlist detected -- running as advisor only.")
+    Print("Design one in the Echo Journal: 'New Wishlist' (the 'Echo Wishlist'")
+    Print("section), pick its echoes, and save it. The addon reads that build.")
+end
+
+local function WishlistSource(wishlist)
+    if wishlist.source == "designed" then return "your Echo Wishlist build" end
+    if wishlist.source == "active" then return "your active loadout" end
+    return "your wishlist"
+end
+
+local function WishlistNames(wishlist, catalog)
+    local names = {}
+    for _, echo in ipairs(wishlist.entries) do
+        local row = catalog and catalog.rows[echo.spellId]
+        local count = echo.stacks > 1 and (" x" .. echo.stacks) or ""
+        names[#names + 1] = (row and row.name or ("spell " .. echo.spellId)) .. count
+    end
+    table.sort(names)
+    return names
+end
+
+local function WishlistFamilyCount(wishlist)
+    local families = {}
+    for _, echo in ipairs(wishlist.entries) do families[echo.family] = true end
+    local count = 0
+    for _ in pairs(families) do count = count + 1 end
+    return count
+end
+
+local function CommandWishlist()
+    local wishlist = Adapter.Wishlist()
+    if not wishlist then PrintMissingWishlistHelp(); return end
+    Print(string.format("reading |cff7fff7f'%s'|r (from %s) -- %d echoes, %d families",
+        wishlist.name ~= "" and wishlist.name or "(unnamed)", WishlistSource(wishlist),
+        #wishlist.entries, WishlistFamilyCount(wishlist)))
+    Print("  " .. table.concat(WishlistNames(wishlist, Adapter.Catalog()), ", "))
+end
+
+local function CommandProgress(message)
+    local catalog, wishlist, owned = Adapter.Catalog(), Adapter.Wishlist(), Adapter.Owned()
+    if not wishlist then Print("no wishlist set -- advisor only, nothing to track."); return end
+    local plan = Strategy.Compile(catalog,
+        WishlistWithLockTargets(wishlist, catalog), Store.Settings())
+    local have, total, missing = WishlistProgress(plan, owned, catalog)
+    local percent = total > 0 and math.floor(have / total * 100 + 0.5) or 0
+    Print(string.format("this run: |cff7fff7f%d/%d|r echoes (%d%%) -- %d still short",
+        have, total, percent, #missing))
+    if message == "missing" and #missing > 0 then Print("  " .. table.concat(missing, ", ")) end
+end
+
+local function ToggleModule(module, unavailable)
+    if module then module.Toggle(); return end
+    Print(unavailable)
+end
+
+local function ShowLog(category, unavailable)
+    if Nexus.LogViewer then Nexus.LogViewer.Show(category); return end
+    Print(unavailable)
+end
+
+local function CommandProbe(message)
+    local target = message:sub(7):match("^%s*(.-)%s*$")
+    if target ~= "" and Nexus.Sync and Nexus.Sync.SendStatusTo then
+        pcall(Nexus.Sync.SendStatusTo, target)
+    end
+end
+
+local function CommandNameplate()
+    if Nexus.Nameplate then
+        Print("Mouseover tooltip: active.")
+        Print("Nexus users seen on the sync mesh are tagged, with leaderboard data when available.")
+        return
+    end
+    Print("Nameplate module not loaded.")
+end
+
+local function PrintDpsAvailability(capture)
+    if capture.IsDetailsAvailable() then
+        Print("|cff4dff80DPS capture is active.|r")
+        Print("Fight the Lich King or hit a training dummy to record your best.")
+        return
+    end
+    Print("|cffff9040Details! damage meter is not installed.|r")
+    Print("Install Details! to enable DPS tracking on your builds.")
+end
+
+local function CommandDps()
+    if Nexus.Emergency and Nexus.Emergency.dpsDisabled then
+        Print(Nexus.Emergency.reason); return
+    end
+    local capture = Nexus.DpsCapture
+    if not capture then Print("DPS capture module not loaded"); return end
+    PrintDpsAvailability(capture)
+    if Nexus.lastDpsNote then Print("Last session: " .. Nexus.lastDpsNote) end
+    local wishlist = Adapter.Wishlist()
+    if wishlist and capture.GetEchoKey then
+        Print("Selected wishlist key: " .. tostring(capture.GetEchoKey(wishlist.entries)))
+    end
+    if capture.GetCurrentEchoKey then
+        Print("Current tracked Echo key: " .. tostring(capture.GetCurrentEchoKey()))
+    end
+    Print("Open /nexus log and select DPS for the full capture trace.")
+end
+
+local function ValidSyncMode(mode)
+    return mode == "off" or mode == "manual" or mode == "automatic" or mode == "auto"
+end
+
+local function PrintSyncState()
+    if not (Nexus.Sync and Nexus.Sync.GetEffectiveState) then
+        Print("sync unavailable"); return
+    end
+    local state = Nexus.Sync.GetEffectiveState()
+    Print("Sync: " .. tostring(state.label)
+        .. (state.reason and (" (" .. tostring(state.reason) .. ")") or ""))
+end
+
+local function CommandSyncMode(message)
+    local requested = message:match("^syncmode%s+(%S+)$")
+    if requested and not ValidSyncMode(requested) then
+        Print("usage: /nexus syncmode <automatic|manual|off>"); return
+    end
+    if not requested then PrintSyncState(); return end
+    if not (Nexus.Sync and Nexus.Sync.SetMode) then Print("sync unavailable"); return end
+    local mode = Nexus.Sync.SetMode(requested)
+    Print("Sync mode set to " .. tostring(mode)
+        .. ". Sync runs only while resting and in a safe context.")
+end
+
+local function RetentionLimits()
+    return Nexus.DataRetention and Nexus.DataRetention.Limits
+        and Nexus.DataRetention.Limits(NexusDB) or nil
+end
+
+local function EnforceRetention(reason)
+    if Nexus.DataRetention and Nexus.DataRetention.Enforce then
+        pcall(Nexus.DataRetention.Enforce, NexusDB, reason)
+    end
+end
+
+local function SetRetentionMode(settings, mode)
+    settings.communityRetentionEnabled = mode == "on"
+    EnforceRetention("retention " .. mode)
+end
+
+local function CopyRetentionLimits(settings, limits)
+    settings.communityRetentionTopPerCategory = limits.topPerCategory
+    settings.communityRetentionMinPerClassPerCategory = limits.minPerClassPerCategory
+    settings.communityRetentionTopAverage = limits.topAverage
+    settings.communityRetentionMinAveragePerClass = limits.minAveragePerClass
+    settings.communityRetentionOtherRemoteBuilds = limits.otherRemoteBuilds
+    settings.communityRetentionMaxPerAuthor = limits.remotePerAuthor
+end
+
+local function SetRetentionNumbers(settings, values)
+    settings.communityRetentionEnabled = true
+    settings.communityRetentionTopPerCategory = tonumber(values[1])
+    settings.communityRetentionMinPerClassPerCategory = tonumber(values[2])
+    settings.communityRetentionTopAverage = tonumber(values[3])
+    settings.communityRetentionMinAveragePerClass = tonumber(values[4])
+    settings.communityRetentionOtherRemoteBuilds = tonumber(values[5])
+    settings.communityRetentionMaxPerAuthor = tonumber(values[6])
+    local limits = RetentionLimits()
+    if not limits then return end
+    CopyRetentionLimits(settings, limits)
+    EnforceRetention("settings changed")
+end
+
+local function RetentionNumbers(message)
+    return {message:match(
+        "^synclimits%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)$")}
+end
+
+local function PrintRetentionLimits(limits)
+    if not limits then Print("retention settings unavailable"); return end
+    Print(limits.enabled and "Ranked retention: ON (custom limits active)."
+        or "Ranked retention: OFF (relaxed hard safety ceilings remain).")
+    Print(string.format("DPS retention: %d overall + %d/class for Dummy and LK; %d overall + %d/class for Average.",
+        limits.topPerCategory, limits.minPerClassPerCategory,
+        limits.topAverage, limits.minAveragePerClass))
+    Print(string.format("Other community builds: %d total, %d per author.",
+        limits.otherRemoteBuilds, limits.remotePerAuthor))
+    Print("Set mode: /nexus synclimits <on|off>")
+    Print("Set custom limits (also enables): /nexus synclimits <raw-top> <raw-per-class> <avg-top> <avg-per-class> <other> <per-author>")
+end
+
+local function CommandSyncLimits(message)
+    local settings = Store.Settings()
+    local mode = message:match("^synclimits%s+(%S+)$")
+    local values = RetentionNumbers(message)
+    if mode == "on" or mode == "off" then
+        SetRetentionMode(settings, mode)
+    elseif values[1] then
+        SetRetentionNumbers(settings, values)
+    elseif message ~= "synclimits" then
+        Print("usage: /nexus synclimits <on|off> or <D/L top> <D/L class> <avg top> <avg class> <other> <author>")
+    end
+    PrintRetentionLimits(RetentionLimits())
+end
+
+local function CommandSync()
+    if not Nexus.Sync then Print("sync unavailable"); return end
+    local ok, err = Nexus.Sync.RequestSync()
+    if ok then
+        Print("asking other players for their builds -- results appear in /nexus builds")
+    else
+        Print(tostring(err))
+    end
+end
+
+local function CommandError()
+    local latest
+    if Nexus.Errors and type(Nexus.Errors.Latest) == "function" then
+        local ok, retained = pcall(Nexus.Errors.Latest)
+        if ok then latest = retained end
+    end
+    Print(latest and latest.message or ErrorText(Nexus.lastError))
+end
+
+local function CommandUndemote()
+    Store.State().flagDemotions = {}
+    RequestRecompute()
+    Print("flag demotions cleared (they re-arm on fresh evidence)")
+end
+
+local function CommandAnchor(message)
+    local settings = Store.Settings()
+    local value = message:match("^anchor%s+(%S+)")
+    if value == "off" or value == nil then
+        settings.anchorSpellId = nil
+        Print("anchor cleared")
+    else
+        settings.anchorSpellId = tonumber(value)
+        Print("anchor set to " .. tostring(settings.anchorSpellId))
+    end
+    RequestRecompute()
+end
+
+local function CommandHelp()
+    RequestRecompute()
+    Print("v" .. Nexus.VERSION .. " -- " .. statusLine)
+    Print("|cffffd200Nexus v" .. Nexus.VERSION .. "|r  --  /nexus (or /nx, /wr)")
+    Print("|cffffd200Setup:|r  builds  |  leaderboard  |  editor  |  sync  |  overlay")
+    Print("|cffffd200Sync:|r   syncmode <automatic|manual|off>  |  sync")
+    Print("|cffffd200Limits:|r synclimits <on|off>  |  synclimits <D/L top> <D/L class> <avg top> <avg class> <other> <author>")
+    Print("|cffffd200Run:|r    auto  |  panel  |  status  |  wishlist  |  progress")
+    Print("|cffffd200Data:|r   log  |  perf  |  dps  |  nameplate  |  logclear")
+    Print("|cffffd200Fixes:|r  flags  |  undemote  |  anchor <id|off>  |  restore  |  err")
+end
+
+local CommandRouter = assert(Nexus.CommandRouter, "CommandRouter required").New({
+    exact={
+        auto=CommandAuto,
+        panel=function() Panel.Toggle() end,
+        restore=CommandRestore,
+        flags=CommandFlags,
+        status=CommandStatus,
+        wishlist=CommandWishlist,
+        progress=CommandProgress,
+        editor=function() ToggleModule(Nexus.WishlistEditor, "wishlist editor unavailable") end,
+        syncdebug=function() ShowLog("sync", "log viewer unavailable") end,
+        nameplate=CommandNameplate,
+        dps=CommandDps,
+        sync=CommandSync,
+        builds=function() ToggleModule(Nexus.CommunityBuilds, "Nexus Builds unavailable") end,
+        leaderboard=function() ToggleModule(Nexus.Leaderboard, "Nexus Leaderboard unavailable") end,
+        errors=function() ShowLog("errors", "log viewer unavailable") end,
+        performance=function() ShowLog("perf", "performance diagnostics unavailable") end,
+        logs=function() ToggleModule(Nexus.LogViewer, "log viewer unavailable") end,
+        err=CommandError,
+        undemote=CommandUndemote,
+        overlay=function() ToggleModule(Nexus.WishlistOverlay, "overlay unavailable") end,
+    },
+    aliases={
+        check="wishlist",missing="progress",ranks="leaderboard",
+        ["log errors"]="errors",perf="performance",log="logs",
+    },
+    patterns={
+        {pattern="^probe%s+",handler=CommandProbe},
+        {pattern="^syncmode",handler=CommandSyncMode},
+        {pattern="^synclimits",handler=CommandSyncLimits},
+        {pattern="^anchor",handler=CommandAnchor},
+    },
+    fallback=CommandHelp,
+})
+
+SlashCmdList["NEXUS"] = function(message)
+    if not initialized then Print("not initialized yet"); return end
+    CommandRouter.Dispatch(message)
 end

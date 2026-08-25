@@ -1721,34 +1721,21 @@ end
 
 -- Broadcast a validated exact-set DPS record. The JSON/base64 payload is
 -- chunked using the same 255-byte-safe discipline as build sync.
+local function DpsValidationDependencies()
+    local capture = Nexus and Nexus.DpsCapture
+    return {
+        echoKey=capture and capture.GetEchoKey,
+        echoHash=capture and capture.GetEchoHash,
+        samePeer=SamePeer,
+        ownerMatches=OwnerKeyMatchesAuthor,
+        localPlayer=MyName(),
+    }
+end
+
 function Responder.ValidatePreparedDps(payload)
-    local D = Nexus and Nexus.DpsCapture
-    if type(payload) ~= "table" or type(payload.f) ~= "string"
-        or type(payload.e) ~= "table" then return false end
-    local dps, duration, stamp, level = tonumber(payload.d),
-        tonumber(payload.u), tonumber(payload.t), tonumber(payload.l)
-    local player = tostring(payload.p or "")
-    local playerClass = type(payload.k) == "string"
-        and payload.k:upper() or nil
-    local validClass = playerClass == "WARRIOR" or playerClass == "PALADIN"
-        or playerClass == "HUNTER" or playerClass == "ROGUE"
-        or playerClass == "PRIEST" or playerClass == "DEATHKNIGHT"
-        or playerClass == "SHAMAN" or playerClass == "MAGE"
-        or playerClass == "WARLOCK" or playerClass == "DRUID"
-    local computed = D and D.GetEchoKey and D.GetEchoKey(payload.e) or nil
-    local computedHash = D and D.GetEchoHash and D.GetEchoHash(payload.e)
-        or nil
-    return FiniteNumber(dps) and dps > 0 and dps <= 500000000
-        and FiniteNumber(duration) and duration >= 30
-        and FiniteNumber(stamp) and stamp > 0
-        and FiniteNumber(level) and level >= 1 and level <= 80
-        and level == math.floor(level) and validClass
-        and player ~= "" and #player <= 64 and not player:find("[%c|]")
-        and (payload.c == "dummy" or payload.c == "lk")
-        and SamePeer(player, MyName())
-        and OwnerKeyMatchesAuthor(payload.o, player)
-        and computed and computed == payload.f
-        and payload.h and (not computedHash or payload.h == computedHash)
+    local validator = Nexus and Nexus.DpsWireValidator
+    return validator and validator.Validate
+        and validator.Validate(payload, DpsValidationDependencies()) or false
 end
 
 function Sync.BroadcastDpsRecord(record, prepared, responseMode)
@@ -1779,48 +1766,22 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode)
         local ok, resolved = pcall(D.MaterializeRecord, record)
         if ok and type(resolved) == "table" then record = resolved end
     end
-    if type(record) ~= "table" or type(record.fingerprint) ~= "string"
-        or type(record.echoes) ~= "table" then return false end
+    if type(record) ~= "table" then return false end
     local dps = tonumber(record.dps)
     local duration = tonumber(record.duration)
     local stamp = tonumber(record.ts)
     local level = tonumber(record.level)
     local player = tostring(record.player or "")
-    local playerClass = type(record.class) == "string"
-        and record.class:upper() or nil
-    local validClass = playerClass == "WARRIOR" or playerClass == "PALADIN"
-        or playerClass == "HUNTER" or playerClass == "ROGUE"
-        or playerClass == "PRIEST" or playerClass == "DEATHKNIGHT"
-        or playerClass == "SHAMAN" or playerClass == "MAGE"
-        or playerClass == "WARLOCK" or playerClass == "DRUID"
-    local computed = D and D.GetEchoKey and D.GetEchoKey(record.echoes) or nil
-    if not FiniteNumber(dps) or dps <= 0 or dps > 500000000
-        or not FiniteNumber(duration) or duration < 30
-        or not FiniteNumber(stamp) or stamp <= 0
-        or not FiniteNumber(level) or level < 1 or level > 80
-        or level ~= math.floor(level) or not validClass
-        or player == "" or #player > 64 or player:find("[%c|]")
-        or (record.category ~= "dummy" and record.category ~= "lk")
-        or not SamePeer(player, MyName())
-        or not OwnerKeyMatchesAuthor(record.ownerKey, player)
-        or not computed or computed ~= record.fingerprint then
-        return false
-    end
     local loadoutHash = record.loadoutHash
     if not loadoutHash and D and D.GetEchoHash then
         loadoutHash = D.GetEchoHash(record.echoes)
-    end
-    local computedHash = D and D.GetEchoHash and D.GetEchoHash(record.echoes)
-        or nil
-    if not loadoutHash or (computedHash and loadoutHash ~= computedHash) then
-        return false
     end
     local payload = {
         v = tonumber(record.protocolVersion) or 5,
         h = loadoutHash,
         f = record.fingerprint,
         e = record.echoes,
-        c = record.category, d = math.floor(dps),
+        c = record.category, d = dps,
         u = duration, t = stamp,
         p = player, l = level,
         k = record.class, o = record.ownerKey, r = record.realm,
@@ -1828,6 +1789,12 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode)
         lk = (type(record.lockedEchoes)=="table" and #record.lockedEchoes>0)
              and record.lockedEchoes or nil,
     }
+    local validator = Nexus and Nexus.DpsWireValidator
+    if not (validator and validator.Validate
+        and validator.Validate(payload, DpsValidationDependencies())) then
+        return false
+    end
+    payload.d = math.floor(dps)
     if responseMode then
         Responder.stats.dpsSerializations =
             Responder.stats.dpsSerializations + 1

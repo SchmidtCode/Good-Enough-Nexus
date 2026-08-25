@@ -1781,6 +1781,33 @@ end
 
 function A.Level() return UnitLevel("player") or 0 end
 
+function A.PlayerIdentity()
+    local name = UnitName and UnitName("player") or nil
+    local class
+    if UnitClass then
+        local _
+        _, class = UnitClass("player")
+    end
+    local realm = GetNormalizedRealmName and GetNormalizedRealmName()
+    if not realm or realm == "" then realm = GetRealmName and GetRealmName() end
+    realm = tostring(realm or "unknown"):lower():gsub("%s+", "")
+    local normalizedName = tostring(name or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    return {
+        name=name,
+        class=class,
+        realm=realm,
+        ownerKey=normalizedName ~= "" and (normalizedName .. "@" .. realm) or nil,
+    }
+end
+
+function A.Now()
+    return GetTime and GetTime() or 0
+end
+
+function A.Timestamp()
+    return time and time() or 0
+end
+
 function A.Horizon()
     -- GetPendingRollsCount has PERSISTENT SIDE EFFECTS at level<=1 /
     -- loading screens (pick-counter reset, char-key latch): call guarded.

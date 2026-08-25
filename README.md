@@ -83,6 +83,8 @@ node tests/run-bundled-build-export.js
 node tests/run-savedvariables-analyzer.js
 node tests/run-performance-benchmark-runner.js
 node tests/run-performance-benchmark-workflow.js
+node tests/run-crap-report.js
+node tests/run-crap-workflow.js
 git diff --check
 ```
 
@@ -110,6 +112,24 @@ summary and retains both report files as artifacts. A broken benchmark run still
 returns an error because it produced no usable observation.
 
 Use `--quick` for a shorter local smoke run.
+
+## CRAP report
+
+Run the production CRAP report with LuaJIT:
+
+```powershell
+npm ci
+node tools/crap-report.js --coverage --runtime luajit --output-dir crap-results
+```
+
+The reporter scores only addon runtime files listed in `Nexus.toc`. It excludes
+tests, benchmarks, development tooling, and generated bundled-build data. Lua
+tests supply statement coverage, but test and benchmark functions never receive
+CRAP scores. Benchmark-specific test programs are also excluded from functional
+coverage collection.
+
+The report writes raw JSON and a Markdown summary. CI publishes both without a
+repository-wide score gate while the existing debt is being reduced.
 
 See [CHANGELOG.md](CHANGELOG.md) for inherited release history and
 [UPSTREAM.md](UPSTREAM.md) for provenance and redistribution notes.

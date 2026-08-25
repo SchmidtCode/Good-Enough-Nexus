@@ -32,6 +32,7 @@ core\ViewRefresh.lua
 core\Updates.lua
 core\Codec.lua
 core\SyncPolicy.lua
+core\DpsWireValidator.lua
 core\SyncResponder.lua
 core\Sync.lua
 core\DpsCapture.lua
@@ -53,4 +54,5 @@ ui\CommunityBuilds.lua
 ui\Leaderboard.lua
 ui\Nameplate.lua
 ui\Changelog.lua
+core\CommandRouter.lua
 core\Main.lua

@@ -352,6 +352,36 @@ latch/retry checks and cheaply detects unhooked auto-accept/rival transitions;
 level, catalog, and settings invalidations. All per design doc §4 (deep copies,
 ledger, gate v2 latch-polling, run-boundary, self-check demotion hook).
 
+Account/build services use `PlayerIdentity()`, `Now()`, and `Timestamp()` rather
+than reading WoW globals directly. `PlayerIdentity()` returns name, class, realm,
+and the normalized account-owner key. These methods are injectable through
+`AccountBuildWorkspace.Init(adapter)` for deterministic tests; production always
+defaults missing adapter methods back to this sole IO module.
+
+## core/AccountBuildWorkspace.lua — account build orchestration
+
+Owns account-build import, ownership, related-build lookup, DPS-build selection,
+and publication orchestration. It depends on the narrow adapter methods
+`Catalog()`, `Slots()`, `PlayerIdentity()`, `Now()`, and `Timestamp()`. Candidate
+selection is deterministic: semantic preference is applied first and equal
+candidates use lexical build ID order. The module must not read client globals or
+wall clocks itself.
+
+## core/CommandRouter.lua — normalized slash dispatch
+
+`CommandRouter.New({ exact, aliases, patterns, fallback })` returns a router with
+`Dispatch(message)`. It trims and lowercases the command once, resolves exact
+commands before aliases and ordered patterns, and otherwise invokes the fallback.
+It is pure routing: command behavior and WoW IO remain in `core/Main.lua` handlers.
+
+## core/DpsWireValidator.lua — prepared DPS payload validation
+
+`DpsWireValidator.Validate(payload, dependencies)` is the single validation seam
+for locally broadcast and remotely prepared DPS records. It validates shape,
+finite numeric bounds, identity fields, category/owner consistency, fingerprint,
+and hash without transport or SavedVariables access. `core/Sync.lua` constructs
+the dependency callbacks and delegates both paths to this function.
+
 ## ui/*
 
 - `ui/Readout.lua` — `Nexus.Readout`: pure-ish formatting: `Readout.Status(model)`,

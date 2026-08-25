@@ -1249,13 +1249,16 @@ local function EnsureFrame()
 
     local retryTicker, statusTicker, dataTicker = 0, 0, 0
     local lastReceiving = false
-    local function ScheduledUpdate(elapsed)
+    local function DirectUpdate(_, elapsed)
         retryTicker = retryTicker + elapsed
         if retryTicker >= 0.5 then
             retryTicker = 0
             if M._PumpPendingLockIn then M._PumpPendingLockIn() end
         end
+    end
+    frame:SetScript("OnUpdate", DirectUpdate)
 
+    local function ScheduledUpdate(elapsed)
         -- Keep the live sync label responsive without rebuilding and sorting
         -- the entire build library every half second. The old full refresh was
         -- especially expensive with 100+ builds because it also resolved DPS
