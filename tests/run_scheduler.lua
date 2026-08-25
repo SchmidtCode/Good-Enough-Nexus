@@ -75,6 +75,19 @@ CreateFrame = realCreateFrame
 assert(Scheduler.Init() and Scheduler.IsInitialized(),
     "scheduler did not recover after frame setup became available")
 
+-- Repeating callbacks receive real wall-clock elapsed time even when missed
+-- intervals are coalesced into one callback.
+local observedElapsed
+Scheduler.Every("elapsed", 0.25, function(_, _, elapsed)
+    observedElapsed = elapsed
+end)
+local beforeJump = H.now
+H.now = H.now + 8.1
+Scheduler.Tick(H.now)
+assert(observedElapsed and math.abs(observedElapsed - (H.now - beforeJump)) < 0.001,
+    "repeating callback replaced real elapsed time with its nominal interval")
+Scheduler.Cancel("elapsed")
+
 -- Revision bursts coalesce the two noncritical data views. Status-only UI
 -- remains an immediate direct repaint and does not enqueue another refresh.
 dofile("core/Revisions.lua")

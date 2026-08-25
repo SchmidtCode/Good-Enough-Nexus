@@ -273,6 +273,14 @@ error or second unstable pass publishes nothing. The module owns no frames,
 SavedVariables, revisions, transport, GameAdapter access, scheduler work, or
 automation authority.
 
+## core/DpsRanking.lua — canonical DPS identity and ranking rules
+
+`Nexus.DpsRanking` exposes `PlayerKey`, `NormalizeRealm`, `TypedIdentity`,
+`CharacterKey`, `RecordIdentity`, `RecordKey`, `PairCategories`, `Summary`, and
+`CombinedRows`. These functions are pure and must not read SavedVariables, WoW
+globals, transport state, or UI frames. DPS storage, retention, projection, and
+presentation callers use these rules rather than keeping local variants.
+
 ## ui/VirtualList.lua — fixed-height visible windows
 
 `Nexus.VirtualList.Window(count, rowHeight, viewportHeight, offset, overscan)`
@@ -298,6 +306,14 @@ the status label; its periodic ticker performs no DPS/catalog read, projection,
 row/detail bind, or theme-tree traversal. Scroll and resize rebind only the
 visible-plus-overscan rows, while offscreen selection retains the exact record
 used by Copy into Editor and Open Build. Read-only counters expose these paths.
+
+## ui/BrowserSession.lua — projection and selection state
+
+`BrowserSession.New({project, keyOf, rowHeight, overscan})` returns a session
+with `Refresh`, `Rows`, `Summary`, `Select`, `SelectedKey`, `SelectedRow`,
+`SetViewport`, `Window`, `VisibleRows`, and `Stats`. It owns projection,
+selection repair, and virtual-window state, but no frames, timers, persistence,
+transport, or gameplay actions.
 
 ## core/Main.lua and ui/Panel.lua — materialized HUD display snapshots
 
@@ -327,6 +343,9 @@ and `Cancel(key)` own keyed debounce, background retry, maintenance, and
 coalescing. Reusing a key replaces its task. Due callbacks run in deterministic
 due-time/key order, repeaters skip missed intervals, and each frame executes at
 most 32 callbacks. Callback failures are isolated and retained by `Nexus.Errors`.
+Callbacks receive `(key, now, elapsed)`. Repeaters receive the real wall-clock
+duration since that task last ran, including coalesced missed intervals;
+one-shot callbacks receive `nil` for `elapsed`.
 `Nexus.ViewRefresh` uses the scheduler only for Community Builds, Leaderboard,
 and repainting the panel from its last cached model. Status-only panel updates
 remain immediate through `Panel.SetStatus()` and never rebuild strategy data.
@@ -366,6 +385,12 @@ and publication orchestration. It depends on the narrow adapter methods
 selection is deterministic: semantic preference is applied first and equal
 candidates use lexical build ID order. The module must not read client globals or
 wall clocks itself.
+
+Public operations are `Init`, `Owns`, `AccountOwns`, `Import`,
+`EnsureDpsBuildForEchoes`, `PostCurrentWishlist`, `PublishImportedBuild`,
+`EditBuild`, `UpdateFromWishlist`, `DeleteBuild`, `RefreshIdentity`,
+`InferClass`, and `Stats`. `Execute` remains compatibility dispatch for older
+callers; new callers use named operations.
 
 ## core/CommandRouter.lua — normalized slash dispatch
 
@@ -493,6 +518,14 @@ without copying it into `NexusDB.communityBuilds`. `Sync.Stats()` exposes
 reads use revision caches; `Sync.GetCanonicalBuildHashes()` and
 `DpsCapture.GetSyncHashUncached()` are explicit read-only verification paths and
 must not be used by normal Sync scheduling.
+
+## core/SyncResponder.lua — bounded fair response state
+
+`SyncResponder.New(options)` returns an isolated engine with `PendingCount`,
+`AdmitPending`, `DropPending`, `PendingExpired`, `AdvancePending`,
+`NextReadyBucket`, `SelectFairUnit`, `NextUnit`, and `ClearPending`. The engine
+owns response/loadout admission caps, expiry, bucket rotation, and fair work
+selection. `core/Sync.lua` owns serialization, transport, and protocol policy.
 
 ## Post-review amendments (binding, from the pre-deploy adversarial pass)
 

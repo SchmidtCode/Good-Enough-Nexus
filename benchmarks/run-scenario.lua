@@ -1,5 +1,6 @@
 local name = tostring(arg and arg[1] or "")
 local known = {
+    automation="benchmarks/scenarios/automation.lua",
     community="benchmarks/scenarios/community.lua",
     leaderboard="benchmarks/scenarios/leaderboard.lua",
     scheduler="benchmarks/scenarios/scheduler.lua",
@@ -13,6 +14,8 @@ local options = {}
 if quick then
     if name == "community" or name == "leaderboard" then
         options = {rows=200,iterations=10,warmup=2}
+    elseif name == "automation" then
+        options = {iterations=10,warmup=2}
     elseif name == "scheduler" then
         options = {iterations=100,warmup=10}
     else

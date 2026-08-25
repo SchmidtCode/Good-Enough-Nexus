@@ -1,6 +1,11 @@
 local H = dofile("tests/harness.lua")
 local Workspace = Nexus.AccountBuildWorkspace
 local stored = {}
+for _, method in ipairs({"EnsureDpsBuildForEchoes", "PostCurrentWishlist",
+    "PublishImportedBuild", "EditBuild", "UpdateFromWishlist", "DeleteBuild"}) do
+    assert(type(Workspace[method]) == "function",
+        "workspace named operation missing: " .. method)
+end
 
 dofile("core/GameAdapter.lua")
 local runtimeIdentity = Nexus.GameAdapter.PlayerIdentity()
@@ -86,7 +91,7 @@ local function DpsSelection(firstId, secondId)
             class="MAGE",echoes={{spellId=700001,stacks=1}},
         }
     end
-    local id = Workspace.Execute("ensure-dps", {{spellId=700001,stacks=1}},
+    local id = Workspace.EnsureDpsBuildForEchoes({{spellId=700001,stacks=1}},
         "dummy", {player="Remote",ownerKey="remote@ebonhold",class="MAGE"})
     return id
 end

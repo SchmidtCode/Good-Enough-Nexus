@@ -3308,12 +3308,25 @@ local function CommandRestore()
     RequestRecompute()
 end
 
-local function CommandFlags()
-    for key, value in pairs(EffectiveFlags()) do
-        Print(key .. " = " .. tostring(value))
+local function SortedKeys(source)
+    local keys = {}
+    for key in pairs(type(source) == "table" and source or {}) do
+        keys[#keys + 1] = key
     end
-    for key, why in pairs(Store.State().flagDemotions or {}) do
-        Print("demoted " .. key .. ": " .. tostring(why))
+    table.sort(keys, function(left, right)
+        return tostring(left) < tostring(right)
+    end)
+    return keys
+end
+
+local function CommandFlags()
+    local flags = EffectiveFlags()
+    for _, key in ipairs(SortedKeys(flags)) do
+        Print(key .. " = " .. tostring(flags[key]))
+    end
+    local demotions = Store.State().flagDemotions or {}
+    for _, key in ipairs(SortedKeys(demotions)) do
+        Print("demoted " .. key .. ": " .. tostring(demotions[key]))
     end
 end
 

@@ -99,10 +99,11 @@ Run the observational benchmark suite with LuaJIT:
 node tools/run-performance-benchmarks.js --runtime luajit
 ```
 
-The suite measures cached and rebuilt browser refreshes, virtual scrolling,
-leaderboard category switches, scheduler operations, Sync request admission and
-response work, and idle update cost. It reports average, median, p95, and maximum
-latency alongside work-item throughput. Results are written to
+The suite measures idle automation heartbeats, dirty and level-80 recovery
+steps, cached and rebuilt browser refreshes, debounced Community search bursts,
+virtual scrolling, leaderboard category switches, scheduler operations, Sync
+request admission and response work, and idle update cost. It reports average,
+median, p95, and maximum latency alongside work-item throughput. Results are written to
 `benchmark-results/results.json` and `benchmark-results/summary.md`.
 
 The figures are measurements, not timing gates. Compare runs made with the same

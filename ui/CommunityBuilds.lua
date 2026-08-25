@@ -74,7 +74,7 @@ local EMERGENCY_BUILD_LIMIT = 20
 local virtualStats = {
     created=0, peakActive=0, active=0, results=0,
     dataBinds=0, scrollBinds=0, resizeBinds=0,
-    dirtyMarks=0, deferredRefreshes=0, periodicSkips=0,
+    dirtyMarks=0, deferredRefreshes=0, periodicSkips=0, searchRefreshes=0,
     relatedScans=0, relatedHydrations=0,
     first=1, last=0, offset=0, maxOffset=0,
 }
@@ -327,27 +327,27 @@ end
 RefreshBuildIdentity = Workspace.RefreshIdentity
 
 function M.EnsureDpsBuildForEchoes(...)
-    return Workspace.Execute("ensure-dps", ...)
+    return Workspace.EnsureDpsBuildForEchoes(...)
 end
 
 function M.PostCurrentWishlist(...)
-    return Workspace.Execute("post", ...)
+    return Workspace.PostCurrentWishlist(...)
 end
 
 function M.PublishImportedBuild(...)
-    return Workspace.Execute("publish", ...)
+    return Workspace.PublishImportedBuild(...)
 end
 
 function M.EditBuild(...)
-    return Workspace.Execute("edit", ...)
+    return Workspace.EditBuild(...)
 end
 
 function M.UpdateFromWishlist(...)
-    return Workspace.Execute("update", ...)
+    return Workspace.UpdateFromWishlist(...)
 end
 
 function M.DeleteBuild(id)
-    local ok, err = Workspace.Execute("delete", id)
+    local ok, err = Workspace.DeleteBuild(id)
     if ok and SelectedId() == id then SelectId(nil) end
     return ok, err
 end
@@ -1339,14 +1339,18 @@ local function EnsureFrame()
     end
     local scheduler = assert(Nexus.Scheduler, "Scheduler required")
     local updateKey = "ui.community-builds.tick"
+    local searchKey = "ui.community-builds.search"
     local function StartScheduledWork()
         scheduler.Init()
-        scheduler.Every(updateKey, 0.25, function()
-            if frame and frame:IsShown() then ScheduledUpdate(0.25) end
+        scheduler.Every(updateKey, 0.25, function(_, _, elapsed)
+            if frame and frame:IsShown() then
+                ScheduledUpdate(tonumber(elapsed) or 0.25)
+            end
         end)
     end
     local function StopScheduledWork()
         scheduler.Cancel(updateKey)
+        scheduler.Cancel(searchKey)
     end
     frame:Hide()
     frame:HookScript("OnShow", StartScheduledWork)
@@ -1550,7 +1554,12 @@ local function EnsureFrame()
     searchBox:SetText(FilterSettings().search or "")
     searchBox:SetScript("OnTextChanged",function(self)
         FilterSettings().search = self:GetText() or ""
-        M.Refresh()
+        scheduler.After(searchKey, 0.25, function()
+            if frame and frame:IsShown() then
+                virtualStats.searchRefreshes = virtualStats.searchRefreshes + 1
+                M.Refresh()
+            end
+        end)
     end)
     local searchLabel = frame:CreateFontString(nil,"OVERLAY","GameFontDisableSmall")
     searchLabel:SetPoint("LEFT",searchBox,"LEFT",6,0)

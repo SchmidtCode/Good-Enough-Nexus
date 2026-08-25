@@ -57,7 +57,10 @@ assert(initialIdentity.rebuilds == 0 and initialIdentity.rowsScanned == 0
     and initialIdentity.candidateChecks == 0
     and initialProjection.dpsReads == 0,
     "Community safe mode still calculated per-build or average DPS")
-H.Advance(8.1)
+-- A delayed frame coalesces missed scheduler intervals, but the safety probe
+-- still uses real elapsed time and fires on its first callback after the stall.
+H.now = H.now + 8.1
+Nexus.Scheduler.Tick(H.now)
 local unchangedVirtual = C.VirtualStats()
 local unchangedProjection = P.Stats().builds
 assert(unchangedVirtual.dataBinds == initialVirtual.dataBinds

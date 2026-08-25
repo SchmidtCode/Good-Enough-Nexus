@@ -801,14 +801,19 @@ local function DeleteBuild(id)
     return true
 end
 
-local commands = {
-    ["ensure-dps"]=EnsureDpsBuild,
-    post=PostCurrentWishlist,
-    publish=PublishImportedBuild,
-    edit=EditBuild,
-    update=UpdateFromWishlist,
-    delete=DeleteBuild,
+local commandMethods = {
+    ["ensure-dps"]="EnsureDpsBuildForEchoes",
+    post="PostCurrentWishlist",
+    publish="PublishImportedBuild",
+    edit="EditBuild",
+    update="UpdateFromWishlist",
+    delete="DeleteBuild",
 }
+
+local function Mutate(handler, ...)
+    stats.mutations = stats.mutations + 1
+    return handler(...)
+end
 
 function Workspace.Init(adapter)
     Adapter = adapter or Adapter
@@ -827,11 +832,34 @@ function Workspace.Import(force)
     return ImportSavedLoadouts(force)
 end
 
+function Workspace.EnsureDpsBuildForEchoes(...)
+    return Mutate(EnsureDpsBuild, ...)
+end
+
+function Workspace.PostCurrentWishlist(...)
+    return Mutate(PostCurrentWishlist, ...)
+end
+
+function Workspace.PublishImportedBuild(...)
+    return Mutate(PublishImportedBuild, ...)
+end
+
+function Workspace.EditBuild(...)
+    return Mutate(EditBuild, ...)
+end
+
+function Workspace.UpdateFromWishlist(...)
+    return Mutate(UpdateFromWishlist, ...)
+end
+
+function Workspace.DeleteBuild(...)
+    return Mutate(DeleteBuild, ...)
+end
+
 function Workspace.Execute(command, ...)
-    local handler = commands[command]
-    if not handler then return false, "unknown account-build command" end
-    stats.mutations = stats.mutations + 1
-    return handler(...)
+    local method = commandMethods[command]
+    if not method then return false, "unknown account-build command" end
+    return Workspace[method](...)
 end
 
 function Workspace.RefreshIdentity(build)

@@ -5,7 +5,7 @@ const path = require("path");
 const childProcess = require("child_process");
 
 const root = path.resolve(__dirname, "..");
-const scenarios = ["community", "leaderboard", "scheduler", "sync"];
+const scenarios = ["automation", "community", "leaderboard", "scheduler", "sync"];
 
 function finite(text, field) {
     const value = Number(text);

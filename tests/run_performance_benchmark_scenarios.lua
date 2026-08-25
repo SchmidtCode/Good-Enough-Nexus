@@ -1,8 +1,8 @@
 local community = dofile("benchmarks/scenarios/community.lua")
 local results = community.Run({rows=100,iterations=2,warmup=0})
 
-assert(type(results) == "table" and #results == 3,
-    "community benchmark did not return its three public operations")
+assert(type(results) == "table" and #results == 4,
+    "community benchmark did not return its four public operations")
 for _, result in ipairs(results) do
     assert(type(result.name) == "string" and result.iterations == 2
         and result.latencyUnit ~= "" and result.throughputUnit ~= ""
@@ -10,6 +10,17 @@ for _, result in ipairs(results) do
         and result.maximumMs >= result.p95Ms
         and result.throughputPerSecond > 0,
         "community benchmark returned an incomplete observation")
+end
+
+local automation = dofile("benchmarks/scenarios/automation.lua")
+local automationResults = automation.Run({iterations=2,warmup=0})
+assert(type(automationResults) == "table" and #automationResults == 3,
+    "automation benchmark did not return its three public operations")
+for _, result in ipairs(automationResults) do
+    assert(result.iterations == 2 and result.averageMs >= 0
+        and result.p95Ms >= result.medianMs
+        and result.throughputPerSecond > 0,
+        "automation benchmark returned an incomplete observation")
 end
 
 local leaderboard = dofile("benchmarks/scenarios/leaderboard.lua")
@@ -45,4 +56,4 @@ for _, result in ipairs(syncResults) do
         "Sync benchmark returned an incomplete observation")
 end
 
-print("community, leaderboard, scheduler, and Sync benchmark scenarios -- OK")
+print("automation, community, leaderboard, scheduler, and Sync benchmark scenarios -- OK")

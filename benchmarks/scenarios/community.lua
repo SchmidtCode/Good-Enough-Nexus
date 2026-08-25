@@ -69,7 +69,31 @@ function Scenario.Run(options)
             Builds.ScrollTo((index % 20) * 92)
         end)
 
-    return {cached, rebuild, scroll}
+    local searchBox = assert(NexusBuildsSearch,
+        "Community search input unavailable")
+    local beforeSearchRefreshes = Builds.VirtualStats().searchRefreshes
+    local search = Benchmark.Run(
+        string.format("community.search_burst.%d_rows", rowCount), {
+            iterations=iterations, warmup=warmup,
+            latencyUnit="burst", throughputUnit="search bursts",
+        }, function(index)
+            local suffix = index % 2 == 0 and "0001" or "0002"
+            for _, value in ipairs({"B", "Bu", "Build", "Build " .. suffix}) do
+                searchBox:SetText(value)
+                searchBox:GetScript("OnTextChanged")(searchBox)
+            end
+            H.Advance(0.3, 0.05)
+        end)
+    local searchRefreshes = Builds.VirtualStats().searchRefreshes
+        - beforeSearchRefreshes
+    local expectedSearchRefreshes = search.operationIterations + warmup
+    if searchRefreshes ~= expectedSearchRefreshes then
+        error(string.format(
+            "Community search burst did not coalesce to one refresh: %d/%d",
+            searchRefreshes, expectedSearchRefreshes))
+    end
+
+    return {cached, rebuild, scroll, search}
 end
 
 return Scenario

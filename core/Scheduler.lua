@@ -63,10 +63,12 @@ local function Schedule(kind, key, delay, callback)
     if kind == "every" and delay <= 0 then
         return false, "repeating interval must be positive"
     end
+    local now = Clock()
     generation = generation + 1
     tasks[key] = {
         key=key, kind=kind, callback=callback, generation=generation,
-        due=Clock() + delay, interval=kind == "every" and delay or nil,
+        due=now + delay, interval=kind == "every" and delay or nil,
+        lastRunAt=now,
     }
     Wake()
     return true
@@ -114,14 +116,17 @@ function Scheduler.Tick(now)
         if ran >= MAX_CALLBACKS_PER_TICK then break end
         local task = tasks[ready.key]
         if task and task.generation == ready.generation and task.due <= now then
+            local elapsed = task.kind == "every"
+                and math.max(0, now - (tonumber(task.lastRunAt) or now)) or nil
             if task.kind == "after" then
                 tasks[ready.key] = nil
             else
                 local skipped = math.floor((now - task.due) / task.interval) + 1
                 task.due = task.due + skipped * task.interval
+                task.lastRunAt = now
             end
             ran = ran + 1
-            local ok, err = pcall(task.callback, ready.key, now)
+            local ok, err = pcall(task.callback, ready.key, now, elapsed)
             if not ok then RecordError(ready.key, err) end
         end
     end
