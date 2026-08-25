@@ -51,6 +51,7 @@ is different from the runtime addon identity by design.
 - `/nexus log` — open the diagnostic log
 - `/nexus log errors` — open the newest 20 structured errors
 - `/nexus perf` — open bounded performance aggregates for this session
+- `/nexus perf reset` — clear session aggregates before reproducing a slow action
 - `/nexus err` — print the newest retained error
 - `/nexus status` — show current build and loadout state
 

@@ -56,6 +56,14 @@ local debugHistory      = DiagnosticHistory.New({
     maxTextBytes=DEBUG_TEXT_BYTES,
 })
 
+local function Measure(name, callback, ...)
+    local performance = Nexus and Nexus.Performance
+    if performance and type(performance.Measure) == "function" then
+        return performance.Measure(name, callback, ...)
+    end
+    return callback(...)
+end
+
 local TRAINING_DUMMIES = {
     [36476] = true, [36855] = true, [32541] = true, [30527] = true,
     [31144] = true, [16218] = true, [2673] = true,
@@ -223,7 +231,6 @@ local function RepairCurrentCharacterClass()
     local localOwner = OwnerKey(me, realm)
     if not localOwner then return false end
     local changed = false
-    local builds = CatalogAll()
     local character = CharacterBestStore()
     local personal = PersonalBestStore()
 
@@ -248,7 +255,10 @@ local function RepairCurrentCharacterClass()
                     end
                 end
 
-                local build = row.buildId and builds[row.buildId]
+                -- This repair only needs the build attached to the matching
+                -- local row. CatalogAll() defensive-copies every saved Echo
+                -- and made opening the leaderboard pay the full catalog cost.
+                local build = row.buildId and CatalogGet(row.buildId) or nil
                 if build and build.autoDps then
                     local buildOwner = tostring(build.ownerKey or ""):lower()
                     local legacyOwned = buildOwner == ""
@@ -1549,16 +1559,25 @@ end
 -- that character's highest known DPS and retains the exact winning loadout.
 function DPS.GetDpsBoard(category)
     if category ~= "dummy" and category ~= "lk" then return {} end
-    MigrateLocalLockedBaseline()
-    MigrateLegacyLeaderboard()
-    if RepairCurrentCharacterClass() then
-        BumpDps("local class repaired", {scope="metadata"})
-    end
-    if BackfillLocalLockedRows() then
-        BumpDps("locked metadata backfilled", {scope="metadata"})
-    end
+    Measure("leaderboard.board.migrations", function()
+        Measure("leaderboard.board.locked-baseline", MigrateLocalLockedBaseline)
+        Measure("leaderboard.board.legacy", MigrateLegacyLeaderboard)
+        local repaired = Measure(
+            "leaderboard.board.class", RepairCurrentCharacterClass)
+        if repaired then
+            BumpDps("local class repaired", {scope="metadata"})
+        end
+        local backfilled = Measure(
+            "leaderboard.board.locked-backfill", BackfillLocalLockedRows)
+        if backfilled then
+            BumpDps("locked metadata backfilled", {scope="metadata"})
+        end
+    end)
     local out = {}
     local seenPlayer = {}   -- dedup by lowercase player name
+    local performance = Nexus and Nexus.Performance
+    local rowsStarted = performance and performance.Begin
+        and performance.Begin("leaderboard.board.rows")
     for _, row in pairs(CharacterBestStore()[category] or {}) do
         if type(row) == "table" and (tonumber(row.dps) or 0) > 0 then
             local buildId = row.buildId
@@ -1602,10 +1621,15 @@ function DPS.GetDpsBoard(category)
             end
         end
     end
-    table.sort(out, function(a, b)
-        if a.dps ~= b.dps then return a.dps > b.dps end
-        if a.ts ~= b.ts then return a.ts < b.ts end
-        return tostring(a.player):lower() < tostring(b.player):lower()
+    if performance and performance.Finish then
+        performance.Finish("leaderboard.board.rows", rowsStarted)
+    end
+    Measure("leaderboard.board.sort", function()
+        table.sort(out, function(a, b)
+            if a.dps ~= b.dps then return a.dps > b.dps end
+            if a.ts ~= b.ts then return a.ts < b.ts end
+            return tostring(a.player):lower() < tostring(b.player):lower()
+        end)
     end)
     return out
 end

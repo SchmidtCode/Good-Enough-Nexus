@@ -4,12 +4,18 @@ local H = dofile("tests/harness.lua")
 local Performance = Nexus.Performance
 
 local definitions = Performance.Definitions()
-assert(#definitions == 23 and definitions[1] == "automation.step"
+assert(#definitions == 37 and definitions[1] == "automation.step"
     and definitions[2] == "automation.catalog"
     and definitions[10] == "automation.hud"
     and definitions[14] == "community.open"
     and definitions[15] == "community.frame"
-    and definitions[23] == "overlay.refresh",
+    and definitions[21] == "leaderboard.open"
+    and definitions[26] == "leaderboard.board.migrations"
+    and definitions[27] == "leaderboard.board.locked-baseline"
+    and definitions[30] == "leaderboard.board.locked-backfill"
+    and definitions[32] == "leaderboard.board.sort"
+    and definitions[35] == "leaderboard.status"
+    and definitions[37] == "overlay.refresh",
     "performance path registry is not fixed and ordered")
 
 Performance.Reset()
@@ -207,12 +213,21 @@ for _, name in ipairs({"automation.step", "automation.catalog",
         "real instrumentation did not observe " .. name)
 end
 
+SlashCmdList.NEXUS("perf reset")
+for _, name in ipairs(Performance.Definitions()) do
+    assert(Performance.Stats(name).count == 0,
+        "perf reset left aggregate data behind: " .. name)
+end
+assert(H.ChatContains("performance aggregates reset"),
+    "perf reset did not confirm the clean capture window")
+
 assert(type(diagnosticProvider) == "function" and type(clearProvider) == "function",
     "Main did not wire performance diagnostics into LogViewer")
 local performanceText = diagnosticProvider("perf")
 assert(performanceText:find("PERFORMANCE AGGREGATES", 1, true)
     and performanceText:find("automation.step", 1, true)
     and performanceText:find("no per-call samples", 1, true)
+    and performanceText:find("do not add them", 1, true)
     and performanceText == diagnosticProvider("perf"),
     "performance log page is missing stable aggregate context")
 

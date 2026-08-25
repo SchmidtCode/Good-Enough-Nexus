@@ -2890,6 +2890,7 @@ local function LogText_Performance()
     local out = {
         "PERFORMANCE AGGREGATES -- this session only",
         "Observational milliseconds; no per-call samples or SavedVariables history.",
+        "Nested leaderboard phase rows overlap; compare them, do not add them.",
         string.format("enabled=%s clockAvailable=%s clockFailures=%d",
             tostring(snapshot.enabled == true),
             tostring(snapshot.clockAvailable == true),
@@ -3636,6 +3637,21 @@ local function CommandAnchor(message)
     RequestRecompute()
 end
 
+local function CommandPerformanceReset()
+    local performance = Nexus and Nexus.Performance
+    if not (performance and type(performance.Reset) == "function") then
+        Print("performance diagnostics unavailable")
+        return false
+    end
+    local ok, cleared = pcall(performance.Reset)
+    if not ok or cleared == false then
+        Print("performance aggregates could not be reset")
+        return false
+    end
+    Print("performance aggregates reset")
+    return true
+end
+
 local function CommandHelp()
     RequestRecompute()
     Print("v" .. Nexus.VERSION .. " -- " .. statusLine)
@@ -3644,7 +3660,7 @@ local function CommandHelp()
     Print("|cffffd200Sync:|r   syncmode <automatic|manual|off>  |  sync")
     Print("|cffffd200Limits:|r synclimits <on|off>  |  synclimits <D/L top> <D/L class> <avg top> <avg class> <other> <author>")
     Print("|cffffd200Run:|r    auto  |  panel  |  status  |  wishlist  |  progress")
-    Print("|cffffd200Data:|r   log  |  perf  |  dps  |  nameplate  |  logclear")
+    Print("|cffffd200Data:|r   log  |  perf  |  perf reset  |  dps  |  nameplate  |  logclear")
     Print("|cffffd200Fixes:|r  flags  |  undemote  |  anchor <id|off>  |  restore  |  err")
 end
 
@@ -3666,6 +3682,7 @@ local CommandRouter = assert(Nexus.CommandRouter, "CommandRouter required").New(
         leaderboard=function() ToggleModule(Nexus.Leaderboard, "Nexus Leaderboard unavailable") end,
         errors=function() ShowLog("errors", "log viewer unavailable") end,
         performance=function() ShowLog("perf", "performance diagnostics unavailable") end,
+        ["performance-reset"]=CommandPerformanceReset,
         logs=function() ToggleModule(Nexus.LogViewer, "log viewer unavailable") end,
         err=CommandError,
         undemote=CommandUndemote,
@@ -3674,6 +3691,7 @@ local CommandRouter = assert(Nexus.CommandRouter, "CommandRouter required").New(
     aliases={
         check="wishlist",missing="progress",ranks="leaderboard",
         ["log errors"]="errors",perf="performance",log="logs",
+        ["perf reset"]="performance-reset",perfreset="performance-reset",
     },
     patterns={
         {pattern="^probe%s+",handler=CommandProbe},

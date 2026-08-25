@@ -27,6 +27,15 @@ local virtualStats = {
 local ROW_H = 38
 local LIST_W = 590
 local SEARCH_DEBOUNCE = 0.18
+
+local function Measure(name, callback, ...)
+    local performance = Nexus and Nexus.Performance
+    if performance and type(performance.Measure) == "function" then
+        return performance.Measure(name, callback, ...)
+    end
+    return callback(...)
+end
+
 local CLASS_COLOR = {
     DEATHKNIGHT={0.77,0.12,0.23}, DRUID={1.00,0.49,0.04}, HUNTER={0.67,0.83,0.45},
     MAGE={0.25,0.78,0.92}, PALADIN={0.96,0.55,0.73}, PRIEST={1,1,1},
@@ -255,7 +264,7 @@ local function EnsureDetail(parent)
     parent._leaderboardDetail=detail
 end
 
-local function RenderDetail(row)
+local function RenderDetailMeasured(row)
     if not detail then return end
     virtualStats.detailRenders = virtualStats.detailRenders + 1
     detail.row=row
@@ -289,7 +298,11 @@ local function FindSelectedRow()
     return browserSession.SelectedRow()
 end
 
-local function BindRows(reason)
+local function RenderDetail(row)
+    return Measure("leaderboard.detail", RenderDetailMeasured, row)
+end
+
+local function BindRowsMeasured(reason)
     if rowBinding then return end
     rowBinding = true
     local ok, err = pcall(function()
@@ -356,6 +369,10 @@ local function BindRows(reason)
     end
 end
 
+local function BindRows(reason)
+    return Measure("leaderboard.bind", BindRowsMeasured, reason)
+end
+
 applySelection = function(row)
     local selectedKey = browserSession.SelectedKey()
     for _, r in ipairs(activeRows) do
@@ -383,7 +400,7 @@ local function MakeTab(parent,text,w)
     return b
 end
 
-local function EnsureFrame()
+local function EnsureFrameMeasured()
     if frame then return frame end
     frame=CreateFrame("Frame","NexusLeaderboardFrame",UIParent); frame:SetClampedToScreen(true); if type(UISpecialFrames)=="table" then table.insert(UISpecialFrames,"NexusLeaderboardFrame") end
     frame:SetSize(980,640); frame:SetPoint("CENTER"); frame:SetFrameStrata("DIALOG"); frame:SetFrameLevel(55); frame:EnableMouse(true); frame:SetMovable(true); frame:RegisterForDrag("LeftButton")
@@ -476,6 +493,10 @@ local function EnsureFrame()
         searchPending=false
     end)
     return frame
+end
+
+local function EnsureFrame()
+    return Measure("leaderboard.frame", EnsureFrameMeasured)
 end
 
 function M.RefreshStatus()
