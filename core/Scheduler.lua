@@ -9,6 +9,25 @@ local tasks = {}
 local generation = 0
 local frame
 local MAX_CALLBACKS_PER_TICK = 32
+local stats = {ticks=0, idleTicks=0, callbacks=0, wakes=0, sleeps=0}
+
+local function HasTasks()
+    return next(tasks) ~= nil
+end
+
+local function Wake()
+    if frame and type(frame.Show) == "function" then
+        frame:Show()
+        stats.wakes = stats.wakes + 1
+    end
+end
+
+local function SleepIfIdle()
+    if not HasTasks() and frame and type(frame.Hide) == "function" then
+        frame:Hide()
+        stats.sleeps = stats.sleeps + 1
+    end
+end
 
 local function Finite(value)
     return type(value) == "number" and value == value
@@ -49,6 +68,7 @@ local function Schedule(kind, key, delay, callback)
         key=key, kind=kind, callback=callback, generation=generation,
         due=Clock() + delay, interval=kind == "every" and delay or nil,
     }
+    Wake()
     return true
 end
 
@@ -63,10 +83,17 @@ end
 function Scheduler.Cancel(key)
     if not ValidKey(key) or tasks[key] == nil then return false end
     tasks[key] = nil
+    SleepIfIdle()
     return true
 end
 
 function Scheduler.Tick(now)
+    stats.ticks = stats.ticks + 1
+    if not HasTasks() then
+        stats.idleTicks = stats.idleTicks + 1
+        SleepIfIdle()
+        return 0
+    end
     now = tonumber(now) or Clock()
     if not Finite(now) then return 0 end
     local due = {}
@@ -98,6 +125,8 @@ function Scheduler.Tick(now)
             if not ok then RecordError(ready.key, err) end
         end
     end
+    stats.callbacks = stats.callbacks + ran
+    SleepIfIdle()
     return ran
 end
 
@@ -130,6 +159,7 @@ function Scheduler.Init()
     -- Publish initialized state only after the frame owns its update handler.
     -- A transient frame/API failure can then be recorded by Main and retried.
     frame = candidate
+    if HasTasks() then Wake() else SleepIfIdle() end
     return frame
 end
 
@@ -139,4 +169,11 @@ end
 
 function Scheduler.MaxCallbacksPerTick()
     return MAX_CALLBACKS_PER_TICK
+end
+
+function Scheduler.Stats()
+    local out = {}
+    for key, value in pairs(stats) do out[key] = value end
+    out.pending = #Scheduler.Pending()
+    return out
 end

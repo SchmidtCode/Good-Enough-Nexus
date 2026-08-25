@@ -7,6 +7,8 @@
 Nexus = Nexus or {}
 local Projections = {}
 Nexus.ViewProjections = Projections
+local Ranking = assert(Nexus.DpsRanking, "DpsRanking required")
+local TypedIdentity = Ranking.TypedIdentity
 
 local caches = {builds={}, leaderboard={}, leaderboardSources={}}
 local MAX_REQUESTED_BUILD_ROWS = 100
@@ -39,10 +41,6 @@ local function Part(value)
     local kind = type(value)
     local text = tostring(value == nil and "" or value)
     return kind .. ":" .. tostring(#text) .. ":" .. text
-end
-
-local function TypedIdentity(value)
-    return type(value) .. ":" .. tostring(value == nil and "" or value)
 end
 
 local function CacheKey(parts)
@@ -179,9 +177,11 @@ end
 local function BuildDpsSummary(build)
     local stats = counters.builds
     local dps = Nexus and Nexus.DpsCapture
-    local summary = {dummy=0,lk=0,best=0,average=0,count=0}
-    if not (dps and type(build) == "table") then return summary end
+    if not (dps and type(build) == "table") then
+        return Ranking.Summary()
+    end
     local recordId = build.recordBuildId or build.publishedBuildId or build.id
+    local categoryRows = {}
     for _, category in ipairs({"dummy", "lk"}) do
         local rows
         if recordId and type(dps.GetLeaderboardForIdentity) == "function" then
@@ -205,20 +205,9 @@ local function BuildDpsSummary(build)
             if not ok then error("DPS loadout read failed: " .. tostring(result)) end
             rows = result
         end
-        for _, row in ipairs(type(rows) == "table" and rows or {}) do
-            local value = tonumber(row and (row.dps or row.value or row.amount)) or 0
-            if value > summary[category] then summary[category] = value end
-        end
+        categoryRows[category] = rows
     end
-    if summary.dummy > 0 then summary.count = summary.count + 1 end
-    if summary.lk > 0 then summary.count = summary.count + 1 end
-    summary.best = math.max(summary.dummy, summary.lk)
-    if summary.count == 2 then
-        summary.average = (summary.dummy + summary.lk) / 2
-    elseif summary.count == 1 then
-        summary.average = summary.best
-    end
-    return summary
+    return Ranking.Summary(categoryRows.dummy, categoryRows.lk)
 end
 
 local function BuildProjection(filters)
@@ -313,34 +302,6 @@ local function BuildProjection(filters)
     return out, summary
 end
 
-local function PlayerKey(value)
-    return tostring(value or "?"):lower():gsub("%s+", "")
-end
-
-local function CharacterKey(row)
-    row = type(row) == "table" and row or {}
-    if type(row.ownerKey) == "string" then
-        local name, realm = row.ownerKey:match("^([^@]+)@([^@]+)$")
-        name = PlayerKey(name)
-        realm = tostring(realm or ""):lower():gsub("%s+", "")
-        if name ~= "?" and realm ~= "" and realm ~= "unknown" then
-            return name .. "@" .. realm
-        end
-    end
-    local realm = tostring(row.realm or ""):lower():gsub("%s+", "")
-    if realm ~= "" and realm ~= "unknown" then
-        local name = PlayerKey(row.player):match("^([^-]+)")
-            or PlayerKey(row.player)
-        return name .. "@" .. realm
-    end
-    return PlayerKey(row.player)
-end
-
-local function RecordKey(row)
-    return CharacterKey(row)
-        .. "|" .. TypedIdentity(row and (row.fingerprint or row.buildId))
-end
-
 local function Board(category)
     local dps = Nexus and Nexus.DpsCapture
     if not (dps and type(dps.GetDpsBoard) == "function") then return {} end
@@ -354,48 +315,9 @@ end
 local LeaderboardSource
 
 local function CombinedRows()
-    local dummy, lk = LeaderboardSource("dummy"), LeaderboardSource("lk")
-    local dummyByKey, dummyByBuild = {}, {}
-    for _, row in ipairs(dummy) do
-        dummyByKey[RecordKey(row)] = row
-        if row.buildId then
-            dummyByBuild[CharacterKey(row) .. "|"
-                .. TypedIdentity(row.buildId)] = row
-        end
-    end
-    local out = {}
-    for _, lrow in ipairs(lk) do
-        local drow = dummyByKey[RecordKey(lrow)]
-        if not drow and lrow.buildId then
-            drow = dummyByBuild[CharacterKey(lrow)
-                .. "|" .. TypedIdentity(lrow.buildId)]
-        end
-        if drow then
-            local average = ((tonumber(drow.dps) or 0)
-                + (tonumber(lrow.dps) or 0)) / 2
-            out[#out + 1] = {
-                player=lrow.player, dps=average, average=average,
-                dummyDps=drow.dps, lkDps=lrow.dps,
-                dummyDuration=drow.duration, lkDuration=lrow.duration,
-                level=math.max(tonumber(drow.level) or 0,
-                    tonumber(lrow.level) or 0),
-                ts=math.min(tonumber(drow.ts) or 0, tonumber(lrow.ts) or 0),
-                category="combined",
-                ownerKey=lrow.ownerKey or drow.ownerKey,
-                realm=lrow.realm or drow.realm,
-                fingerprint=lrow.fingerprint or drow.fingerprint,
-                echoes=lrow.echoes or drow.echoes,
-                lockedEchoes=lrow.lockedEchoes or drow.lockedEchoes,
-                buildId=lrow.buildId or drow.buildId,
-                build=lrow.build or drow.build,
-            }
-        end
-    end
+    local out = Ranking.CombinedRows(
+        LeaderboardSource("dummy"), LeaderboardSource("lk"))
     counters.leaderboard.sorts = counters.leaderboard.sorts + 1
-    table.sort(out, function(left, right)
-        if left.average ~= right.average then return left.average > right.average end
-        return tostring(left.player):lower() < tostring(right.player):lower()
-    end)
     return out
 end
 

@@ -10,6 +10,7 @@ data\Release.lua
 data\DefaultProfile.lua
 data\BundledBuilds.lua
 logic\Version.lua
+core\DpsRanking.lua
 core\Performance.lua
 core\EchoCatalogSource.lua
 logic\Model.lua
@@ -31,11 +32,14 @@ core\ViewRefresh.lua
 core\Updates.lua
 core\Codec.lua
 core\SyncPolicy.lua
+core\SyncResponder.lua
 core\Sync.lua
 core\DpsCapture.lua
 core\ViewProjections.lua
 core\GameAdapter.lua
+core\AccountBuildWorkspace.lua
 ui\VirtualList.lua
+ui\BrowserSession.lua
 ui\Theme.lua
 ui\Readout.lua
 ui\ServerStatus.lua

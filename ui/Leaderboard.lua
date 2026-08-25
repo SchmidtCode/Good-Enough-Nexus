@@ -5,18 +5,18 @@
 Nexus = Nexus or {}
 local M = {}
 Nexus.Leaderboard = M
+local Ranking = assert(Nexus.DpsRanking, "DpsRanking required")
 
 local frame, listChild, listScroll, detail, searchBox, classBtn, classMenu
 local dummyBtn, lkBtn, combinedBtn, syncBtn, statusText, countText
 local category = "lk"
-local selectedKey = nil
 local rowPool, activeRows = {}, {}
 local Adapter
-local currentRows = {}
+local browserSession
 local renderRowsWindow, applySelection, setScrollValue
 local rowBinding = false
 local scrollValue, scrollMax = 0, 0
-local searchPending, searchElapsed = false, 0
+local searchPending = false
 local virtualStats = {
     created=0, active=0, peakActive=0, results=0,
     dataRefreshes=0, statusRefreshes=0, detailRenders=0,
@@ -75,34 +75,8 @@ local function DurationText(v)
     return string.format("%d:%02d", math.floor(v / 60), math.floor(v % 60))
 end
 
-local function PlayerKey(v)
-    return tostring(v or "?"):lower():gsub("%s+", "")
-end
-
-local function CharacterKey(row)
-    row = type(row) == "table" and row or {}
-    if type(row.ownerKey) == "string" then
-        local name, realm = row.ownerKey:match("^([^@]+)@([^@]+)$")
-        name = PlayerKey(name)
-        realm = tostring(realm or ""):lower():gsub("%s+", "")
-        if name ~= "?" and realm ~= "" and realm ~= "unknown" then
-            return name .. "@" .. realm
-        end
-    end
-    local realm = tostring(row.realm or ""):lower():gsub("%s+", "")
-    if realm ~= "" and realm ~= "unknown" then
-        local name = PlayerKey(row.player):match("^([^-]+)")
-            or PlayerKey(row.player)
-        return name .. "@" .. realm
-    end
-    return PlayerKey(row.player)
-end
-
 local function RecordKey(row)
-    if not row then return "" end
-    local identity = row.fingerprint or row.buildId
-    return CharacterKey(row) .. "|" .. type(identity) .. ":"
-        .. tostring(identity or "")
+    return Ranking.RecordKey(row)
 end
 
 local function Board(cat)
@@ -112,30 +86,38 @@ local function Board(cat)
     return ok and type(rows) == "table" and rows or {}
 end
 
-local function Rows()
+local function ProjectRows(query)
+    query = query or {}
+    local requestedCategory = query.category or category
+    local requestedClass = query.classFilter or classFilter
+    local search = query.search or ""
     local projections = Nexus and Nexus.ViewProjections
     if projections and type(projections.Leaderboard) == "function" then
-        local rows = projections.Leaderboard(category, {
-            search=searchBox and searchBox:GetText() or "",
-            classFilter=classFilter,
+        local rows = projections.Leaderboard(requestedCategory, {
+            search=search,
+            classFilter=requestedClass,
         })
         if type(rows) == "table" then return rows end
     end
-    local rows = Board(category)
-    local query = searchBox and tostring(searchBox:GetText() or ""):lower() or ""
+    local rows = Board(requestedCategory)
+    local searchText = tostring(search):lower()
     local out = {}
     for _, row in ipairs(rows) do
         local build = row.build or {}
         local class = tostring(build.class or row.class or "UNKNOWN"):upper()
-        local classOk = classFilter == "ALL" or class == classFilter
-        local searchOk = query == ""
-            or tostring(row.player or ""):lower():find(query,1,true)
-            or tostring(build.title or ""):lower():find(query,1,true)
-            or tostring(build.author or ""):lower():find(query,1,true)
+        local classOk = requestedClass == "ALL" or class == requestedClass
+        local searchOk = searchText == ""
+            or tostring(row.player or ""):lower():find(searchText,1,true)
+            or tostring(build.title or ""):lower():find(searchText,1,true)
+            or tostring(build.author or ""):lower():find(searchText,1,true)
         if classOk and searchOk then out[#out+1] = row end
     end
     return out
 end
+
+browserSession = assert(Nexus.BrowserSession, "BrowserSession required").New({
+    project=ProjectRows, keyOf=RecordKey, rowHeight=ROW_H + 2, overscan=2,
+})
 
 local function ReleaseRows()
     for _, r in ipairs(activeRows) do r:Hide(); r:ClearAllPoints(); rowPool[#rowPool+1] = r end
@@ -143,7 +125,7 @@ local function ReleaseRows()
 end
 
 local function SelectRow(row)
-    selectedKey = RecordKey(row)
+    browserSession.Select(row)
     if applySelection then applySelection(row) end
     if row and row.buildId and (not row.echoes or #row.echoes == 0) and Nexus.Sync and Nexus.Sync.RequestLoadout then
         Nexus.Sync.RequestLoadout(row.buildId)
@@ -304,11 +286,7 @@ local function RenderDetail(row)
 end
 
 local function FindSelectedRow()
-    if not selectedKey then return nil end
-    for _, row in ipairs(currentRows) do
-        if RecordKey(row) == selectedKey then return row end
-    end
-    return nil
+    return browserSession.SelectedRow()
 end
 
 local function BindRows(reason)
@@ -316,11 +294,13 @@ local function BindRows(reason)
     rowBinding = true
     local ok, err = pcall(function()
         ReleaseRows()
+        local currentRows = browserSession.Rows()
+        local selectedKey = browserSession.SelectedKey()
         local rowHeight = ROW_H + 2
         local visibleH = math.max(100,
             (listScroll and listScroll:GetHeight()) or 458)
-        local virtual = Nexus.VirtualList.Window(
-            #currentRows, rowHeight, visibleH, scrollValue, 2)
+        local virtual = browserSession.SetViewport(
+            visibleH, scrollValue, rowHeight, 2)
         for index = virtual.first, virtual.last do
             local row = currentRows[index]
             local r = GetRow(listChild)
@@ -377,6 +357,7 @@ local function BindRows(reason)
 end
 
 applySelection = function(row)
+    local selectedKey = browserSession.SelectedKey()
     for _, r in ipairs(activeRows) do
         if RecordKey(r.data)==selectedKey then r.sel:Show() else r.sel:Hide() end
     end
@@ -415,7 +396,18 @@ local function EnsureFrame()
     local board=MakeNavButton(frame,"Leaderboard",102); board:SetPoint("LEFT",builds,"RIGHT",4,0); board:SetText("|cffffd200Leaderboard|r"); board:Disable()
     local wish=MakeNavButton(frame,"Wishlists",92); wish:SetPoint("LEFT",board,"RIGHT",4,0); wish:SetScript("OnClick",function() M.Hide(); if Nexus.WishlistEditor then Nexus.WishlistEditor.Show() end end)
 
-    searchBox=CreateFrame("EditBox","NexusLeaderboardSearch",frame,"InputBoxTemplate"); searchBox:SetSize(265,22); searchBox:SetPoint("TOPLEFT",18,-50); searchBox:SetAutoFocus(false); searchBox:SetScript("OnTextChanged",function() searchPending=true; searchElapsed=0 end)
+    local scheduler=assert(Nexus.Scheduler,"Scheduler required")
+    local searchKey="ui.leaderboard.search"
+    local statusKey="ui.leaderboard.status"
+    searchBox=CreateFrame("EditBox","NexusLeaderboardSearch",frame,"InputBoxTemplate"); searchBox:SetSize(265,22); searchBox:SetPoint("TOPLEFT",18,-50); searchBox:SetAutoFocus(false); searchBox:SetScript("OnTextChanged",function()
+        searchPending=true
+        scheduler.After(searchKey,SEARCH_DEBOUNCE,function()
+            if searchPending and frame and frame:IsShown() then
+                searchPending=false
+                M.RefreshData()
+            end
+        end)
+    end)
     local ph=frame:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); ph:SetPoint("LEFT",searchBox,"LEFT",6,0); ph:SetText("Search player or build...")
     searchBox:SetScript("OnEditFocusGained",function() ph:Hide() end); searchBox:SetScript("OnEditFocusLost",function(self) if self:GetText()=="" then ph:Show() end end)
 
@@ -428,7 +420,7 @@ local function EnsureFrame()
         rb.bg=rb:CreateTexture(nil,"BACKGROUND"); rb.bg:SetAllPoints(rb); rb.bg:SetTexture(0.12,0.12,0.17,0); local t=rb:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); t:SetPoint("LEFT",9,0)
         local c=CLASS_COLOR[k] or {1,0.82,0}; t:SetText(k=="ALL" and "All Classes" or CLASS_LABEL[k]); t:SetTextColor(c[1],c[2],c[3])
         rb:SetScript("OnEnter",function(self) self.bg:SetTexture(0.14,0.18,0.25,0.9) end); rb:SetScript("OnLeave",function(self) self.bg:SetTexture(0.12,0.12,0.17,0) end)
-        rb:SetScript("OnClick",function() classFilter=k; classMenu:Hide(); selectedKey=nil; M.RefreshData() end)
+        rb:SetScript("OnClick",function() classFilter=k; classMenu:Hide(); browserSession.Select(nil); M.RefreshData() end)
     end
     classBtn:SetScript("OnClick",function(self) if classMenu:IsShown() then classMenu:Hide() else classMenu:ClearAllPoints(); classMenu:SetPoint("TOPLEFT",self,"BOTTOMLEFT",0,-2); classMenu:Show() end end)
 
@@ -441,9 +433,9 @@ local function EnsureFrame()
         else print("|cffff6060Nexus:|r "..tostring(err)) end
         M.RefreshStatus()
     end)
-    dummyBtn=MakeTab(frame,"Training Dummy",118); dummyBtn:SetPoint("TOPLEFT",18,-82); dummyBtn:SetScript("OnClick",function() category="dummy"; selectedKey=nil; classMenu:Hide(); M.RefreshData() end)
-    lkBtn=MakeTab(frame,"Lich King",100); lkBtn:SetPoint("LEFT",dummyBtn,"RIGHT",5,0); lkBtn:SetScript("OnClick",function() category="lk"; selectedKey=nil; classMenu:Hide(); M.RefreshData() end)
-    combinedBtn=MakeTab(frame,"Average",112); combinedBtn:SetPoint("LEFT",lkBtn,"RIGHT",5,0); combinedBtn:SetScript("OnClick",function() category="combined"; selectedKey=nil; classMenu:Hide(); M.RefreshData() end); frame._averageTab=combinedBtn
+    dummyBtn=MakeTab(frame,"Training Dummy",118); dummyBtn:SetPoint("TOPLEFT",18,-82); dummyBtn:SetScript("OnClick",function() category="dummy"; browserSession.Select(nil); classMenu:Hide(); M.RefreshData() end)
+    lkBtn=MakeTab(frame,"Lich King",100); lkBtn:SetPoint("LEFT",dummyBtn,"RIGHT",5,0); lkBtn:SetScript("OnClick",function() category="lk"; browserSession.Select(nil); classMenu:Hide(); M.RefreshData() end)
+    combinedBtn=MakeTab(frame,"Average",112); combinedBtn:SetPoint("LEFT",lkBtn,"RIGHT",5,0); combinedBtn:SetScript("OnClick",function() category="combined"; browserSession.Select(nil); classMenu:Hide(); M.RefreshData() end); frame._averageTab=combinedBtn
     statusText=frame:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); statusText:SetPoint("LEFT",combinedBtn,"RIGHT",12,0); statusText:SetSize(250,14); statusText:SetJustifyH("LEFT"); frame._syncStatusText=statusText
     countText=frame:CreateFontString(nil,"OVERLAY","GameFontDisableSmall"); countText:SetPoint("TOPLEFT",18,-113); countText:SetSize(LIST_W,14); countText:SetJustifyH("LEFT")
 
@@ -472,16 +464,16 @@ local function EnsureFrame()
     listScroll:SetScript("OnMouseDown",function() classMenu:Hide() end)
     EnsureDetail(frame)
     frame:SetScript("OnMouseDown",function(self) if classMenu:IsShown() then classMenu:Hide() end end)
-    frame:SetScript("OnUpdate",function(self,elapsed)
-        if searchPending then
-            searchElapsed=searchElapsed+elapsed
-            if searchElapsed>=SEARCH_DEBOUNCE then
-                searchPending,searchElapsed=false,0
-                M.RefreshData()
-            end
-        end
-        self._tick=(self._tick or 0)+elapsed
-        if self._tick>1 then self._tick=0; M.RefreshStatus() end
+    frame:HookScript("OnShow",function()
+        scheduler.Init()
+        scheduler.Every(statusKey,1,function()
+            if frame and frame:IsShown() then M.RefreshStatus() end
+        end)
+    end)
+    frame:HookScript("OnHide",function()
+        scheduler.Cancel(searchKey)
+        scheduler.Cancel(statusKey)
+        searchPending=false
     end)
     return frame
 end
@@ -512,13 +504,18 @@ end
 
 function M.RefreshData()
     if not frame or not frame:IsShown() then return end
-    searchPending,searchElapsed=false,0
+    searchPending=false
+    if Nexus.Scheduler then Nexus.Scheduler.Cancel("ui.leaderboard.search") end
     local tabs={{dummyBtn,"dummy"},{lkBtn,"lk"},{combinedBtn,"combined"}}
     for _,v in ipairs(tabs) do if category==v[2] then v[1].active:Show() else v[1].active:Hide() end; v[1].text:SetTextColor(category==v[2] and 1 or 0.82, category==v[2] and 0.82 or 0.82, category==v[2] and 0 or 0.82) end
     classBtn.text:SetText(classFilter=="ALL" and "All Classes" or CLASS_LABEL[classFilter] or classFilter)
-    currentRows=Rows()
+    browserSession.Refresh({
+        category=category,
+        search=searchBox and searchBox:GetText() or "",
+        classFilter=classFilter,
+    })
+    local currentRows = browserSession.Rows()
     local selected=FindSelectedRow()
-    if not selected and selectedKey then selectedKey=nil end
     local label=category=="lk" and "Lich King" or (category=="dummy" and "Training Dummy" or "Best Average")
     countText:SetText(tostring(#currentRows).." ranked "..label..(category=="combined" and " • requires both records • ranked by average DPS" or " records"))
     renderRowsWindow=BindRows
@@ -542,11 +539,11 @@ function M.Init(adapter) Adapter=adapter end
 function M.Show(mode) EnsureFrame(); if Nexus.Panel and Nexus.Panel.AttachMenuFrame then Nexus.Panel.AttachMenuFrame(frame) end; if Nexus.Theme and Nexus.Theme.StyleWindow then Nexus.Theme.StyleWindow(frame, 0.96) end; if Nexus.Theme and Nexus.Theme.StyleTree and not frame._nexusLeaderboardTreeStyled then Nexus.Theme.StyleTree(frame); frame._nexusLeaderboardTreeStyled=true; virtualStats.themeTreeWalks=virtualStats.themeTreeWalks+1 end; if Nexus.Panel and Nexus.Panel.CloseOtherWindows then Nexus.Panel.CloseOtherWindows("NexusLeaderboardFrame") end; if mode=="lk" or mode=="dummy" or mode=="combined" then category=mode end; frame:Show(); M.RefreshData() end
 function M.Hide() if frame then frame:Hide(); classMenu:Hide() end end
 function M.Toggle(mode) EnsureFrame(); if frame:IsShown() then M.Hide() else M.Show(mode) end end
-function M.SetCategory(mode) category=(mode=="dummy" or mode=="combined") and mode or "lk"; selectedKey=nil; M.RefreshData() end
-function M.SetClassFilter(value) classFilter=CLASS_LABEL[value] and value or "ALL"; selectedKey=nil; M.RefreshData() end
+function M.SetCategory(mode) category=(mode=="dummy" or mode=="combined") and mode or "lk"; browserSession.Select(nil); M.RefreshData() end
+function M.SetClassFilter(value) classFilter=CLASS_LABEL[value] and value or "ALL"; browserSession.Select(nil); M.RefreshData() end
 function M.ScrollTo(offset) if not setScrollValue then return false end; setScrollValue(offset,"scroll"); return true end
 function M.SelectKey(key)
-    for _,row in ipairs(currentRows) do
+    for _,row in ipairs(browserSession.Rows()) do
         if RecordKey(row)==key then SelectRow(row); return true end
     end
     return false
@@ -554,7 +551,7 @@ end
 function M.VirtualStats()
     local out={}
     for key,value in pairs(virtualStats) do out[key]=value end
-    out.selectedKey=selectedKey
+    out.selectedKey=browserSession.SelectedKey()
     out.category=category
     out.classFilter=classFilter
     return out

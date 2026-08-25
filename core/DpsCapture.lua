@@ -13,6 +13,7 @@ if not (DiagnosticHistory and type(DiagnosticHistory.New) == "function") then
 end
 local DPS = {}
 Nexus.DpsCapture = DPS
+local Ranking = assert(Nexus.DpsRanking, "DpsRanking required")
 
 ------------------------------------------------------------------------
 -- Constants / state
@@ -181,13 +182,12 @@ local function CharacterBestStore()
 end
 
 local function PlayerKey(name)
-    return tostring(name or "?"):lower():gsub("%s+", "")
+    local key = Ranking.PlayerKey(name)
+    return key ~= "" and key or "?"
 end
 
 local function NormalizeRealm(realm)
-    realm = tostring(realm or ""):lower():gsub("%s+", "")
-    if realm == "" or realm == "unknown" then return nil end
-    return realm
+    return Ranking.NormalizeRealm(realm)
 end
 
 local function CurrentRealm()
@@ -204,19 +204,10 @@ local function OwnerKey(name, realm)
 end
 
 local function CharacterKey(name, ownerKey, realm)
-    if type(ownerKey) == "string" then
-        local ownerName, ownerRealm = ownerKey:match("^([^@]+)@([^@]+)$")
-        ownerName, ownerRealm = PlayerKey(ownerName), NormalizeRealm(ownerRealm)
-        if ownerName ~= "?" and ownerRealm then
-            return ownerName .. "@" .. ownerRealm
-        end
-    end
-    local normalizedRealm = NormalizeRealm(realm)
-    if normalizedRealm then
-        local shortName = PlayerKey(name):match("^([^-]+)") or PlayerKey(name)
-        return shortName .. "@" .. normalizedRealm
-    end
-    return PlayerKey(name)
+    local key = Ranking.CharacterKey({
+        player=name, ownerKey=ownerKey, realm=realm,
+    })
+    return key ~= "" and key or "?"
 end
 
 -- Repair legacy class metadata only for the exact character currently logged
@@ -1833,9 +1824,10 @@ local function CommitSession(category)
         local previousCharacterBest = characterBucket[pk]
         local becameCharacterBest = BetterRow(personalRow, previousCharacterBest)
         if becameCharacterBest then
-            local C = Nexus.CommunityBuilds
-            if C and C.EnsureDpsBuildForEchoes then
-                local ok, ensuredId, ensuredBuild = pcall(C.EnsureDpsBuildForEchoes, snap, category, personalRow)
+            local workspace = Nexus.AccountBuildWorkspace
+            if workspace and workspace.Execute then
+                local ok, ensuredId, ensuredBuild = pcall(
+                    workspace.Execute, "ensure-dps", snap, category, personalRow)
                 if ok and ensuredId then buildId, build = ensuredId, ensuredBuild or build end
                 personalRow.buildId = buildId
             end
@@ -1845,7 +1837,8 @@ local function CommitSession(category)
             -- local record page and no leaderboard row references it anymore,
             -- remove it from the mesh instead of accumulating dead experiments.
             local oldBuildId = previousCharacterBest and previousCharacterBest.buildId
-            if oldBuildId and oldBuildId ~= buildId and C and C.DeleteBuild then
+            if oldBuildId and oldBuildId ~= buildId
+                and workspace and workspace.Execute then
                 local stillUsed = false
                 for _, encounter in ipairs({ "dummy", "lk" }) do
                     for _, publicRow in pairs(CharacterBestStore()[encounter] or {}) do
@@ -1855,7 +1848,7 @@ local function CommitSession(category)
                 end
                 local oldBuild = CatalogGet(oldBuildId)
                 if not stillUsed and oldBuild and oldBuild.autoDps and oldBuild.isMine then
-                    pcall(C.DeleteBuild, oldBuildId)
+                    pcall(workspace.Execute, "delete", oldBuildId)
                 end
             end
         end
@@ -2097,9 +2090,10 @@ function DPS.ReceiveRecord(record, transportSender)
     end
     -- A DPS row must always lead to a viewable/copyable exact loadout, even
     -- when the DPS chunks arrive before the corresponding build broadcast.
-    local C = Nexus.CommunityBuilds
-    if echoes and C and C.EnsureDpsBuildForEchoes then
-        local ok, ensuredId = pcall(C.EnsureDpsBuildForEchoes, echoes, category, row)
+    local workspace = Nexus.AccountBuildWorkspace
+    if echoes and workspace and workspace.Execute then
+        local ok, ensuredId = pcall(
+            workspace.Execute, "ensure-dps", echoes, category, row)
         if ok and ensuredId then
             row.buildId = ensuredId
         elseif row.buildId then
@@ -2108,7 +2102,7 @@ function DPS.ReceiveRecord(record, transportSender)
             -- deterministic record page instead of attaching to that build.
             row.buildId = nil
             local safeOk, safeId = pcall(
-                C.EnsureDpsBuildForEchoes, echoes, category, row)
+                workspace.Execute, "ensure-dps", echoes, category, row)
             if safeOk and safeId then row.buildId = safeId end
         end
     end

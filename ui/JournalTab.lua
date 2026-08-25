@@ -1233,12 +1233,10 @@ end
 
 local function EnsureAssociationScanner()
     if scanFrame then return end
-    scanFrame = CreateFrame("Frame", "NexusLoadoutAssociationScanner", UIParent)
-    local elapsed = 0
-    scanFrame:SetScript("OnUpdate", function(_, dt)
-        elapsed = elapsed + (tonumber(dt) or 0)
-        if elapsed < 0.75 then return end
-        elapsed = 0
+    scanFrame = true
+    local scheduler = assert(Nexus.Scheduler, "Scheduler required")
+    scheduler.Init()
+    scheduler.Every("ui.journal-associations.scan", 0.75, function()
         pcall(function()
             local journal = _G["ProjectEbonholdEchoJournal"]
             if journal and journal.IsShown and journal:IsShown() then

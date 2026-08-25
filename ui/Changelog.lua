@@ -105,14 +105,15 @@ function M.ShowIfNeeded()
 end
 
 local ev = CreateFrame("Frame")
-local elapsed, armed = 0, false
+local armed = false
 ev:RegisterEvent("PLAYER_ENTERING_WORLD")
-ev:SetScript("OnEvent", function() armed = true; elapsed = 0 end)
-ev:SetScript("OnUpdate", function(_, dt)
-    if not armed then return end
-    elapsed = elapsed + (tonumber(dt) or 0)
-    if elapsed >= 2 then
+ev:SetScript("OnEvent", function()
+    armed = true
+    local scheduler = assert(Nexus.Scheduler, "Scheduler required")
+    scheduler.Init()
+    scheduler.After("ui.changelog.show", 2, function()
+        if not armed then return end
         armed = false
         pcall(M.ShowIfNeeded)
-    end
+    end)
 end)

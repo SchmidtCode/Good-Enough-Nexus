@@ -127,8 +127,11 @@ local joinAttempts   = 0
 local receiveWindowUntil = 0
 local lastRequestAt  = -math.huge
 local lastAnsweredAt = -math.huge
-local pendingResponses = {} -- requester:requestId -> deferred response candidate
-local pendingLoadouts = {}  -- requester:buildId -> staggered on-demand response
+local Responder = assert(Nexus.SyncResponder, "SyncResponder required").New({
+    bucketCount=8, pendingTtl=PENDING_TTL, pendingMaxAge=PENDING_MAX_AGE,
+})
+local pendingResponses = Responder.responses
+local pendingLoadouts = Responder.loadouts
 local pendingDeletes = {}   -- local tombstone ids awaiting direct notification
 local pendingDeleteTicker = 0
 local requestedLoadouts = {} -- buildId -> last recovery request time
@@ -148,16 +151,6 @@ local knownPeers = {} -- normalized player name -> { name, version, lastSeen }
 local CleanExpiredInflight
 local recentBuildBroadcast = {}
 local BUILD_BROADCAST_DEDUPE = 2
-local Responder = {
-    fairCursor=nil,
-    candidateCache=nil,
-    stats={
-        turns=0, workUnits=0, backpressureDeferrals=0,
-        entryPreparations=0, candidateSnapshots=0, candidateSorts=0,
-        buildSerializations=0, buildAdmissions=0, dpsSerializations=0,
-        chunkMessagesBuilt=0, compatRequests=0,
-    },
-}
 
 local function Catalog()
     return Nexus and Nexus.BuildCatalog
@@ -458,7 +451,7 @@ function Sync._Suspend(reason)
     sendQueue, sendQueueHead, sendQueueTail = {}, 1, 0
     controlQueue, controlQueueHead, controlQueueTail = {}, 1, 0
     inflight, dpsInflight = {}, {}
-    pendingResponses, pendingLoadouts = {}, {}
+    Responder.ClearPending()
     legacyRecoveryQueue, legacyRecoveryHead, legacyRecoveryTail = {}, 1, 0
     Responder.manualPublish = nil
     receiveWindowUntil = 0
@@ -2339,19 +2332,21 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
         end
         return true
     end
-    if TableCount(pendingResponses) >= MAX_PENDING_RESPONSES then
-        stats.pendingOverflowRejected = (stats.pendingOverflowRejected or 0) + 1
-        LogEvent("RX", "REJECT newest request from %s: pending cap %d",
-            tostring(requester), MAX_PENDING_RESPONSES)
-        return false
-    end
-    pendingResponses[key]={
+    local entry = {
         key=key, requester=requester, requestId=requestId,
         peerBuildWireHash=peerBuildHash, peerDpsHash=peerDpsHash,
         createdAt=Now(), lastActiveAt=Now(), prepared=false,
         remaining=StableDelay(key..":prepare:"..MyName()),
         buildProgress={}, dpsProgress={}, bucketCursor=0,
     }
+    local admitted = Responder.AdmitPending(
+        "response", key, entry, MAX_PENDING_RESPONSES)
+    if not admitted then
+        stats.pendingOverflowRejected = (stats.pendingOverflowRejected or 0) + 1
+        LogEvent("RX", "REJECT newest request from %s: pending cap %d",
+            tostring(requester), MAX_PENDING_RESPONSES)
+        return false
+    end
     LogEvent("RX","mesh request from %s scheduled (id=%s)",
         tostring(requester),tostring(requestId))
     return true
@@ -2451,46 +2446,9 @@ local function HandleBucketClaim(responder, requester, requestId, kind, bucket, 
         and tostring(b.hash)==tostring(bucketHash) then
         entry.buckets[id]=nil
         LogEvent("RX","mesh bucket %s claimed by %s for %s",id,tostring(responder),tostring(requester))
-        if not next(entry.buckets) then pendingResponses[key]=nil end
+        if not next(entry.buckets) then Responder.DropPending("response", key) end
     end
     return true
-end
-
-local function PendingExpired(entry)
-    local now = Now()
-    local createdAt = tonumber(entry and entry.createdAt) or now
-    local lastActiveAt = tonumber(entry and entry.lastActiveAt) or createdAt
-    return now - createdAt > PENDING_MAX_AGE
-        or now - lastActiveAt > PENDING_TTL
-end
-
-function Responder.NextReadyBucket(entry)
-    local cursor = tonumber(entry.bucketCursor) or 0
-    for offset = 1, BUILD_BUCKETS * 2 do
-        local ordinal = ((cursor + offset - 1) % (BUILD_BUCKETS * 2)) + 1
-        local id = ordinal <= BUILD_BUCKETS and ("B"..ordinal)
-            or ("D"..(ordinal - BUILD_BUCKETS))
-        local bucketState = entry.buckets and entry.buckets[id]
-        if bucketState and (tonumber(bucketState.remaining) or 0) <= 0 then
-            return id, bucketState, ordinal
-        end
-    end
-end
-
-function Responder.SelectFairUnit(units)
-    if #units == 0 then return nil end
-    table.sort(units, function(left, right) return left.key < right.key end)
-    local selected = units[1]
-    if Responder.fairCursor then
-        for _, unit in ipairs(units) do
-            if unit.key > Responder.fairCursor then
-                selected = unit
-                break
-            end
-        end
-    end
-    Responder.fairCursor = selected.key
-    return selected
 end
 
 function Responder.ProcessLoadoutResponse(entry)
@@ -2527,27 +2485,7 @@ function Responder.ProcessLoadoutResponse(entry)
 end
 
 local function ProcessPendingResponses(elapsed)
-    elapsed = tonumber(elapsed) or 0
-    Responder.stats.turns = Responder.stats.turns + 1
-    for key,entry in pairs(pendingResponses) do
-        if PendingExpired(entry) then
-            pendingResponses[key] = nil
-        elseif not entry.prepared then
-            entry.remaining = (tonumber(entry.remaining) or 0) - elapsed
-        else
-            for _, bucketState in pairs(entry.buckets or {}) do
-                bucketState.remaining =
-                    (tonumber(bucketState.remaining) or 0) - elapsed
-            end
-        end
-    end
-    for key,entry in pairs(pendingLoadouts) do
-        if PendingExpired(entry) then
-            pendingLoadouts[key] = nil
-        else
-            entry.remaining = (tonumber(entry.remaining) or 0) - elapsed
-        end
-    end
+    Responder.AdvancePending(elapsed, Now())
 
     -- Saturation is a cheap yield: no hash, catalog, sort, validation,
     -- serialization, encoding, or chunk construction occurs below this gate.
@@ -2557,36 +2495,14 @@ local function ProcessPendingResponses(elapsed)
         return
     end
 
-    local units = {}
-    for key, entry in pairs(pendingResponses) do
-        if not entry.prepared then
-            if (tonumber(entry.remaining) or 0) <= 0 then
-                units[#units + 1] = {key="R|"..key, type="prepare",
-                    entryKey=key, entry=entry}
-            end
-        else
-            local id, bucketState, ordinal = Responder.NextReadyBucket(entry)
-            if id then
-                units[#units + 1] = {key="R|"..key, type="bucket",
-                    entryKey=key, entry=entry, id=id,
-                    bucketState=bucketState, ordinal=ordinal}
-            end
-        end
-    end
-    for key, entry in pairs(pendingLoadouts) do
-        if (tonumber(entry.remaining) or 0) <= 0 then
-            units[#units + 1] = {key="L|"..key, type="loadout",
-                entryKey=key, entry=entry}
-        end
-    end
-    local unit = Responder.SelectFairUnit(units)
+    local unit = Responder.NextUnit()
     if not unit then return end
     Responder.stats.workUnits = Responder.stats.workUnits + 1
     Responder.stats.lastRequester = unit.entry.requester
 
     if unit.type == "prepare" then
         if not Responder.PrepareResponseEntry(unit.entry) then
-            pendingResponses[unit.entryKey] = nil
+            Responder.DropPending("response", unit.entryKey)
         end
         return
     end
@@ -2594,7 +2510,7 @@ local function ProcessPendingResponses(elapsed)
         local complete, progressed, why =
             Responder.ProcessLoadoutResponse(unit.entry)
         if complete then
-            pendingLoadouts[unit.entryKey] = nil
+            Responder.DropPending("loadout", unit.entryKey)
         else
             unit.entry.remaining = why == "sync queue full" and 1 or 0
             if progressed then unit.entry.lastActiveAt = Now() end
@@ -2625,7 +2541,9 @@ local function ProcessPendingResponses(elapsed)
             end
         end
         entry.buckets[unit.id] = nil
-        if not next(entry.buckets) then pendingResponses[unit.entryKey] = nil end
+        if not next(entry.buckets) then
+            Responder.DropPending("response", unit.entryKey)
+        end
     else
         bucketState.remaining = why == "sync queue full" and 1 or 0
     end
@@ -2826,14 +2744,16 @@ function Sync.HandleIncoming(text, sender)
         if requester ~= MyName() then
             local key = tostring(requester)..":"..tostring(buildId)
             if not pendingLoadouts[key] then
-                if TableCount(pendingLoadouts) >= MAX_PENDING_LOADOUTS then
+                local entry = { key=key, requester=requester,
+                    buildId=buildId, createdAt=Now(), lastActiveAt=Now(),
+                    remaining=StableDelay(key..":"..MyName()) }
+                local admitted = Responder.AdmitPending(
+                    "loadout", key, entry, MAX_PENDING_LOADOUTS)
+                if not admitted then
                     stats.pendingOverflowRejected =
                         (stats.pendingOverflowRejected or 0) + 1
                     return false
                 end
-                pendingLoadouts[key] = { key=key, requester=requester,
-                    buildId=buildId, createdAt=Now(), lastActiveAt=Now(),
-                    remaining=StableDelay(key..":"..MyName()) }
             end
         end
         return AcceptPeer(protocolSender)
@@ -2847,7 +2767,7 @@ function Sync.HandleIncoming(text, sender)
         local requester, buildId = parts[3], parts[4]
         local key = tostring(requester)..":"..tostring(buildId)
         if protocolSender ~= MyName() and pendingLoadouts[key] then
-            pendingLoadouts[key] = nil
+            Responder.DropPending("loadout", key)
             LogEvent("RX","suppressed duplicate loadout response; %s claimed %s",
                 tostring(protocolSender), tostring(buildId))
         end
@@ -3334,14 +3254,7 @@ function Sync.Init(codec, adapter)
     stats.oversizeDropped, stats.updated, stats.skippedUpToDate = 0, 0, 0
     stats.queueOverflowRejected, stats.pendingOverflowRejected = 0, 0
     stats.baselineSkipped, stats.overlaySent = 0, 0
-    Responder.fairCursor = nil
-    Responder.candidateCache = nil
-    Responder.stats = {
-        turns=0, workUnits=0, backpressureDeferrals=0,
-        entryPreparations=0, candidateSnapshots=0, candidateSorts=0,
-        candidateScans=0, buildSerializations=0, buildAdmissions=0,
-        dpsSerializations=0, chunkMessagesBuilt=0, compatRequests=0,
-    }
+    Responder.Reset()
     hotBuilds    = {}  -- clear on init
     recentBuildBroadcast = {}
     Sync._transientPruneTicker = 0
@@ -3359,8 +3272,6 @@ function Sync.Init(codec, adapter)
             return references
         end)
     end
-    pendingResponses = {}
-    pendingLoadouts = {}
     pendingDeletes = {}
     pendingDeleteTicker = 0
     Sync._pendingDeleteScheduled = false

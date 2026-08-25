@@ -1607,42 +1607,34 @@ local function EnsureFrame()
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
     frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
-    local refreshTicker = 0
-    local applyTicker = 0
-    frame:SetScript("OnUpdate", function(_, elapsed)
-        applyTicker = applyTicker + (elapsed or 0)
-        if applyTicker >= 0.5 then
-            applyTicker = 0
-            if M._PumpApplyRetry then M._PumpApplyRetry() end
-        end
-        refreshTicker = refreshTicker + (elapsed or 0)
-        if refreshTicker >= 0.5 then
-            refreshTicker = 0
-            -- Go quiet during a PerkService sniff (/nexus sniff): this
-            -- ticker's own Adapter.Slots() polling (both the check below and
-            -- inside M.Refresh() itself) would otherwise keep calling
-            -- GetServerBuildSlots/GetServerActiveSlot/GetServerMaxSlots every
-            -- half second regardless of Main.lua's own poll pause, flooding
-            -- the 200-call ring buffer with noise unrelated to whatever the
-            -- player is actually doing in the native lock UI.
-            if not (Nexus and Nexus.sniffPaused) then
-                HideServerEchoUI()
-                if pendingLoadoutOpen then
-                    local slots = Adapter and Adapter.Slots and Adapter.Slots()
-                    local active = slots and tonumber(slots.activeSlot)
-                    if active == tonumber(pendingLoadoutOpen.slot)
-                        or (GetTime() - (pendingLoadoutOpen.at or 0)) >= 1.5 then
-                        local target = pendingLoadoutOpen.slot
-                        pendingLoadoutOpen = nil
-                        LoadEditorForLoadout(target)
-                    end
+    local scheduler = assert(Nexus.Scheduler, "Scheduler required")
+    local updateKey = "ui.wishlist-editor.tick"
+    local function ScheduledUpdate()
+        if M._PumpApplyRetry then M._PumpApplyRetry() end
+        -- Go quiet during a PerkService sniff (/nexus sniff): this tick's
+        -- Adapter.Slots() polling would otherwise flood the diagnostic ring.
+        if not (Nexus and Nexus.sniffPaused) then
+            HideServerEchoUI()
+            if pendingLoadoutOpen then
+                local slots = Adapter and Adapter.Slots and Adapter.Slots()
+                local active = slots and tonumber(slots.activeSlot)
+                if active == tonumber(pendingLoadoutOpen.slot)
+                    or (GetTime() - (pendingLoadoutOpen.at or 0)) >= 1.5 then
+                    local target = pendingLoadoutOpen.slot
+                    pendingLoadoutOpen = nil
+                    LoadEditorForLoadout(target)
                 end
-                M.Refresh()
             end
+            M.Refresh()
         end
+    end
+    frame:SetScript("OnShow", function()
+        HideServerEchoUI()
+        scheduler.Init()
+        scheduler.Every(updateKey, 0.5, ScheduledUpdate)
     end)
-    frame:SetScript("OnShow", function() HideServerEchoUI() end)
     frame:SetScript("OnHide", function()
+        scheduler.Cancel(updateKey)
         if displayPopup then displayPopup:Hide() end
         HideWishlistSwitchMenu()
         HideLoadoutSwitchMenu()

@@ -218,6 +218,7 @@ assert(#collisionPayload.e == 1 and collisionPayload.e[1][1] == 200102,
 -- stored inline array can also be removed synthetically and hydrated from the
 -- pool for board, detail, and defensive-copy access.
 Nexus.CommunityBuilds = nil
+Nexus.AccountBuildWorkspace = nil
 DPS.Init({}, Sync)
 local remoteEchoes = {
     {spellId=200200,stacks=2}, {spellId=200201,stacks=1},

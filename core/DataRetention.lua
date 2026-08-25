@@ -8,6 +8,7 @@
 Nexus = Nexus or {}
 local Retention = {}
 Nexus.DataRetention = Retention
+local Ranking = assert(Nexus.DpsRanking, "DpsRanking required")
 
 local SCHEMA_VERSION = 2
 local DEFAULT_LIMITS = {
@@ -93,26 +94,11 @@ local function EpochNow()
 end
 
 local function PlayerKey(value)
-    return tostring(value or ""):lower():gsub("%s+", "")
+    return Ranking.PlayerKey(value)
 end
 
 local function CharacterKey(row, fallback)
-    row = type(row) == "table" and row or {}
-    if type(row.ownerKey) == "string" then
-        local name, realm = row.ownerKey:match("^([^@]+)@([^@]+)$")
-        name = PlayerKey(name)
-        realm = tostring(realm or ""):lower():gsub("%s+", "")
-        if name ~= "" and realm ~= "" and realm ~= "unknown" then
-            return name .. "@" .. realm
-        end
-    end
-    local realm = tostring(row.realm or ""):lower():gsub("%s+", "")
-    if realm ~= "" and realm ~= "unknown" then
-        local name = PlayerKey(row.player or fallback):match("^([^-]+)")
-            or PlayerKey(row.player or fallback)
-        return name .. "@" .. realm
-    end
-    return PlayerKey(row.player or fallback)
+    return Ranking.CharacterKey(row, fallback)
 end
 
 local function CurrentOwnerKey()
@@ -190,15 +176,8 @@ local function BetterRow(left, right)
     return tostring(left.key) < tostring(right.key)
 end
 
-local function TypedIdentity(value)
-    return type(value) .. ":" .. tostring(value == nil and "" or value)
-end
-
 local function RowIdentity(row)
-    if type(row) ~= "table" then return nil end
-    if row.fingerprint ~= nil then return TypedIdentity(row.fingerprint) end
-    if row.buildId ~= nil then return TypedIdentity(row.buildId) end
-    return nil
+    return Ranking.RecordIdentity(row)
 end
 
 local function ClassKey(value)
@@ -262,33 +241,19 @@ local function SelectCharacterBest(dps, limits, overlay)
 
     -- Average is a projection, not a stored category. Match the same player +
     -- loadout identity used by ViewProjections and reserve both raw rows.
-    local dummyByIdentity, dummyByBuild = {}, {}
-    for _, entry in ipairs(entries.dummy) do
-        local player = CharacterKey(entry.row, entry.key)
-        local identity = RowIdentity(entry.row)
-        if identity then dummyByIdentity[player .. "|" .. identity] = entry end
-        if entry.row.buildId ~= nil then
-            dummyByBuild[player .. "|" .. TypedIdentity(entry.row.buildId)] = entry
-        end
-    end
     local averages = {}
-    for _, lkEntry in ipairs(entries.lk) do
-        local player = CharacterKey(lkEntry.row, lkEntry.key)
-        local identity = RowIdentity(lkEntry.row)
-        local dummyEntry = identity and dummyByIdentity[player .. "|" .. identity] or nil
-        if not dummyEntry and lkEntry.row.buildId ~= nil then
-            dummyEntry = dummyByBuild[player .. "|" .. TypedIdentity(lkEntry.row.buildId)]
-        end
-        if dummyEntry then
-            averages[#averages + 1] = {
-                key=player .. "|" .. tostring(identity or lkEntry.row.buildId),
-                dps=(dummyEntry.dps + lkEntry.dps) / 2,
-                stamp=math.min(dummyEntry.stamp, lkEntry.stamp),
-                class=lkEntry.class ~= "UNKNOWN" and lkEntry.class or dummyEntry.class,
-                dummy=dummyEntry, lk=lkEntry,
-                localRow=dummyEntry.localRow or lkEntry.localRow,
-            }
-        end
+    local pairs = Ranking.PairCategories(entries.dummy, entries.lk,
+        function(entry) return entry and entry.row end)
+    for _, pair in ipairs(pairs) do
+        local dummyEntry, lkEntry = pair.dummy, pair.lk
+        averages[#averages + 1] = {
+            key=pair.key,
+            dps=(dummyEntry.dps + lkEntry.dps) / 2,
+            stamp=math.min(dummyEntry.stamp, lkEntry.stamp),
+            class=lkEntry.class ~= "UNKNOWN" and lkEntry.class or dummyEntry.class,
+            dummy=dummyEntry, lk=lkEntry,
+            localRow=dummyEntry.localRow or lkEntry.localRow,
+        }
     end
     for _, entry in ipairs(averages) do
         if entry.localRow then

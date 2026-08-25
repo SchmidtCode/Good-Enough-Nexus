@@ -9,6 +9,8 @@
 Nexus = Nexus or {}
 local M = {}
 Nexus.CommunityBuilds = M
+local Workspace = assert(Nexus.AccountBuildWorkspace,
+    "AccountBuildWorkspace required")
 
 local RefreshBuildIdentity
 
@@ -32,10 +34,6 @@ local CLASS_COLOR = {
     SHAMAN      = { 0.00, 0.44, 0.87 },
     WARLOCK     = { 0.53, 0.53, 0.93 },
     WARRIOR     = { 0.78, 0.61, 0.43 },
-}
-local CLASS_ORDER = {
-    DEATHKNIGHT=1, DRUID=2, HUNTER=3, MAGE=4, PALADIN=5,
-    PRIEST=6,      ROGUE=7, SHAMAN=8, WARLOCK=9, WARRIOR=10,
 }
 local CLASS_LABEL = {
     DEATHKNIGHT="Death Knight", DRUID="Druid",   HUNTER="Hunter",
@@ -65,11 +63,11 @@ local postPopup, editPopup
 local searchBox, classDropBtn, dropPanel, sortToggle, sortPanel, scopeBtn, myBuildsBtn, syncStatusText, syncBtn, syncModeBtn, dropdownShield
 local leaderboardBtn, wishlistBtn, resultText
 local Adapter, Model
-local selectedId  = nil
+local buildSession
+local SelectedId, SelectId
 local pendingLockIn = nil
 local IsOwnBuild
 local IsAccountBuild
-local lastSavedLoadoutImport = 0
 local renderBuildWindow, virtualBinding = nil, false
 local refreshDirty = false
 local EMERGENCY_BUILD_LIMIT = 20
@@ -119,18 +117,12 @@ local function RemoveOverlay(id)
     return catalog and catalog.RemoveOverlay and catalog.RemoveOverlay(id) or false
 end
 
-local function SetTombstone(id, tombstone)
-    local catalog = Catalog()
-    return catalog and catalog.SetTombstone
-        and catalog.SetTombstone(id, tombstone) or false
-end
-
 local function RemoveLegacyBuilds()
     local db = Catalog() and Catalog().All and Catalog().All() or {}
     for id, b in pairs(db) do
         if b and tostring(b.author or ""):lower() == "wr team" then
             RemoveOverlay(id)
-            if selectedId == id then selectedId = nil end
+            if SelectedId() == id then SelectId(nil) end
         end
     end
     return db
@@ -174,120 +166,16 @@ local function SpellIcon(spellId)
     return (ok and icon and icon ~= "") and icon or "Interface\\Icons\\INV_Misc_QuestionMark"
 end
 
--- Infer the class the build actually belongs to from the echoes being
--- posted. This matters for the admin workflow: the character posting a
--- build does not have to be the class represented by the wishlist.
-local CLASS_MASK = {
-    WARRIOR=1, PALADIN=2, HUNTER=4, ROGUE=8, PRIEST=16,
-    DEATHKNIGHT=32, SHAMAN=64, MAGE=128, WARLOCK=256, DRUID=1024,
-}
-
-local VALID_CLASS = {}
-for class in pairs(CLASS_MASK) do VALID_CLASS[class] = true end
-
-local function NormalizeClass(class)
-    class = type(class) == "string" and class:upper() or nil
-    return class and VALID_CLASS[class] and class or nil
-end
-
--- Infer only from Echoes restricted to one class. Shared Echoes are ignored:
--- counting them makes the result depend on unordered table iteration.
-local function InferBuildClass(echoes)
-    local scores = {}
-    local cat = Adapter and Adapter.Catalog and Adapter.Catalog()
-    local rows = cat and cat.rows
-    if type(echoes) == "table" and type(rows) == "table" and bit and bit.band then
-        for _, e in ipairs(echoes) do
-            local row = rows[tonumber(e.spellId)]
-            local mask = row and tonumber(row.classMask) or 0
-            if mask > 0 then
-                local matched, onlyClass = 0, nil
-                for class, classMask in pairs(CLASS_MASK) do
-                    if bit.band(mask, classMask) ~= 0 then
-                        matched = matched + 1
-                        onlyClass = class
-                    end
-                end
-                if matched == 1 and onlyClass then
-                    scores[onlyClass] = (scores[onlyClass] or 0) + 1
-                end
-            end
-        end
-    end
-    local best, bestScore, tied = nil, 0, false
-    for class, score in pairs(scores) do
-        if score > bestScore then
-            best, bestScore, tied = class, score, false
-        elseif score == bestScore and score > 0 then
-            tied = true
-        end
-    end
-    return (bestScore > 0 and not tied) and best or nil
-end
-
-local function CurrentRealm()
-    local realm = GetNormalizedRealmName and GetNormalizedRealmName()
-    if not realm or realm == "" then realm = GetRealmName and GetRealmName() end
-    return tostring(realm or "unknown"):lower():gsub("%s+", "")
-end
-
-local function OwnerKey(name, realm)
-    name = tostring(name or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
-    if name == "" then return nil end
-    realm = tostring(realm or CurrentRealm()):lower():gsub("%s+", "")
-    return name .. "@" .. realm
-end
-
-local function CurrentOwnerKey()
-    return OwnerKey(UnitName and UnitName("player"), CurrentRealm())
-end
+-- Class inference is a workspace rule. The UI uses it only to preselect a
+-- class in the post-build preview.
+local InferBuildClass = Workspace.InferClass
 
 ------------------------------------------------------------------------
 -- Sort / filter
 ------------------------------------------------------------------------
 
-local function ClassRank(b)
-    return CLASS_ORDER[(b.class or ""):upper()] or 99
-end
-
 local function RecordBuildId(build)
     return build and (build.recordBuildId or build.publishedBuildId or build.id) or nil
-end
-
-local function BuildDpsSummary(build)
-    local D = Nexus.DpsCapture
-    local summary = { dummy = 0, lk = 0, best = 0, average = 0, count = 0 }
-    if not (D and build) then return summary end
-    local recordId = RecordBuildId(build)
-    for _, category in ipairs({"dummy", "lk"}) do
-        local rows
-        if recordId and D.GetLeaderboard then
-            local ok, result = pcall(D.GetLeaderboard, recordId, category)
-            if ok then rows = result end
-        end
-        -- Saved-loadout mirrors can be partial locked-Echo snapshots and may
-        -- not yet have a durable record id. Use direct Echo-key lookup too.
-        if (not rows or #rows == 0) and D.GetLeaderboardForEchoes and build.echoes then
-            local ok, result = pcall(D.GetLeaderboardForEchoes, build.echoes, category)
-            if ok then rows = result end
-        end
-        if type(rows) == "table" then
-            for _, row in ipairs(rows) do
-                local value = tonumber(row.dps or row.value or row.amount) or 0
-                if value > summary[category] then summary[category] = value end
-            end
-        end
-    end
-    if summary.dummy > 0 then summary.count = summary.count + 1 end
-    if summary.lk > 0 then summary.count = summary.count + 1 end
-    summary.best = math.max(summary.dummy, summary.lk)
-    if summary.count == 2 then summary.average = (summary.dummy + summary.lk) / 2
-    elseif summary.count == 1 then summary.average = summary.best end
-    return summary
-end
-
-local function BestBuildDps(build)
-    return BuildDpsSummary(build).best
 end
 
 local function IsBuildFullyLoaded(build)
@@ -372,27 +260,14 @@ local function SortedBuilds()
     }
 end
 
-local function DpsBoardRows(category)
-    local D = Nexus.DpsCapture
-    if not (D and D.GetDpsBoard) then return {} end
-    local ok, rows = pcall(D.GetDpsBoard, category)
-    if not ok or type(rows) ~= "table" then return {} end
-    local fs = FilterSettings()
-    local search = (fs.search or ""):lower():gsub("^%s+",""):gsub("%s+$","")
-    local classFilter = fs.classFilter
-    local out = {}
-    for _, row in ipairs(rows) do
-        local build = row.build or {}
-        local classMatch = not classFilter
-            or (build.class or row.class or ""):upper() == classFilter
-        local searchMatch = search == ""
-            or tostring(row.player or ""):lower():find(search, 1, true)
-            or tostring(build.title or ""):lower():find(search, 1, true)
-            or tostring(build.author or ""):lower():find(search, 1, true)
-        if classMatch and searchMatch then out[#out + 1] = row end
-    end
-    return out
-end
+buildSession = assert(Nexus.BrowserSession, "BrowserSession required").New({
+    project=function() return SortedBuilds() end,
+    keyOf=function(build) return build and build.id end,
+    rowHeight=CARD_HEIGHT + 4,
+    overscan=2,
+})
+SelectedId = function() return buildSession.SelectedKey() end
+SelectId = function(id) return buildSession.Select(id) end
 
 local function DpsText(value)
     value = tonumber(value) or 0
@@ -409,751 +284,72 @@ local function EchoTotal(echoes)
     return total
 end
 
-local function EchoProgress(current, target)
-    local have = {}
-    for _, e in ipairs(type(current) == "table" and current or {}) do
-        local id = tonumber(e.spellId or e.id) or 0
-        have[id] = (have[id] or 0) + (tonumber(e.stacks or e.count) or 1)
-    end
-    local matched, total = 0, 0
-    for _, e in ipairs(type(target) == "table" and target or {}) do
-        local id = tonumber(e.spellId or e.id) or 0
-        local need = tonumber(e.stacks or e.count) or 1
-        total = total + need
-        local n = math.min(need, have[id] or 0)
-        matched = matched + n
-        have[id] = math.max(0, (have[id] or 0) - n)
-    end
-    return matched, total
-end
-
 ------------------------------------------------------------------------
--- Monotonic stamp & broadcast helpers
+-- Account-build workspace adapters
 ------------------------------------------------------------------------
-
-local function NextStamp(previous)
-    local now = (time and time()) or 0
-    local prev = tonumber(previous) or 0
-    return now > prev and now or prev + 1
-end
 
 IsOwnBuild = function(build)
-    if not build then return false end
-    local mine = CurrentOwnerKey()
-    if not mine then return false end
-    if build.ownerKey then
-        return tostring(build.ownerKey):lower() == mine
-    end
-    -- Legacy builds predate ownerKey. They remain editable only when both
-    -- their local marker and author name match the current character.
-    if not build.isMine then return false end
-    local me = tostring((UnitName and UnitName("player")) or ""):lower()
-    return me ~= "" and tostring(build.author or ""):lower() == me
+    return Workspace.Owns(build)
 end
 
 function M.IsOwnBuild(idOrBuild)
-    local build = type(idOrBuild) == "table" and idOrBuild
-        or LoadBuild(idOrBuild)
-    return IsOwnBuild(build)
+    return Workspace.Owns(idOrBuild)
 end
 
-local function NormalizeTitle(text)
-    return tostring(text or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
-end
-
-local function EchoPresence(echoes)
-    local out = {}
-    for _, e in ipairs(type(echoes) == "table" and echoes or {}) do
-        local id = tonumber(e.spellId or e.id)
-        if id then out[id] = (out[id] or 0) + (tonumber(e.stacks or e.count) or 1) end
-    end
-    return out
-end
-
--- A Saved Build mirror and its leaderboard/community record can use different
--- ids even though they describe the same loadout. Resolve the published/record
--- copy once so class and DPS stay attached to the local mirror.
-local function FindRelatedBuild(serverTitle, echoes, old, author, store)
-    store = type(store) == "table" and store or SummaryStore()
-    local D = Nexus.DpsCapture
-    local exactKey = D and D.GetEchoKey and D.GetEchoKey(echoes) or nil
-    local titleKey = NormalizeTitle(serverTitle)
-    local authorKey = NormalizeTitle(author)
-    local wanted = EchoPresence(echoes)
-    local wantedTotal = 0
-    for _, count in pairs(wanted) do wantedTotal = wantedTotal + count end
-
-    local function CandidateScore(candidate, candidateId, preferred)
-        virtualStats.relatedScans = virtualStats.relatedScans + 1
-        if not candidate or candidate.importedSavedBuild then return nil end
-        if authorKey ~= "" and NormalizeTitle(candidate.author) ~= authorKey then return nil end
-        local currentOwner = CurrentOwnerKey()
-        if candidate.ownerKey and currentOwner
-            and tostring(candidate.ownerKey):lower() ~= currentOwner then return nil end
-
-        local candidateKey = candidate.fingerprint
-        if not candidateKey and D and D.GetEchoKey then
-            candidateKey = D.GetEchoKey(candidate.echoes)
-        end
-        if exactKey and candidateKey == exactKey then return 100000, candidate end
-
-        local sameTitle = titleKey ~= ""
-            and NormalizeTitle(candidate.title or candidate.serverTitle) == titleKey
-        -- A partial Saved Build cannot prove a relationship to every other
-        -- same-author loadout. Only hydrate a previously linked record or an
-        -- exact same-title candidate; broad author-wide hydration made opening
-        -- Builds copy dozens of 79-Echo records per server slot.
-        if not preferred and not sameTitle then return nil end
-        if type(candidate.echoes) ~= "table" and candidateId ~= nil then
-            candidate = LoadBuild(candidateId)
-            if not candidate then return nil end
-            virtualStats.relatedHydrations = virtualStats.relatedHydrations + 1
-        end
-
-        local have, overlap = EchoPresence(candidate.echoes), 0
-        for id, count in pairs(wanted) do overlap = overlap + math.min(count, have[id] or 0) end
-
-        -- Server Saved Builds commonly expose only the currently locked Echoes,
-        -- while the published leaderboard build contains the complete 79-Echo
-        -- loadout. Treat the locked set as a subset match, but require the same
-        -- owner and strongly prefer the same server/build title.
-        local required = math.min(8, math.max(1, math.floor(wantedTotal / 2)))
-        if overlap < required then return nil end
-        if sameTitle then return 10000 + overlap, candidate end
-        if overlap == wantedTotal and wantedTotal >= 6 then
-            return 1000 + overlap, candidate
-        end
-        return nil
-    end
-
-    -- Never trust a persisted recordBuildId blindly. Saved slot numbers and
-    -- mirrored records survive reloads and can otherwise keep a stale record
-    -- from another class attached forever.
-    local preferred = {}
-    if old and old.recordBuildId then preferred[#preferred + 1] = old.recordBuildId end
-    if old and old.publishedBuildId then preferred[#preferred + 1] = old.publishedBuildId end
-    local best, bestScore = nil, -1
-    local preferredIds = {}
-    for _, candidateId in ipairs(preferred) do
-        preferredIds[candidateId] = true
-        local candidate = store[candidateId] or LoadBuild(candidateId)
-        local score, resolved = CandidateScore(candidate, candidateId, true)
-        if score and score > bestScore then
-            best, bestScore = resolved or candidate, score
-        end
-    end
-    for candidateId, candidate in pairs(store) do
-        if not preferredIds[candidateId] then
-            local score, resolved = CandidateScore(candidate, candidateId, false)
-            if score and score > bestScore then
-                best, bestScore = resolved or candidate, score
-            end
-        end
-    end
-    return best
-end
-
--- Mirror the current character's server Saved Builds into the personal
--- library. These records are local working copies: they are never broadcast
--- until the player explicitly uses Share Build.
 local function ImportCurrentSavedLoadouts(force)
-    local now = GetTime and GetTime() or 0
-    if not force and now > 0 and (now - lastSavedLoadoutImport) < 1.0 then return 0 end
-    lastSavedLoadoutImport = now
-
-    local slots = Adapter and Adapter.Slots and Adapter.Slots()
-    if not (slots and type(slots.bySlot) == "table") then return 0 end
-
-    local me = tostring((UnitName and UnitName("player")) or "You")
-    local meKey = me:lower():gsub("[^%w]", "_")
-    local currentOwner = CurrentOwnerKey()
-    if not currentOwner then return 0 end
-    local ownerSlug = currentOwner:gsub("[^%w]", "_")
-    local seen, changed = {}, 0
-    -- One shallow identity snapshot serves every slot association and stale
-    -- mirror check in this import. The previous implementation called All()
-    -- once per slot, deep-copying the complete 36k-Echo bundled catalog each
-    -- time the Builds screen opened.
-    local summaries = SummaryStore()
-
-    for rawSlot, live in pairs(slots.bySlot) do
-        local slot = tonumber(rawSlot)
-        if slot and slot >= 1 and slot < 100 and live and type(live.echoes) == "table" and #live.echoes > 0 then
-            local id = string.format("saved-%s-%d", ownerSlug, slot)
-            local legacyId = string.format("saved-%s-%d", meKey, slot)
-            seen[id] = true
-            local echoes, total = {}, 0
-            for _, e in ipairs(live.echoes) do
-                local stacks = tonumber(e.stacks or e.count) or 1
-                -- Adapter.Slots() already reports a real per-echo `locked` flag
-                -- straight from the server (GameAdapter.lua's A.Slots) -- keep
-                -- it here instead of discarding it, so a build mirrored from
-                -- this character's own saved loadouts still knows which of its
-                -- Echoes were locked when someone loads it into the wishlist
-                -- editor (WishlistEditor.LoadPendingEchoes reads this field).
-                echoes[#echoes + 1] = { spellId=e.spellId or e.id, quality=e.quality, stacks=stacks,
-                    locked = e.locked and true or false }
-                total = total + stacks
-            end
-            local serverTitle = (live.name and live.name ~= "") and live.name or ("Saved Build " .. slot)
-            local old = LoadBuild(id) or (legacyId ~= id and LoadBuild(legacyId))
-            -- Saved-loadout mirrors keep the server name as their default, but a
-            -- player-entered build title remains available for editing/uploading.
-            local title = (old and old.userTitle and old.userTitle ~= "") and old.userTitle or serverTitle
-            local linked = Adapter.GetLoadoutWishlist and Adapter.GetLoadoutWishlist(slot) or nil
-            local destinationName = linked and linked.name or nil
-            local destinationEchoes = linked and linked.echoes or nil
-            local progress, destinationTotal = EchoProgress(echoes, destinationEchoes)
-            local related = FindRelatedBuild(serverTitle, echoes, old, me, summaries)
-            -- These slots belong to the character currently being viewed. The
-            -- current/server class is therefore authoritative for an unpublished
-            -- Saved Build. Only a verified published record may override it.
-            -- Echo-only inference is a last-resort fallback because partial locked
-            -- snapshots can contain mostly shared Echoes and resemble another class.
-            local currentClass = (select(2, UnitClass and UnitClass("player"))) or nil
-            local class = (related and related.class) or live.class or currentClass or InferBuildClass(echoes) or "UNKNOWN"
-            -- Do not preserve a stale record link after validation fails. A bad
-            -- link was also allowing an unrelated class/record to remain attached.
-            local recordBuildId = related and related.id or nil
-            local signatureParts = {serverTitle, tostring(class), tostring(recordBuildId or ""), tostring(total), tostring(destinationName or ""), tostring(progress), tostring(destinationTotal)}
-            for _, e in ipairs(echoes) do
-                signatureParts[#signatureParts + 1] = table.concat({tostring(e.spellId or 0), tostring(e.quality or ""), tostring(e.stacks or 1)}, ":")
-            end
-            local signature = table.concat(signatureParts, "|")
-            if not old or old._savedSignature ~= signature then
-                local stamp = NextStamp(old and old.lastModified or 0)
-                local record = {
-                    id=id, title=title,
-                    serverTitle=serverTitle,
-                    userTitle=old and old.userTitle or nil,
-                    description=(old and old.userDescription) or (destinationName
-                        and string.format("Destination wishlist: %s — in progress (%d/%d).", destinationName, progress, destinationTotal)
-                        or "No destination wishlist associated yet."),
-                    userDescription=old and old.userDescription or nil,
-                    publishedBuildId=old and old.publishedBuildId or nil,
-                    lastPublishedAt=old and old.lastPublishedAt or nil,
-                    author=me, ownerKey=CurrentOwnerKey(), class=class, echoes=echoes,
-                    postedAt=(old and old.postedAt) or stamp, lastModified=stamp,
-                    isMine=true, importedSavedBuild=true, serverSlot=slot, recordBuildId=recordBuildId,
-                    destinationWishlistName=destinationName, destinationWishlistSlot=linked and linked.slot or nil,
-                    destinationProgress=progress, destinationTotal=destinationTotal,
-                    activeServerBuild=(slots.activeSlot == slot), _savedSignature=signature,
-                }
-                if RefreshBuildIdentity(record) then
-                    SaveBuild(record)
-                    if legacyId ~= id and LoadBuild(legacyId) then RemoveOverlay(legacyId) end
-                    changed = changed + 1
-                end
-            elseif old then
-                old.activeServerBuild = slots.activeSlot == slot
-                old.serverSlot = slot
-                old.serverTitle = serverTitle
-                old.class = class
-                old.ownerKey = old.ownerKey or CurrentOwnerKey()
-                old.recordBuildId = recordBuildId
-                if not old.userTitle or old.userTitle == "" then old.title = serverTitle end
-                old.importedSavedBuild = true
-                old.isMine = true
-                old.destinationWishlistName = destinationName
-                old.destinationWishlistSlot = linked and linked.slot or nil
-                old.destinationProgress = progress
-                old.destinationTotal = destinationTotal
-                old.id = id
-                SaveBuild(old)
-                if legacyId ~= id and LoadBuild(legacyId) then RemoveOverlay(legacyId) end
-            end
-        end
-    end
-
-    -- Remove only stale automatic mirrors for this character. Manually
-    -- posted builds and imported records belonging to other characters stay.
-    for id, build in pairs(summaries) do
-        if build and build.importedSavedBuild and IsOwnBuild(build) and not seen[id] then
-            RemoveOverlay(id)
-            if selectedId == id then selectedId = nil end
-            changed = changed + 1
-        end
-    end
+    local changed = Workspace.Import(force)
+    if SelectedId() and not LoadBuild(SelectedId()) then SelectId(nil) end
     return changed
 end
 
-local function BroadcastIfPossible(record)
-    if Nexus.Sync then
-        pcall(Nexus.Sync.BroadcastBuildSummary
-            or Nexus.Sync.BroadcastBuild, record)
+-- Presentation flows use these read-only helpers to preview the selected
+-- wishlist and explain why recorded loadouts cannot be changed in place.
+local function WishlistEchoes(wishlist)
+    if not wishlist then return nil end
+    if type(wishlist.echoes) == "table" and #wishlist.echoes > 0 then
+        return wishlist.echoes
     end
-end
-
-------------------------------------------------------------------------
--- Data mutations (post / edit / update / delete)
-------------------------------------------------------------------------
-
--- Normalize every wishlist source to the same Echo list shape.
--- This helper must be declared before PostCurrentWishlist so Lua closes
--- over the local function instead of accidentally resolving a global.
-local function WishlistEchoes(wl)
-    if not wl then return nil end
-    if type(wl.echoes) == "table" and #wl.echoes > 0 then return wl.echoes end
-    if type(wl.entries) == "table" and #wl.entries > 0 then return wl.entries end
+    if type(wishlist.entries) == "table" and #wishlist.entries > 0 then
+        return wishlist.entries
+    end
     return nil
-end
-
-local function FingerprintHash(text)
-    local h1, h2 = 5381, 2166136261
-    for i = 1, #text do
-        local b = text:byte(i)
-        h1 = (h1 * 33 + b) % 2147483647
-        h2 = (h2 * 131 + b) % 2147483629
-    end
-    return string.format("%08x%08x", h1, h2)
-end
-
-local function CanonicalFingerprintHash(text)
-    if type(text) ~= "string" or text == "" then return nil end
-    local h = 5381
-    for i = 1, #text do
-        h = ((h * 33) + text:byte(i)) % 2147483648
-    end
-    return string.format("%x", h)
-end
-
-local function NormalizeDiscordBuildLink(value)
-    local link = tostring(value or ""):gsub("^%s+",""):gsub("%s+$","")
-    if link == "" then return nil end
-    link = link:gsub("^<",""):gsub(">$","")
-    link = link:gsub("^http://", "https://")
-    link = link:gsub("^https://www%.discord%.com/", "https://discord.com/")
-    link = link:gsub("^https://discordapp%.com/", "https://discord.com/")
-    local guildId, channelId, messageId =
-        link:match("^https://discord%.com/channels/(%d+)/(%d+)/(%d+)/?$")
-    if guildId then
-        return string.format("https://discord.com/channels/%s/%s/%s",
-            guildId, channelId, messageId)
-    end
-    guildId, channelId =
-        link:match("^https://discord%.com/channels/(%d+)/(%d+)/?$")
-    if guildId then
-        return string.format("https://discord.com/channels/%s/%s",
-            guildId, channelId)
-    end
-    return nil,
-        "Paste a Discord channel or message link from discord.com/channels/."
-end
-
-RefreshBuildIdentity = function(build)
-    if type(build) ~= "table" or type(build.echoes) ~= "table"
-        or #build.echoes == 0 then return false, "invalid Echo list" end
-    local D = Nexus.DpsCapture
-    local count = 0
-    for i = 1, #build.echoes do
-        local e = build.echoes[i]
-        local id = type(e) == "table" and tonumber(e.spellId or e.id) or nil
-        local stacks = type(e) == "table"
-            and tonumber(e.stacks or e.count) or nil
-        if not id or not stacks or stacks < 1 or stacks ~= math.floor(stacks) then
-            return false, "invalid Echo list"
-        end
-        count = count + stacks
-        if count > 120 then return false, "too many Echoes" end
-    end
-    local fingerprint = D and D.GetEchoKey and D.GetEchoKey(build.echoes) or nil
-    if type(fingerprint) ~= "string" or fingerprint == "" then
-        local counts, ids = {}, {}
-        for i = 1, #build.echoes do
-            local e = build.echoes[i]
-            local id = tonumber(e.spellId or e.id)
-            counts[id] = (counts[id] or 0) + tonumber(e.stacks or e.count)
-        end
-        for id in pairs(counts) do ids[#ids + 1] = id end
-        table.sort(ids)
-        local parts = {}
-        for i = 1, #ids do
-            parts[#parts + 1] = tostring(ids[i]) .. "x" .. tostring(counts[ids[i]])
-        end
-        fingerprint = table.concat(parts, ",")
-    end
-    build.fingerprint = fingerprint
-    build.fingerprintHash = D and D.GetEchoHash
-        and D.GetEchoHash(build.echoes)
-        or CanonicalFingerprintHash(fingerprint)
-    build.echoCount = count
-    build.loadoutAvailable = true
-    build.needsFullBuild = false
-    return true
-end
-
--- Ensure a personal-best Echo snapshot has a copyable community build page.
--- Existing manual or automatic builds with the exact fingerprint are reused;
--- a new deterministic record-loadout page is created only when none exists.
-function M.EnsureDpsBuildForEchoes(echoes, category, record)
-    local D = Nexus.DpsCapture
-    if not (D and D.GetEchoKey) then return nil end
-    local key = D.GetEchoKey(echoes)
-    if not key then return nil end
-    local explicitClass = NormalizeClass(record and (record.class or record.k))
-    local player = tostring(record and record.player
-        or (UnitName and UnitName("player")) or "Unknown")
-    local recordOwner = record and record.ownerKey
-    local explicitId = record and (record.buildId or record.b)
-    if type(explicitId) ~= "string" or explicitId == "" then explicitId = nil end
-
-    -- A protocol build ID is an identity, not a derived alias. Never attach
-    -- its record to a different loadout or owner merely because IDs collide.
-    local explicitExisting = explicitId and LoadBuild(explicitId) or nil
-    if explicitExisting then
-        local existingKey = explicitExisting.fingerprint
-            or D.GetEchoKey(explicitExisting.echoes)
-        if existingKey and existingKey ~= key then return nil end
-        if recordOwner and explicitExisting.ownerKey
-            and tostring(recordOwner):lower()
-                ~= tostring(explicitExisting.ownerKey):lower() then
-            return nil
-        end
-        if type(explicitExisting.echoes) ~= "table"
-            or #explicitExisting.echoes == 0 then
-            local copied = {}
-            for _, e in ipairs(echoes or {}) do
-                copied[#copied + 1] = {
-                    spellId=e.spellId or e.id,
-                    stacks=e.count or e.stacks or 1,
-                }
-            end
-            local refreshed = { echoes=copied }
-            if not RefreshBuildIdentity(refreshed) then return nil end
-            explicitExisting.echoes = copied
-            explicitExisting.fingerprint = refreshed.fingerprint
-            explicitExisting.fingerprintHash = refreshed.fingerprintHash
-            explicitExisting.echoCount = refreshed.echoCount
-            explicitExisting.loadoutAvailable = #copied > 0
-            explicitExisting.needsFullBuild = false
-            explicitExisting.tombstoned = nil
-            explicitExisting.autoDps = true
-            explicitExisting.author = explicitExisting.author or player
-            explicitExisting.ownerKey = explicitExisting.ownerKey or recordOwner
-            explicitExisting.class = explicitClass or explicitExisting.class
-                or InferBuildClass(copied) or "UNKNOWN"
-            if explicitExisting.title == "Loadout pending" then
-                explicitExisting.title = (CLASS_LABEL[explicitExisting.class]
-                    or explicitExisting.class) .. " Record Loadout"
-            end
-            explicitExisting.description = "Automatically completed from a compatible DPS record. Exact Echo IDs and stack quantities are preserved for copying and comparison."
-            explicitExisting.lastModified = NextStamp(
-                explicitExisting.lastModified or explicitExisting.postedAt or 0)
-            SaveBuild(explicitExisting)
-            BroadcastIfPossible(explicitExisting)
-        end
-        return explicitId, explicitExisting
-    end
-
-    local ownAutoId, ownAutoBuild
-    local manualId, manualBuild
-    if not explicitId then
-        for id, build in pairs(Store()) do
-            if D.GetEchoKey(build.echoes) == key then
-                if not build.autoDps then
-                    if IsOwnBuild(build) then return id, build end
-                    manualId, manualBuild = manualId or id, manualBuild or build
-                else
-                    local sameOwner = recordOwner and build.ownerKey
-                        and tostring(recordOwner):lower()
-                            == tostring(build.ownerKey):lower()
-                    local sameLegacyAuthor = not recordOwner
-                        and tostring(build.author or ""):lower() == player:lower()
-                    if sameOwner or sameLegacyAuthor then
-                        ownAutoId, ownAutoBuild = id, build
-                    end
-                end
-            end
-        end
-    end
-    if manualId then return manualId, manualBuild end
-
-    local copied, seen = {}, {}
-    for _, e in ipairs(echoes or {}) do
-        local id = tonumber(e and (e.spellId or e.id))
-        copied[#copied + 1] = { spellId=id, quality=e.quality, stacks=e.count or e.stacks or 1 }
-        if id then seen[id] = true end
-    end
-    -- Locked Echoes never appear in `echoes` at all -- they're captured
-    -- separately at record time (record.lockedEchoes, DpsCapture.lua,
-    -- since GetGrantedPerks()/the exact-set snapshot never includes them --
-    -- fold them in here too, tagged, so this build's locked-slot goal
-    -- survives into LoadPendingEchoes/WishlistWithLockTargets like any
-    -- other echo source instead of vanishing entirely.
-    if record and type(record.lockedEchoes) == "table" then
-        for _, e in ipairs(record.lockedEchoes) do
-            local id = tonumber(e and e.spellId)
-            if id and not seen[id] then
-                copied[#copied + 1] = { spellId=id, stacks=e.count or e.stacks or 1, locked=true }
-                seen[id] = true
-            end
-        end
-    end
-    local me = tostring((UnitName and UnitName("player")) or "")
-    local playerIsLocal = player:lower() == me:lower()
-    local localClass
-    if playerIsLocal and UnitClass then
-        local _, token = UnitClass("player")
-        localClass = NormalizeClass(token)
-    end
-    local class = explicitClass or InferBuildClass(copied)
-        or localClass or "UNKNOWN"
-
-    if ownAutoId then
-        if explicitClass and ownAutoBuild.class ~= explicitClass then
-            ownAutoBuild.class = explicitClass
-            ownAutoBuild.title = (CLASS_LABEL[explicitClass] or explicitClass)
-                .. " Record Loadout"
-            ownAutoBuild.lastModified = NextStamp(
-                ownAutoBuild.lastModified or ownAutoBuild.postedAt)
-            SaveBuild(ownAutoBuild)
-            BroadcastIfPossible(ownAutoBuild)
-        end
-        return ownAutoId, ownAutoBuild
-    end
-
-    local stamp = NextStamp(0)
-    local ownerKey = recordOwner or (playerIsLocal and CurrentOwnerKey() or nil)
-    local identity = ownerKey or player:lower()
-    local id = explicitId or ("dps-" .. FingerprintHash(key) .. "-"
-        .. FingerprintHash(identity):sub(1, 8))
-    local build = {
-        id=id, title=(CLASS_LABEL[class] or class) .. " Record Loadout",
-        description="Automatically created from a verified DPS record. Exact Echo IDs and stack quantities are preserved for copying and comparison.",
-        author=player, ownerKey=ownerKey, class=class, echoes=copied,
-        postedAt=stamp, lastModified=stamp,
-        isMine=(ownerKey and ownerKey == CurrentOwnerKey()) or false,
-        autoDps=true, fingerprint=key, loadoutAvailable=true,
-        needsFullBuild=false,
-    }
-    if not RefreshBuildIdentity(build) then return nil end
-    SaveBuild(build)
-    BroadcastIfPossible(build)
-    return id, build
-end
-
-function M.PostCurrentWishlist(title, description, selectedWishlist, selectedClass)
-    if not (Adapter and Adapter.Wishlist) then return false, "adapter not ready" end
-
-    -- A selected Echo Wishlist is identified by its server slot.  Do not
-    -- trust a UI candidate's cached echo array blindly: older adapter
-    -- snapshots could carry count=79 while the copied echoes table was
-    -- empty.  Resolve the selected slot against the live server mirror
-    -- before declaring that no wishlist was selected.
-    local wl = selectedWishlist
-    local sourceEchoes = WishlistEchoes(wl)
-    if (not sourceEchoes or #sourceEchoes == 0) and wl and wl.slot
-        and Adapter.Slots then
-        local slots = Adapter.Slots()
-        local live = slots and slots.bySlot and slots.bySlot[wl.slot]
-        if live and type(live.echoes) == "table" and #live.echoes > 0 then
-            wl = {
-                slot = wl.slot,
-                name = live.name or wl.name,
-                count = #live.echoes,
-                echoes = live.echoes,
-                active = slots.activeSlot == wl.slot,
-            }
-            sourceEchoes = wl.echoes
-        end
-    end
-    if not wl then wl = Adapter.Wishlist() end
-    sourceEchoes = sourceEchoes or WishlistEchoes(wl)
-    if not wl or not sourceEchoes or #sourceEchoes == 0 then
-        return false, "no wishlist selected to post"
-    end
-    title = (title or ""):gsub("^%s+",""):gsub("%s+$","")
-    if title == "" then title = (wl.name ~= "" and wl.name) or "Untitled" end
-    description = tostring(description or "")
-    if #title > 80 then return false, "title is too long" end
-    if #description > 2000 then return false, "description is too long" end
-    local echoes = {}
-    for _, e in ipairs(sourceEchoes) do
-        echoes[#echoes+1] = { spellId=e.spellId, quality=e.quality, stacks=e.stacks or 1 }
-    end
-    local stamp = NextStamp(0)
-    local id = string.format("mine-%d-%d", stamp, math.random(100000,999999))
-    local record = {
-        id=id, title=title, description=description,
-        author=(UnitName and UnitName("player")) or "You",
-        ownerKey=CurrentOwnerKey(),
-        class=NormalizeClass(selectedClass) or InferBuildClass(echoes)
-            or NormalizeClass(wl.class),
-        echoes=echoes, postedAt=stamp, lastModified=stamp, isMine=true,
-    }
-    local identityOk, identityErr = RefreshBuildIdentity(record)
-    if not identityOk then return false, identityErr end
-    SaveBuild(record)
-    BroadcastIfPossible(record)
-    local D = Nexus.DpsCapture
-    if D and D.BroadcastBestForBuild then
-        pcall(D.BroadcastBestForBuild, id)
-    end
-    return true, id
 end
 
 local function HasLeaderboardRecord(build)
     if not build then return false end
     if build.autoDps then return true end
-    local D = Nexus.DpsCapture
-    if not D or not D.GetLeaderboard then return false end
-    local dummy = D.GetLeaderboard(build.id, "dummy") or {}
-    local lk = D.GetLeaderboard(build.id, "lk") or {}
-    return #dummy > 0 or #lk > 0
+    local capture = Nexus.DpsCapture
+    if not (capture and capture.GetLeaderboard) then return false end
+    return #(capture.GetLeaderboard(build.id, "dummy") or {}) > 0
+        or #(capture.GetLeaderboard(build.id, "lk") or {}) > 0
 end
 
-function M.PublishImportedBuild(id)
-    local source = LoadBuild(id)
-    if not source or not source.importedSavedBuild then return false, "not a saved loadout" end
-    if not IsOwnBuild(source) then return false, "not your build" end
-    if type(source.echoes) ~= "table" or #source.echoes == 0 then return false, "that build has no echoes" end
+RefreshBuildIdentity = Workspace.RefreshIdentity
 
-    -- Use one stable published record per Saved Build mirror. Re-uploading
-    -- updates the existing community record rather than creating duplicates.
-    local publishedId = source.publishedBuildId or ("published-" .. tostring(id))
-    local old = LoadBuild(publishedId)
-    local stamp = NextStamp(old and old.lastModified or 0)
-    local echoes = {}
-    for _, e in ipairs(source.echoes) do
-        -- Preserve the server's real per-echo `locked` flag (ImportCurrentSavedLoadouts
-        -- now keeps it too) -- otherwise publishing a saved loadout that includes locked
-        -- Echoes silently loses which ones those were the moment it becomes a shareable
-        -- community build, and Sync.CompactEncode has nothing left to carry over the wire.
-        echoes[#echoes + 1] = { spellId=e.spellId, quality=e.quality, stacks=e.stacks or e.count or 1,
-            locked = e.locked and true or false }
-    end
-    -- Build and validate a complete replacement before changing either record.
-    local record = {
-        id=publishedId,
-        title=source.title or "Saved Build",
-        description=source.userDescription or source.description or "",
-        author=(UnitName and UnitName("player")) or "You",
-        ownerKey=CurrentOwnerKey(),
-        class=NormalizeClass(source.class) or InferBuildClass(echoes),
-        echoes=echoes,
-        postedAt=old and old.postedAt or stamp,
-        lastModified=stamp,
-        isMine=true,
-        sourceSavedBuildId=id,
-        link=old and old.link or nil,
-    }
-    local identityOk, identityErr = RefreshBuildIdentity(record)
-    if not identityOk then return false, identityErr end
-    SaveBuild(record)
-    source.publishedBuildId = publishedId
-    source.lastPublishedAt = stamp
-    SaveBuild(source)
-    BroadcastIfPossible(record)
-    local D = Nexus.DpsCapture
-    if D and D.BroadcastBestForBuild then pcall(D.BroadcastBestForBuild, publishedId) end
-    return true, publishedId
+function M.EnsureDpsBuildForEchoes(...)
+    return Workspace.Execute("ensure-dps", ...)
 end
 
-function M.EditBuild(id, title, description, discordLink)
-    local b = LoadBuild(id)
-    if not b then return false, "not found" end
-    if not IsOwnBuild(b) then return false, "not your build" end
-
-    -- Validate every candidate field before mutating any part of the record.
-    local nextTitle = tostring(title or ""):gsub("^%s+",""):gsub("%s+$","")
-    local nextDescription = description ~= nil
-        and tostring(description) or tostring(b.description or "")
-    if nextTitle == "" then nextTitle = tostring(b.title or "Untitled") end
-    if #nextTitle > 80 then return false, "title is too long" end
-    if #nextDescription > 2000 then return false, "description is too long" end
-    local nextLink = b.link
-    if discordLink ~= nil then
-        local raw = tostring(discordLink or "")
-        local normalized, linkErr = NormalizeDiscordBuildLink(raw)
-        if raw:match("^%s*$") then
-            nextLink = nil
-        elseif not normalized then
-            return false, linkErr or "invalid Discord build link"
-        else
-            nextLink = normalized
-        end
-    end
-
-    b.title = nextTitle
-    b.description = nextDescription
-    b.link = nextLink
-    if b.importedSavedBuild then
-        b.userTitle = nextTitle
-        b.userDescription = nextDescription
-    end
-    b.lastModified = NextStamp(b.lastModified or b.postedAt)
-    SaveBuild(b)
-    -- Editing a server Saved Build mirror is local-only. It reaches the
-    -- community only through the explicit Upload Build action (or a DPS
-    -- record path handled by DpsCapture).
-    if not b.importedSavedBuild then BroadcastIfPossible(b) end
-    return true
+function M.PostCurrentWishlist(...)
+    return Workspace.Execute("post", ...)
 end
 
-function M.UpdateFromWishlist(id)
-    local b = LoadBuild(id)
-    if not b then return false, "not found" end
-    if not IsOwnBuild(b) then return false, "not your build" end
-    if b.importedSavedBuild then
-        return false, "saved loadouts update from the server; edit the server loadout itself to change its Echoes"
-    end
-    if HasLeaderboardRecord(b) then
-        return false, "this exact loadout has a leaderboard record and is locked; post a new build to change its Echoes"
-    end
-    if not (Adapter and Adapter.Wishlist) then return false, "adapter not ready" end
-    local wl = Adapter.Wishlist()
-    if not wl or not wl.entries or #wl.entries == 0 then
-        return false, "no active wishlist"
-    end
-    local echoes = {}
-    for _, e in ipairs(wl.entries) do
-        echoes[#echoes+1] = { spellId=e.spellId, quality=e.quality, stacks=e.stacks or 1 }
-    end
-    local candidate = { echoes = echoes }
-    local identityOk, identityErr = RefreshBuildIdentity(candidate)
-    if not identityOk then return false, identityErr end
-    b.echoes = echoes
-    b.fingerprint = candidate.fingerprint
-    b.fingerprintHash = candidate.fingerprintHash
-    b.echoCount = candidate.echoCount
-    b.loadoutAvailable = candidate.loadoutAvailable
-    b.needsFullBuild = candidate.needsFullBuild
-    b.lastModified = NextStamp(b.lastModified or b.postedAt)
-    SaveBuild(b)
-    BroadcastIfPossible(b)
-    local D = Nexus.DpsCapture
-    if D and D.BroadcastBestForBuild then
-        pcall(D.BroadcastBestForBuild, id)
-    end
-    return true, #echoes
+function M.PublishImportedBuild(...)
+    return Workspace.Execute("publish", ...)
+end
+
+function M.EditBuild(...)
+    return Workspace.Execute("edit", ...)
+end
+
+function M.UpdateFromWishlist(...)
+    return Workspace.Execute("update", ...)
 end
 
 function M.DeleteBuild(id)
-    local b = LoadBuild(id)
-    if not b then return false, "not found" end
-    if not IsOwnBuild(b) and not IsAdmin() then
-        return false, "not your build"
-    end
-    if b.importedSavedBuild then
-        return false, "server Saved Builds cannot be deleted here"
-    end
-    if IsOwnBuild(b) and Nexus.Sync then
-        pcall(Nexus.Sync.BroadcastDelete, b)
-    end
-    -- Sync normally creates the authorized tombstone. Keep the catalog
-    -- lifecycle correct in focused/offline callers too, and let an explicit
-    -- local admin removal hide an immutable bundled row without broadcasting
-    -- a forged owner deletion.
-    if LoadBuild(id) then
-        SetTombstone(id, {
-            stamp=(time and time()) or 0,
-            author=tostring(b.author or ""),
-            localOnly=not IsOwnBuild(b) or nil,
-        })
-    end
-    RemoveOverlay(id)
-    if selectedId == id then selectedId = nil end
-    return true
+    local ok, err = Workspace.Execute("delete", id)
+    if ok and SelectedId() == id then SelectId(nil) end
+    return ok, err
 end
 
 ------------------------------------------------------------------------
@@ -1211,11 +407,11 @@ StaticPopupDialogs["NEXUS_LOCKIN_BUILD"] = {
 }
 
 function M.LockInSelected()
-    if not selectedId then return end
-    local build = LoadBuild(selectedId)
+    if not SelectedId() then return end
+    local build = LoadBuild(SelectedId())
     if not build then return end
     if type(build.echoes) ~= "table" or #build.echoes == 0 then
-        if Nexus.Sync and Nexus.Sync.RequestLoadout then Nexus.Sync.RequestLoadout(selectedId) end
+        if Nexus.Sync and Nexus.Sync.RequestLoadout then Nexus.Sync.RequestLoadout(SelectedId()) end
         print("|cff7fd5ffNexus:|r this build is still completing its background sync. Try again shortly.")
         return
     end
@@ -1293,7 +489,7 @@ local function EnsureDetailPanel(parent)
     p.closeBtn = CreateFrame("Button", nil, p, "UIPanelCloseButton")
     p.closeBtn:SetPoint("TOPRIGHT", -2, -2)
     p.closeBtn:SetScript("OnClick", function()
-        selectedId = nil
+        SelectId(nil)
         M.Refresh()
     end)
 
@@ -1342,10 +538,10 @@ local function EnsureDetailPanel(parent)
     linkSaveBtn:SetText("Save Link")
     linkSaveBtn:SetScript("OnClick", function()
         local link = linkBox:GetText():gsub("^%s+",""):gsub("%s+$","")
-        local build = selectedId and LoadBuild(selectedId)
+        local build = SelectedId() and LoadBuild(SelectedId())
         if not build or not IsOwnBuild(build) then return end
         local ok, err = M.EditBuild(
-            selectedId, build.title, build.description, link)
+            SelectedId(), build.title, build.description, link)
         if ok then
             print("|cff4dff80Nexus:|r Discord build link saved.")
             M.Refresh()
@@ -1501,10 +697,10 @@ local function EnsureDetailPanel(parent)
     p.lockBtn:SetPoint("BOTTOMLEFT",8,8)
     p.lockBtn:SetText("Copy into Editor")
     p.lockBtn:SetScript("OnClick", function()
-        local b = selectedId and LoadBuild(selectedId)
+        local b = SelectedId() and LoadBuild(SelectedId())
         if not b then return end
         if b.importedSavedBuild and IsOwnBuild(b) then
-            local ok, err = M.PublishImportedBuild(selectedId)
+            local ok, err = M.PublishImportedBuild(SelectedId())
             if ok then
                 print("|cff4dff80Nexus:|r uploaded '" .. tostring(b.title or "Saved Build") .. "' to community builds.")
                 M.Refresh()
@@ -1514,7 +710,7 @@ local function EnsureDetailPanel(parent)
             return
         end
         if type(b.echoes) ~= "table" or #b.echoes == 0 then
-            if Nexus.Sync and Nexus.Sync.RequestLoadout then Nexus.Sync.RequestLoadout(selectedId) end
+            if Nexus.Sync and Nexus.Sync.RequestLoadout then Nexus.Sync.RequestLoadout(SelectedId()) end
             print("|cff7fd5ffNexus:|r this build is still completing its background sync. Try again shortly.")
             return
         end
@@ -1569,7 +765,7 @@ local function EnsureDetailPanel(parent)
     end)
     p.lockBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self,"ANCHOR_TOP")
-        local b = selectedId and LoadBuild(selectedId)
+        local b = SelectedId() and LoadBuild(SelectedId())
         if b and b.importedSavedBuild and IsOwnBuild(b) then
             GameTooltip:AddLine("Publish this saved loadout",0.9,0.9,0.9,true)
             GameTooltip:AddLine("Uploads it to the community build list so others can see and copy it.",0.7,0.7,0.7,true)
@@ -1586,15 +782,15 @@ local function EnsureDetailPanel(parent)
     p.editBtn:SetSize(96,22)
     p.editBtn:SetPoint("LEFT",p.lockBtn,"RIGHT",6,0)
     p.editBtn:SetText("Edit Build")
-    p.editBtn:SetScript("OnClick", function() if selectedId then M.ToggleEditPopup(selectedId) end end)
+    p.editBtn:SetScript("OnClick", function() if SelectedId() then M.ToggleEditPopup(SelectedId()) end end)
 
     p.deleteBtn = CreateFrame("Button",nil,p,"UIPanelButtonTemplate")
     p.deleteBtn:SetSize(60,22)
     p.deleteBtn:SetPoint("BOTTOMRIGHT",-8,8)
     p.deleteBtn:SetText("Delete")
     p.deleteBtn:SetScript("OnClick", function()
-        if selectedId then
-            local ok, err = M.DeleteBuild(selectedId)
+        if SelectedId() then
+            local ok, err = M.DeleteBuild(SelectedId())
             if not ok then print("|cffff6060Nexus:|r " .. tostring(err)) end
             M.Refresh()
         end
@@ -1941,7 +1137,7 @@ local function GetCard(parent)
     card.addBtn:SetScript("OnClick", function(self)
         local parent = self:GetParent()
         if parent.buildId then
-            selectedId = parent.buildId
+            SelectId(parent.buildId)
             M.Refresh()
         end
     end)
@@ -1975,7 +1171,7 @@ local function GetCard(parent)
     end)
     card:SetScript("OnClick", function(self)
         if not self.buildId then return end
-        selectedId = self.buildId
+        SelectId(self.buildId)
         M.Refresh()
     end)
     if Nexus.Theme and Nexus.Theme.StyleVirtualRow then
@@ -2053,7 +1249,7 @@ local function EnsureFrame()
 
     local retryTicker, statusTicker, dataTicker = 0, 0, 0
     local lastReceiving = false
-    frame:SetScript("OnUpdate",function(_,elapsed)
+    local function ScheduledUpdate(elapsed)
         retryTicker = retryTicker + elapsed
         if retryTicker >= 0.5 then
             retryTicker = 0
@@ -2137,9 +1333,22 @@ local function EnsureFrame()
                 virtualStats.periodicSkips = virtualStats.periodicSkips + 1
             end
         end
-    end)
+    end
+    local scheduler = assert(Nexus.Scheduler, "Scheduler required")
+    local updateKey = "ui.community-builds.tick"
+    local function StartScheduledWork()
+        scheduler.Init()
+        scheduler.Every(updateKey, 0.25, function()
+            if frame and frame:IsShown() then ScheduledUpdate(0.25) end
+        end)
+    end
+    local function StopScheduledWork()
+        scheduler.Cancel(updateKey)
+    end
     frame:Hide()
+    frame:HookScript("OnShow", StartScheduledWork)
     frame:HookScript("OnHide",function()
+        StopScheduledWork()
         if dropPanel then dropPanel:Hide() end
         if sortPanel then sortPanel:Hide() end
         if dropdownShield then dropdownShield:Hide() end
@@ -2356,7 +1565,7 @@ local function EnsureFrame()
     scopeBtn:SetText("All Builds")
     scopeBtn:SetScript("OnClick",function()
         FilterSettings().scope = "all"
-        selectedId = nil
+        SelectId(nil)
         CloseDropdowns()
         M.Refresh()
     end)
@@ -2374,7 +1583,7 @@ local function EnsureFrame()
     myBuildsBtn:SetText("My Account")
     myBuildsBtn:SetScript("OnClick",function()
         FilterSettings().scope = "mine"
-        selectedId = nil
+        SelectId(nil)
         CloseDropdowns()
         M.Refresh()
     end)
@@ -2566,14 +1775,17 @@ end
 
 
 function M.GetSelectedBuildForPanel()
-    if not frame or not frame:IsShown() or not selectedId then return nil end
-    return LoadBuild(selectedId)
+    if not frame or not frame:IsShown() or not SelectedId() then return nil end
+    return LoadBuild(SelectedId())
 end
 
 function M.VirtualStats()
     local out = {}
     for key, value in pairs(virtualStats) do out[key] = value end
-    out.selectedId = selectedId
+    local workspaceStats = Workspace.Stats()
+    out.relatedScans = workspaceStats.relatedScans
+    out.relatedHydrations = workspaceStats.relatedHydrations
+    out.selectedId = SelectedId()
     out.refreshDirty = refreshDirty
     return out
 end
@@ -2678,8 +1890,9 @@ function M.Refresh()
     -- Build browser contains builds only. DPS rankings are rendered in the
     -- dedicated Leaderboard window.
     local boardRows = nil
-    local builds, projectionSummary = Measure(
-        "community.projection", SortedBuilds)
+    Measure("community.projection", buildSession.Refresh, fs)
+    local builds = buildSession.Rows()
+    local projectionSummary = buildSession.Summary()
     if resultText then
         local total = projectionSummary and projectionSummary.total or 0
         if not projectionSummary then
@@ -2725,9 +1938,8 @@ function M.Refresh()
     local rowHeight = CARD_HEIGHT + 4
     local visibleH = math.max(100,
         (scrollFrame and scrollFrame:GetHeight()) or 458)
-    local virtual = Nexus.VirtualList.Window(
-        #builds, rowHeight, visibleH,
-        scrollBar and scrollBar.value or 0, 2)
+    local virtual = buildSession.SetViewport(
+        visibleH, scrollBar and scrollBar.value or 0, rowHeight, 2)
     local yOffset = (virtual.first - 1) * rowHeight
     local lastClass = "__none__"
     local showHeaders = false
@@ -2765,7 +1977,7 @@ function M.Refresh()
         card.buildId = b.id
 
         -- Selection highlight
-        if b.id == selectedId then
+        if b.id == SelectedId() then
             card.selectedHighlight:Show()
         else
             card.selectedHighlight:Hide()
@@ -2885,7 +2097,7 @@ function M.Refresh()
     virtualStats.offset, virtualStats.maxOffset = virtual.offset, virtual.maxOffset
     virtualStats.selectedVisible = false
     for index = virtual.first, virtual.last do
-        if builds[index] and builds[index].id == selectedId then
+        if builds[index] and builds[index].id == SelectedId() then
             virtualStats.selectedVisible = true
             break
         end
@@ -2912,7 +2124,7 @@ function M.Refresh()
 
     -- Detail panel
     Measure("community.detail", RefreshDetailPanel,
-        selectedId and LoadBuild(selectedId))
+        SelectedId() and LoadBuild(SelectedId()))
 
     -- Search placeholder visibility
     if searchBox then
@@ -2954,19 +2166,11 @@ local function MakeDropdownMenu(parent, width)
 end
 
 IsAccountBuild = function(build)
-    if not build then return false end
-    local store = Nexus and Nexus.Store
-    if store and type(store.IsAccountBuild) == "function" then
-        local ok, value = pcall(store.IsAccountBuild, build)
-        if ok then return value == true end
-    end
-    return build.isMine == true or build.importedSavedBuild == true
-        or IsOwnBuild(build)
+    return Workspace.AccountOwns(build)
 end
 
 function M.IsAccountBuild(idOrBuild)
-    local build = type(idOrBuild) == "table" and idOrBuild or LoadBuild(idOrBuild)
-    return IsAccountBuild(build)
+    return Workspace.AccountOwns(idOrBuild)
 end
 
 local function AddMenuButton(menu, text, onClick, index)
@@ -3299,6 +2503,7 @@ end
 
 function M.Init(adapter, model)
     Adapter, Model = adapter, model
+    Workspace.Init(adapter)
     if Catalog() and Catalog().Init then
         Catalog().Init(NexusDB or {}, Nexus.BundledBuilds)
     end
@@ -3327,7 +2532,7 @@ function M.Init(adapter, model)
 end
 
 function M.Select(id)
-    selectedId = id
+    SelectId(id)
     M.Refresh()
 end
 
@@ -3356,7 +2561,7 @@ function M.Show()
 end
 
 function M.ShowBuild(id)
-    selectedId = id
+    SelectId(id)
     M.Show()
     local build = id and LoadBuild(id)
     if build and (not build.echoes or #build.echoes == 0)

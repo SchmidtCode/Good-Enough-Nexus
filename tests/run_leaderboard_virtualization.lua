@@ -81,8 +81,9 @@ syncState="idle"
 local projectionBefore=Nexus.ViewProjections.Stats().leaderboard
 local tickBefore=L.VirtualStats()
 local rawBoardReadsBefore=boardReads
-local onUpdate=NexusLeaderboardFrame:GetScript("OnUpdate")
-for _=1,10 do onUpdate(NexusLeaderboardFrame,1.1) end
+assert(Nexus.Scheduler.Pending("ui.leaderboard.status"),
+    "Leaderboard did not register scheduled status work")
+for _=1,10 do H.Advance(1) end
 local projectionAfter=Nexus.ViewProjections.Stats().leaderboard
 local tickAfter=L.VirtualStats()
 local themeAfterTicks=Nexus.Theme.Stats()
@@ -109,10 +110,10 @@ NexusLeaderboardSearch:SetText("Player 001")
 NexusLeaderboardSearch:GetScript("OnTextChanged")()
 assert(L.VirtualStats().dataRefreshes==searchRefreshes,
     "Leaderboard search rebuilt synchronously on a keystroke")
-onUpdate(NexusLeaderboardFrame,0.10)
+H.Advance(0.10)
 assert(L.VirtualStats().dataRefreshes==searchRefreshes,
     "Leaderboard search fired before its debounce window")
-onUpdate(NexusLeaderboardFrame,0.10)
+H.Advance(0.10)
 assert(L.VirtualStats().dataRefreshes==searchRefreshes+1
     and L.VirtualStats().results==1 and boardReads==searchBoardReads,
     string.format("debounced Leaderboard search mismatch refresh=%d/%d results=%d reads=%d/%d",
@@ -120,7 +121,7 @@ assert(L.VirtualStats().dataRefreshes==searchRefreshes+1
         L.VirtualStats().results,boardReads,searchBoardReads))
 NexusLeaderboardSearch:SetText("")
 NexusLeaderboardSearch:GetScript("OnTextChanged")()
-onUpdate(NexusLeaderboardFrame,0.20)
+H.Advance(0.20)
 assert(L.VirtualStats().results==150 and boardReads==searchBoardReads,
     "clearing Leaderboard search rematerialized its DPS board")
 local dataBinds=L.VirtualStats().dataBinds

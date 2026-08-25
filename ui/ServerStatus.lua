@@ -8,7 +8,6 @@ Nexus.ServerStatus = M
 
 local rootFrame
 local scanner
-local elapsed = 0
 local hideHooked = false
 local cachedSummary = { mode = nil, tier = nil, ash = nil, gain = nil, intensity = nil, intensityLevel = nil, raw = "" }
 local cachedSignature = ""
@@ -220,11 +219,9 @@ function M.Init()
         rootFrame = nil
         hideHooked = false
     end)
-    scanner:SetScript("OnUpdate", function(_, dt)
-        elapsed = elapsed + (tonumber(dt) or 0)
-        if elapsed < 1.0 then return end
-        elapsed = 0
-
+    local scheduler = assert(Nexus.Scheduler, "Scheduler required")
+    scheduler.Init()
+    scheduler.Every("ui.server-status.scan", 1, function()
         if not rootFrame then FindFrames() end
         ApplyVisibility()
         local summary = ParseSummary(GetAllSourceTexts())

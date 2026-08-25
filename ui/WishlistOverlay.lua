@@ -32,7 +32,6 @@ local QUALITY_COLORS = {
 
 local frame, lines, lockBtn, controlsFrame, hideBtn
 local Adapter, Model
-local ticker = 0
 
 local function IsLocked()
     return NexusDB.overlayLocked ~= false
@@ -98,13 +97,15 @@ local function EnsureFrame()
         self:StopMovingOrSizing()
         SavePosition()
     end)
-    frame:SetScript("OnUpdate", function(_, elapsed)
-        ticker = ticker + (elapsed or 0)
-        if ticker >= UPDATE_INTERVAL then
-            ticker = 0
-            M.Refresh()
-        end
+    local scheduler = assert(Nexus.Scheduler, "Scheduler required")
+    local updateKey = "ui.wishlist-overlay.tick"
+    frame:HookScript("OnShow", function()
+        scheduler.Init()
+        scheduler.Every(updateKey, UPDATE_INTERVAL, function()
+            if frame and frame:IsShown() then M.Refresh() end
+        end)
     end)
+    frame:HookScript("OnHide", function() scheduler.Cancel(updateKey) end)
     frame:Hide()
 
     lines = {}

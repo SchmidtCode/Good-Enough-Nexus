@@ -23,53 +23,21 @@ local TABS = {
 }
 
 local frame, editBox, scroll, tabButtons, statusFS, exportButton
-local exportRunner, exportJob, exportGeneration = nil, nil, 0
-local delayFrame, delayed = nil, {}
+local exportJob, exportGeneration = nil, 0
 local provider, clearProvider
 local activeTab = "state"
 local repaintPending = false
 local MAX_TEXT_CHARS = 60000
 
--- Prefer the addon's keyed scheduler. Focused UI tests can load this module
--- before Scheduler.Init, so retain one shared fallback frame instead of
--- allocating a permanent one-shot frame for every refresh/export/clear click.
 local function RunAfter(key, delay, callback)
-    local scheduler = Nexus and Nexus.Scheduler
-    if scheduler and scheduler.IsInitialized and scheduler.IsInitialized()
-        and type(scheduler.After) == "function" then
-        local ok, scheduled = pcall(scheduler.After, key, delay, callback)
-        if ok and scheduled == true then return true end
-    end
-    delayed[key] = { remaining=tonumber(delay) or 0, callback=callback }
-    if not delayFrame then
-        delayFrame = CreateFrame("Frame")
-        delayFrame:SetScript("OnUpdate", function(self, elapsed)
-            local ready = {}
-            for taskKey, task in pairs(delayed) do
-                task.remaining = task.remaining - (tonumber(elapsed) or 0)
-                if task.remaining <= 0 then ready[#ready + 1] = taskKey end
-            end
-            table.sort(ready)
-            for _, taskKey in ipairs(ready) do
-                local task = delayed[taskKey]
-                delayed[taskKey] = nil
-                if task and type(task.callback) == "function" then
-                    pcall(task.callback)
-                end
-            end
-            if not next(delayed) and delayFrame then delayFrame:Hide() end
-        end)
-    end
-    delayFrame:Show()
-    return true
+    local scheduler = assert(Nexus.Scheduler, "Scheduler required")
+    scheduler.Init()
+    return scheduler.After(key, delay, callback)
 end
 
 local function CancelAfter(key)
-    delayed[key] = nil
     local scheduler = Nexus and Nexus.Scheduler
-    if scheduler and type(scheduler.Cancel) == "function" then
-        pcall(scheduler.Cancel, key)
-    end
+    if scheduler then pcall(scheduler.Cancel, key) end
 end
 
 local function Repaint()
@@ -115,18 +83,15 @@ end
 local function StopExport()
     exportGeneration = exportGeneration + 1
     exportJob = nil
+    CancelAfter("log-viewer.export-run")
     CancelAfter("log-viewer.export-finish")
     CancelAfter("log-viewer.export-select")
-    if exportRunner then
-        exportRunner:SetScript("OnUpdate", nil)
-        exportRunner:Hide()
-    end
     if exportButton then exportButton:SetText("Copy Full Diagnostic Log") end
 end
 
 local function FinishExport(text)
     exportJob = nil
-    if exportRunner then exportRunner:SetScript("OnUpdate", nil); exportRunner:Hide() end
+    CancelAfter("log-viewer.export-run")
     text = tostring(text or "")
     local n = #text
     editBox:SetText(text)
@@ -165,13 +130,15 @@ local function StartExport()
     exportJob = job
     exportGeneration = exportGeneration + 1
     local myGeneration = exportGeneration
-    if not exportRunner then exportRunner = CreateFrame("Frame") end
-    exportRunner:Show()
     local updateElapsed = 0
-    exportRunner:SetScript("OnUpdate", function(self, elapsed)
-        local runner = self or exportRunner
-        if myGeneration ~= exportGeneration or not exportJob then runner:SetScript("OnUpdate", nil); runner:Hide(); return end
-        updateElapsed = updateElapsed + (tonumber(elapsed) or 0)
+    local scheduler = assert(Nexus.Scheduler, "Scheduler required")
+    scheduler.Init()
+    scheduler.Every("log-viewer.export-run", 0.01, function()
+        if myGeneration ~= exportGeneration or not exportJob then
+            scheduler.Cancel("log-viewer.export-run")
+            return
+        end
+        updateElapsed = updateElapsed + 0.01
         -- Exactly one small coroutine slice per rendered frame. Each slice
         -- encodes only a handful of boards/audits, keeping frame time bounded
         -- even on low-end clients while combat or sync traffic is active.
@@ -179,15 +146,14 @@ local function StartExport()
             local okResume, value = coroutine.resume(exportJob)
             if not okResume then
                 exportJob = nil
-                runner:SetScript("OnUpdate", nil); runner:Hide()
+                scheduler.Cancel("log-viewer.export-run")
                 editBox:SetText("Diagnostic export failed: " .. tostring(value))
                 statusFS:SetText("export failed")
                 return
             end
             if coroutine.status(exportJob) == "dead" then
                 exportJob = nil
-                runner:SetScript("OnUpdate", nil)
-                runner:Hide()
+                scheduler.Cancel("log-viewer.export-run")
                 local finalText = value
                 RunAfter("log-viewer.export-finish", 0.01, function()
                     if myGeneration == exportGeneration then FinishExport(finalText) end
