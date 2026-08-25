@@ -81,11 +81,35 @@ node .tools/fengari/parse-lua51.js . --tests
 Get-ChildItem -LiteralPath tests -Filter 'run_*.lua' | Sort-Object Name | ForEach-Object { node .tools/fengari/run-lua.js $_.FullName; if ($LASTEXITCODE -ne 0) { throw "failed: $($_.Name)" } }
 node tests/run-bundled-build-export.js
 node tests/run-savedvariables-analyzer.js
+node tests/run-performance-benchmark-runner.js
+node tests/run-performance-benchmark-workflow.js
 git diff --check
 ```
 
 These checks do not prove in-game behavior; `/reload` and live Project Ebonhold
 verification must still be reported separately.
+
+## Performance benchmarks
+
+Run the observational benchmark suite with LuaJIT:
+
+```powershell
+node tools/run-performance-benchmarks.js --runtime luajit
+```
+
+The suite measures cached and rebuilt browser refreshes, virtual scrolling,
+leaderboard category switches, scheduler operations, Sync request admission and
+response work, and idle update cost. It reports average, median, p95, and maximum
+latency alongside work-item throughput. Results are written to
+`benchmark-results/results.json` and `benchmark-results/summary.md`.
+
+The figures are measurements, not timing gates. Compare runs made with the same
+runtime and similar hardware. GitHub Actions runs the suite on pushes, pull
+requests, a weekly schedule, and manual dispatches, then publishes the Markdown
+summary and retains both report files as artifacts. A broken benchmark run still
+returns an error because it produced no usable observation.
+
+Use `--quick` for a shorter local smoke run.
 
 See [CHANGELOG.md](CHANGELOG.md) for inherited release history and
 [UPSTREAM.md](UPSTREAM.md) for provenance and redistribution notes.
