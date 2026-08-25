@@ -14,7 +14,8 @@ assert.match(workflow, /workflow_dispatch:/, "workflow should support manual run
 assert.match(workflow, /pull_request:/, "workflow should run for pull requests");
 assert.match(workflow, /node tools\/run-performance-benchmarks\.js/, "workflow should run the benchmark reporter");
 assert.match(workflow, /GITHUB_STEP_SUMMARY/, "workflow should publish the Markdown summary");
-assert.match(workflow, /actions\/upload-artifact@v4/, "workflow should retain benchmark artifacts");
+assert.match(workflow, /actions\/checkout@v7/, "workflow should use the current checkout runtime");
+assert.match(workflow, /actions\/upload-artifact@v7/, "workflow should retain benchmark artifacts");
 assert.doesNotMatch(workflow, /threshold|regression|budget/i,
     "workflow should not turn observations into timing gates");
 
