@@ -1,4 +1,4 @@
-# Nexus — internal module contracts (v1.20.0-beta.5)
+# Nexus — internal module contracts (v1.96.1)
 
 Binding interface spec for all modules. Authored from `WISHLIST_REALIZER_BUILD_PROMPT.md`
 + `WISHLIST_REALIZER_SPEC_ADDENDUM.md` + `WISHLIST_REALIZER_DESIGN.md` (the addendum wins
@@ -7,8 +7,8 @@ SavedVariables, NO `ProjectEbonhold.*` — loadable under bare LuaJIT. All cross
 data is plain tables produced by `core/GameAdapter.lua` (the only IO module).
 
 Global namespace: `Nexus` (each file: `Nexus = Nexus or {};
-local M = {}; Nexus.<Name> = M`). Version: `Nexus.VERSION = "1.20.0-beta.5"`
-comes from `data/Release.lua`; .toc `## Version: 1.20.0-beta.5` stays in lockstep.
+local M = {}; Nexus.<Name> = M`). Version: `Nexus.VERSION = "1.96.1"`
+comes from `data/Release.lua`; .toc `## Version: 1.96.1` stays in lockstep.
 
 Lua 5.1 rules: no `goto`, no `#` on non-sequences, `unpack` global, sort pairs for
 deterministic output, forward-declare every closure-captured local BEFORE the closure,

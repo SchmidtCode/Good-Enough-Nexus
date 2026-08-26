@@ -31,6 +31,13 @@ local function BaseVersion()
     return tostring(release.baseVersion or release.version or "0.0.0")
 end
 
+local function IsInstalledVersion(parsed)
+    local release = Release()
+    if not parsed or type(release.version) ~= "string"
+        or not Nexus.Version or not Nexus.Version.Compare then return false end
+    return Nexus.Version.Compare(parsed, release.version) == 0
+end
+
 local function Refresh()
     if type(callbacks.refresh) == "function" then pcall(callbacks.refresh) end
 end
@@ -50,7 +57,8 @@ local function SanitizeCandidate()
     local parsed = Nexus.Version and Nexus.Version.Parse
         and Nexus.Version.Parse(candidate.version) or nil
     local comparison = parsed and Nexus.Version.Compare(parsed, BaseVersion()) or nil
-    if not parsed or not parsed.publishedCandidate or comparison ~= 1 then
+    if not parsed or not parsed.publishedCandidate or comparison ~= 1
+        or IsInstalledVersion(parsed) then
         NexusDB.updateNotice = nil
         return nil
     end
@@ -74,6 +82,7 @@ function Updates.Observe(version, source)
     local parsed = type(version) == "table" and version
         or (Nexus.Version and Nexus.Version.Parse and Nexus.Version.Parse(version))
     if not parsed or not parsed.publishedCandidate then return false, "not published" end
+    if IsInstalledVersion(parsed) then return false, "already installed" end
     if Nexus.Version.Compare(parsed, BaseVersion()) ~= 1 then return false, "not newer" end
 
     local current = SanitizeCandidate()

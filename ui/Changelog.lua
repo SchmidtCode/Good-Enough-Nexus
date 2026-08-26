@@ -4,8 +4,8 @@ Nexus = Nexus or {}
 local M = {}
 Nexus.Changelog = M
 
-local VERSION = "1.20.0-beta.5"
-local RELEASE_KEY = "1.20.0-beta.5"
+local VERSION = "1.96.1"
+local RELEASE_KEY = "1.96.1"
 local frame
 local shownThisSession = false
 
@@ -43,35 +43,34 @@ local function Create()
 
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -20)
-    title:SetText("Nexus 1.20 Beta 5")
+    title:SetText("Nexus 1.96.1 Community Release")
 
     local body = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     body:SetPoint("TOPLEFT", 28, -52)
     body:SetPoint("RIGHT", -28, 0)
     body:SetJustifyH("LEFT")
     body:SetJustifyV("TOP")
-    body:SetText([[|cffffd200Smaller, DPS-ranked Community storage|r
+    body:SetText([[|cffffd200Interim community build|r
 
-- Dummy and Lich King keep top 100 overall plus top 15/class; Average keeps top 50 plus top 10/class.
-- Account-owned builds do not consume those limits; unrelated community posts use a separate small budget.
+- Keeps Nexus usable while Visceral prepares the official Better-Nexus 1.20 release.
+- Preserves existing Nexus SavedVariables and the Nexus addon folder name.
 
-|cffffd200My Account references|r
+|cffffd200Large-library performance|r
 
-- Saved loadouts and uploads remain visible across characters seen by Nexus.
-- Offline-character builds are read-only until you log into their owner; same names on different realms no longer collide.
+- Builds and Leaderboard reuse cached projections and bounded refresh work.
+- Virtualized lists avoid creating every result row at once.
 
-|cffffd200Sync only when it is safe|r
+|cffffd200Community data and diagnostics|r
 
-- Choose Automatic, Manual, or Off from Community Builds.
-- Automatic waits until you are resting, out of combat, and outside configured instances.
+- Retains bounded community builds, DPS rankings, Sync safety, and wishlist automation.
+- /nexus perf records session timing for slow-action reports.
 
-|cffffd200Long-session safety|r
+|cffffd200Support scope|r
 
-- Sync request/broadcast caches and repeated popup/log refreshes now reuse bounded state.
-- Old delete records compact behind a stale-revision floor instead of allowing resurrection.
-- Large-save compaction, virtualized lists, and bounded refresh work remain active.
+- This unofficial package has no routine hotpatch schedule.
+- Maintenance is limited to problems that block core addon functionality.
 
-Back up Nexus SavedVariables before beta testing.]])
+Back up NexusDB and WishlistRealizerDB before installing.]])
 
     local close = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     close:SetSize(92, 24)

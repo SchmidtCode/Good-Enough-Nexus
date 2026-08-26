@@ -1,3 +1,13 @@
+# Nexus 1.96.1 Community Release
+
+- Packages the working `good-enough-nexus` line as an interim community build while the official Better-Nexus 1.20 release is pending.
+- Retains the bounded community-build and DPS data model, compatibility migrations, Sync safety work, and wishlist automation behavior from the 1.20 beta line.
+- Includes cached and incremental UI projections, virtualized lists, scheduler budgets, and the leaderboard catalog-copy removal tested during live performance investigation.
+- Adds offline functional coverage, observational performance benchmarks, production-only CRAP reporting, and deeper runtime module boundaries for maintenance.
+- Keeps the official update baseline at Nexus 1.19.5 and ignores the installed community version when peers advertise it, allowing a future official 1.20 release to appear as an update.
+
+This is an unofficial interim package. Maintenance is limited to issues that block core addon functionality. Back up `NexusDB` and `WishlistRealizerDB` before installing.
+
 # Nexus 1.20 Beta
 
 - Beta 5 ranks retained DPS builds independently for Dummy and Lich King (top 100 overall plus top 15 per class) and preserves the contributing rows for Average (top 50 overall plus top 10 per class). Account-owned builds are exempt and all limits are configurable.

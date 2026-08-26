@@ -7,7 +7,7 @@
 -- any closure that reads it.
 
 Nexus = Nexus or {}
-Nexus.VERSION = (Nexus.Release and Nexus.Release.version) or "1.20.0-beta.1"
+Nexus.VERSION = (Nexus.Release and Nexus.Release.version) or "1.96.1"
 
 local Model, Policy, Ratchet, Strategy, Store, Adapter
 local Readout, Panel, JournalTab, DefaultProfile

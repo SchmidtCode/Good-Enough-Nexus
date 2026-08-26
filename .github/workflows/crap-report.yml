@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   pull_request:
   push:
+    branches:
+      - "**"
   schedule:
     - cron: "43 9 * * 1"
 
