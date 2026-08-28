@@ -299,7 +299,7 @@ local function EnsureFrame()
     if frame then return frame end
 
     frame = CreateFrame("Frame", "NexusPanel", UIParent)
-    frame:SetSize(272, 210)
+    frame:SetSize(340, 230)
     frame:SetClampedToScreen(true)
     NexusDB = NexusDB or {}
     if tonumber(NexusDB.panelX) and tonumber(NexusDB.panelY) then
@@ -536,6 +536,7 @@ local function EnsureFrame()
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:AddLine("Still needed this run", 1, 1, 1)
         GameTooltip:AddLine("These wishlist Echoes have not been obtained yet.", 0.9, 0.9, 0.9, true)
+        GameTooltip:AddLine("Learning a tome unlocks an Echo for rolls; it does not grant the Echo to this run.", 0.9, 0.9, 0.9, true)
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("When your wishlist Echoes are not on the board,", 0.75, 0.75, 0.75, true)
         GameTooltip:AddLine("the addon picks filler. Filler is intentional —", 0.75, 0.75, 0.75, true)
@@ -975,7 +976,7 @@ local function PositionPerformance(topY, completed)
         -- Compact centered record table sized to stay inside the narrower HUD.
         -- Keep headings centered while pulling value columns inward so long DPS
         -- values do not hang off the right edge.
-        local left, width = 24, 224
+        local left, width = (frame:GetWidth() - 224) / 2, 224
         local labelW, valueW = 120, 72
 
         SetPoint(performanceLabel, "TOP", frame, "TOP", 0, topY)
@@ -1005,26 +1006,27 @@ local function PositionPerformance(topY, completed)
         -- Expanded active-build performance is a separate section below progress.
         -- Keeping it out of the progress columns prevents every optional state
         -- (tomes, shed Echoes, live rolls) from competing for the same space.
-        local left, right = 20, 160
-        local colW = 120
+        local left, right = 12, frame:GetWidth() / 2 + 6
+        local colW = frame:GetWidth() / 2 - 18
+        local labelW, valueW = colW - 58, 58
         SetPoint(performanceLabel, "TOP", frame, "TOP", 0, topY)
-        performanceLabel:SetSize(260, 13)
+        performanceLabel:SetSize(frame:GetWidth() - 24, 13)
         performanceLabel:SetJustifyH("CENTER")
         SetPoint(setLabelText, "TOP", frame, "TOP", 0, topY - 15)
-        setLabelText:SetSize(260, 13)
+        setLabelText:SetSize(frame:GetWidth() - 24, 13)
         setLabelText:SetJustifyH("CENTER")
 
         SetPoint(dummyLabel, "TOPLEFT", frame, "TOPLEFT", left, topY - 38)
-        dummyLabel:SetSize(70, 14); dummyLabel:SetJustifyH("LEFT")
-        SetPoint(dummyValue, "TOPLEFT", frame, "TOPLEFT", left + 70, topY - 38)
-        dummyValue:SetSize(50, 14); dummyValue:SetJustifyH("RIGHT")
+        dummyLabel:SetSize(labelW, 14); dummyLabel:SetJustifyH("LEFT")
+        SetPoint(dummyValue, "TOPLEFT", frame, "TOPLEFT", left + labelW, topY - 38)
+        dummyValue:SetSize(valueW, 14); dummyValue:SetJustifyH("RIGHT")
         SetPoint(dummyGlobal, "TOPLEFT", frame, "TOPLEFT", left, topY - 57)
         dummyGlobal:SetSize(colW, 14); dummyGlobal:SetJustifyH("LEFT")
 
         SetPoint(lkLabel, "TOPLEFT", frame, "TOPLEFT", right, topY - 38)
-        lkLabel:SetSize(70, 14); lkLabel:SetJustifyH("LEFT")
-        SetPoint(lkValue, "TOPLEFT", frame, "TOPLEFT", right + 70, topY - 38)
-        lkValue:SetSize(50, 14); lkValue:SetJustifyH("RIGHT")
+        lkLabel:SetSize(labelW, 14); lkLabel:SetJustifyH("LEFT")
+        SetPoint(lkValue, "TOPLEFT", frame, "TOPLEFT", right + labelW, topY - 38)
+        lkValue:SetSize(valueW, 14); lkValue:SetJustifyH("RIGHT")
         SetPoint(lkGlobal, "TOPLEFT", frame, "TOPLEFT", right, topY - 57)
         lkGlobal:SetSize(colW, 14); lkGlobal:SetJustifyH("LEFT")
     end
@@ -1093,6 +1095,9 @@ end
 
 local function RenderPerformanceState(pr, completed, enabled)
     ShowPerformance(enabled)
+    SetVisible(dummyGlobalValue, enabled and completed)
+    SetVisible(lkGlobalValue, enabled and completed)
+    SetVisible(lkPersonalLabel, enabled and completed)
     if enabled then RenderPerformance(pr, completed) end
 end
 
@@ -1213,6 +1218,7 @@ local function LayoutFooter(showAuto, completed)
 end
 
 local function RenderBestDps(model, complete, noBuild, activeRoll, statusVisible)
+    bestDpsText:SetWidth(frame:GetWidth() - 24)
     local best = type(model.bestDps) == "table" and model.bestDps or {}
     local dummyBest, lkBest = best.dummy, best.lk
     if dummyBest or lkBest then
@@ -1367,7 +1373,7 @@ function M.Render(model)
         -- (Create Wishlist is only needed first if no wishlist exists yet),
         -- so it sits right under the instructions instead of sharing a row
         -- with an equally-weighted second option.
-        frame:SetHeight((activeRoll and 428 or 278) - statusHeightReduction)
+        frame:SetHeight((activeRoll and 428 or 278) - statusHeightReduction + 20)
         SetPoint(setupText, "TOP", frame, "TOP", 0, contentTop - 18)
         setupText:SetText("Assign a wishlist to this loadout")
         SetPoint(setupHint, "TOP", frame, "TOP", 0, contentTop - 48)
@@ -1380,7 +1386,7 @@ function M.Render(model)
         -- Once a build is complete, progress text stops being the purpose of the
         -- HUD. The panel becomes a compact replacement for the stock difficulty /
         -- Soul Ash tracker, with Nexus navigation and the player's best DPS.
-        frame:SetHeight((showPerformance and (activeRoll and 430 or 286) or (activeRoll and 292 or 168)) - statusHeightReduction)
+        frame:SetHeight((showPerformance and (activeRoll and 430 or 286) or (activeRoll and 292 or 168)) - statusHeightReduction + 20)
         -- completeBadge/completeSubtext were created and toggled everywhere but
         -- never given text anywhere in this file -- when the server-status HUD
         -- has nothing to show (statusVisible false) and Performance is off, the
@@ -1420,12 +1426,12 @@ function M.Render(model)
         -- The TO LOCK row only exists when there's something to report --
         -- most wishlists design zero locked-slot targets, so the extra
         -- height stays reserved only while it's actually needed.
-        local toLockExtra = #toLockNamesCache > 0 and 34 or 0
+        local toLockExtra = #toLockNamesCache > 0 and 56 or 0
         -- Performance ends immediately above the character-best line and
         -- footer. Reserve its full text height in both PEH-merged and stock-HUD
         -- modes; the prior height ended at the same pixels as Best DPS.
         local performanceFooterClearance = showPerformance and 22 or 0
-        frame:SetHeight((showPerformance and (activeRoll and 448 or 325) or (activeRoll and 388 or 267)) - statusHeightReduction + toLockExtra + performanceFooterClearance)
+        frame:SetHeight((showPerformance and (activeRoll and 448 or 325) or (activeRoll and 388 or 267)) - statusHeightReduction + toLockExtra + performanceFooterClearance + 20)
         SetPoint(progressLabel, "TOPLEFT", frame, "TOPLEFT", 12, contentTop)
         SetPoint(progressValue, "TOPLEFT", frame, "TOPLEFT", 12, contentTop - 17)
         progressValue:SetText(string.format("%d / %d complete", owned, total))
@@ -1438,7 +1444,7 @@ function M.Render(model)
             -- Keep them on the progress line and preserve two clean Echo columns.
             tomesLabel:SetText("MISSING\nTOMES")
             SetPoint(tomesLabel, "TOPRIGHT", frame, "TOPRIGHT", -26, contentTop - 18)
-            tomesLabel:SetSize(58, 24)
+            tomesLabel:SetSize(92, 28)
             tomesLabel:SetJustifyH("RIGHT")
             tomesLabel:SetJustifyV("TOP")
             SetPoint(tomesValue, "TOPRIGHT", frame, "TOPRIGHT", -10, contentTop - 18)
@@ -1458,7 +1464,7 @@ function M.Render(model)
             tomesValue:Hide()
             tomesHit:Hide()
         end
-        needText:SetWidth(112)
+        needText:SetWidth(frame:GetWidth() / 2 - 18)
 
         SetPoint(needText, "TOPLEFT", frame, "TOPLEFT", 12, contentTop - 58)
         local needLines = {}
@@ -1471,9 +1477,9 @@ function M.Render(model)
         if #missingNamesCache > shown then needLines[#needLines + 1] = "+" .. (#missingNamesCache - shown) .. " more" end
         needText:SetText(#needLines > 0 and table.concat(needLines, "\n") or "|cff888888No remaining demand|r")
 
-        SetPoint(shedLabel, "TOPLEFT", frame, "TOPLEFT", 142, contentTop - 42)
-        SetPoint(shedText, "TOPLEFT", frame, "TOPLEFT", 142, contentTop - 58)
-        shedText:SetWidth(108)
+        SetPoint(shedLabel, "TOPLEFT", frame, "TOPLEFT", frame:GetWidth() / 2 + 6, contentTop - 42)
+        SetPoint(shedText, "TOPLEFT", frame, "TOPLEFT", frame:GetWidth() / 2 + 6, contentTop - 58)
+        shedText:SetWidth(frame:GetWidth() / 2 - 18)
         local shedLines = {}
         local shedShown = math.min(#shedNamesCache, 2)
         for i = 1, shedShown do shedLines[#shedLines + 1] = shedNamesCache[i] end
@@ -1481,9 +1487,9 @@ function M.Render(model)
         shedText:SetText(#shedLines > 0 and table.concat(shedLines, "\n") or "|cff888888None|r")
 
         if #toLockNamesCache > 0 then
-            SetPoint(frame.toLockLabel, "TOPLEFT", frame, "TOPLEFT", 12, contentTop - 90)
-            SetPoint(frame.toLockText, "TOPLEFT", frame, "TOPLEFT", 12, contentTop - 106)
-            frame.toLockText:SetWidth(238)
+            SetPoint(frame.toLockLabel, "TOPLEFT", frame, "TOPLEFT", 12, contentTop - 112)
+            SetPoint(frame.toLockText, "TOPLEFT", frame, "TOPLEFT", 12, contentTop - 128)
+            frame.toLockText:SetWidth(frame:GetWidth() - 24)
             local toLockLines = {}
             local toLockShown = math.min(#toLockNamesCache, 2)
             for i = 1, toLockShown do toLockLines[#toLockLines + 1] = toLockNamesCache[i] end

@@ -4,8 +4,8 @@ Nexus = Nexus or {}
 local M = {}
 Nexus.Changelog = M
 
-local VERSION = "1.96.1"
-local RELEASE_KEY = "1.96.1"
+local VERSION = "1.96.2"
+local RELEASE_KEY = "1.96.2"
 local frame
 local shownThisSession = false
 
@@ -26,7 +26,7 @@ end
 local function Create()
     if frame then return frame end
     frame = CreateFrame("Frame", "NexusChangelogPopup", UIParent)
-    frame:SetSize(520, 330)
+    frame:SetSize(520, 360)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 90)
     frame:SetFrameStrata("DIALOG")
     frame:SetBackdrop({
@@ -43,34 +43,32 @@ local function Create()
 
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -20)
-    title:SetText("Nexus 1.96.1 Community Release")
+    title:SetText("Nexus 1.96.2 Community Update")
 
     local body = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     body:SetPoint("TOPLEFT", 28, -52)
-    body:SetPoint("RIGHT", -28, 0)
+    body:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 52)
     body:SetJustifyH("LEFT")
     body:SetJustifyV("TOP")
-    body:SetText([[|cffffd200Interim community build|r
+    body:SetText([[|cffffd200Core HUD fixes|r
 
-- Keeps Nexus usable while Visceral prepares the official Better-Nexus 1.20 release.
-- Preserves existing Nexus SavedVariables and the Nexus addon folder name.
+- Fixes the compact HUD opening blank at level 80 with no active Echo board.
+- Refreshes Still Needed and Missing Tomes after Echo or tome learning changes.
 
-|cffffd200Large-library performance|r
+|cffffd200HUD layout|r
 
-- Builds and Leaderboard reuse cached projections and bounded refresh work.
-- Virtualized lists avoid creating every result row at once.
+- Uses a 340-pixel-wide HUD with more vertical room and readable columns.
+- Keeps unchanged learning checks from rebuilding or repainting the HUD.
 
-|cffffd200Community data and diagnostics|r
+|cffffd200Official handoff|r
 
-- Retains bounded community builds, DPS rankings, Sync safety, and wishlist automation.
-- /nexus perf records session timing for slow-action reports.
+- Ignores interim 1.96.x peer versions in the official update notice.
+- Still points users to Visceral's official Better-Nexus 1.20 release when seen.
 
 |cffffd200Support scope|r
 
 - This unofficial package has no routine hotpatch schedule.
-- Maintenance is limited to problems that block core addon functionality.
-
-Back up NexusDB and WishlistRealizerDB before installing.]])
+- Maintenance is limited to problems that block core addon functionality.]])
 
     local close = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     close:SetSize(92, 24)

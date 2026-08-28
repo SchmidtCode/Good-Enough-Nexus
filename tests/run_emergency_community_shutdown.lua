@@ -23,7 +23,7 @@ for _, required in ipairs({
 end
 
 dofile("data/Release.lua")
-assert(Nexus.Release.version == "1.96.1"
+assert(Nexus.Release.version == "1.96.2"
     and Nexus.Release.emergencyCommunityOff == false,
     "release identity still advertises the community-off hotfix")
 

@@ -50,6 +50,9 @@ local slotsRetryAt, slotsRetries = nil, 0
 local slotsRefreshAt = 0
 local SLOT_REFRESH_SECONDS = 300
 local lastAutoAcceptState, lastRivalState = nil, nil
+local progressCheckAt, progressCheckRequested = 0, false
+local lastProgressSignature
+local knownDiscoveryKeys, knownDiscoveryCount = {}, 0
 
 local CORRECTED_CLASS_MASKS = {
     -- PerkClassMasks.DRUID is a client bug (0x200); every Druid DB row uses
@@ -470,6 +473,46 @@ local function GrantedSignature(granted)
         out[#out + 1] = tostring(ids[i]) .. ":" .. tostring(counts[ids[i]])
     end
     return table.concat(out, ",")
+end
+
+-- Learning can update the client's live tables without a journal repaint.
+-- Compare local data only: no requests, catalog scans, or full HUD rebuilds
+-- on unchanged polls. Presence (not enabled/disabled state) means tome-known.
+local function DiscoveryChanged(discovered)
+    discovered = type(discovered) == "table" and discovered or {}
+    local changed, count = false, 0
+    for id in pairs(discovered) do
+        count = count + 1
+        if not knownDiscoveryKeys[id] then changed = true end
+    end
+    changed = changed or count ~= knownDiscoveryCount
+    if changed then
+        knownDiscoveryKeys, knownDiscoveryCount = {}, count
+        for id in pairs(discovered) do knownDiscoveryKeys[id] = true end
+    end
+    return changed
+end
+
+local function ProgressSignature()
+    local svc = PS()
+    if not svc then return nil end
+    return (GrantedSignature(SafeCall(svc.GetGrantedPerks)) or "?")
+        .. "|" .. ClientOwnedSig(ReadLockedPerks(SafeCall(svc.GetLockedPerks))),
+        SafeCall(svc.GetDiscoveredEchoes)
+end
+
+local function PollProgressChanges()
+    local now = GetTime()
+    if not progressCheckRequested and now < progressCheckAt then return end
+    progressCheckRequested = false
+    progressCheckAt = now + 5
+    local signature, discovered = ProgressSignature()
+    local discoveryChanged = DiscoveryChanged(discovered)
+    if lastProgressSignature ~= nil
+        and (signature ~= lastProgressSignature or discoveryChanged) then
+        dataDirty = true
+    end
+    lastProgressSignature = signature
 end
 
 function A.Owned()
@@ -1918,10 +1961,16 @@ local function InstallHooks()
         hooksecurefunc(pe.EchoJournal, "OnDataChanged", function()
             pcall(function()
                 slotsDirty = true; dataDirty = true
+                progressCheckRequested = true
                 if Nexus.JournalTab and Nexus.JournalTab.RefreshAssociations then
                     Nexus.JournalTab.RefreshAssociations()
                 end
             end)
+        end)
+    end
+    if pe.EchoJournal and type(pe.EchoJournal.NotifyNewEcho) == "function" then
+        hooksecurefunc(pe.EchoJournal, "NotifyNewEcho", function()
+            progressCheckRequested = true
         end)
     end
     local svc = PS()
@@ -1981,17 +2030,23 @@ function A.OnEvent(event)
     if event == "PLAYER_ENTERING_WORLD" then
         pewDone = true
         boundaryAt = GetTime()
+        lastProgressSignature = nil
+        progressCheckAt = 0
         InstallHooks()
         A.RequestGranted()
         boardDirty, slotsDirty = true, true
     elseif event == "PLAYER_LEVEL_UP" then
         boardDirty = true
+    elseif event == "SPELLS_CHANGED" or event == "LEARNED_SPELL_IN_TAB"
+        or event == "SKILL_LINES_CHANGED" then
+        progressCheckRequested = true
     end
 end
 
 -- Main drives this from its OnUpdate (~0.2s cadence)
 function A.Poll()
     InstallHooks()
+    PollProgressChanges()
     local autoAcceptState = A.AutoAcceptOn()
     local rivalState = A.RivalDetected()
     if lastAutoAcceptState ~= nil and autoAcceptState ~= lastAutoAcceptState then

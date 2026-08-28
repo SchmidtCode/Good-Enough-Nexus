@@ -1,3 +1,13 @@
+# Nexus 1.96.2 Community Update
+
+- Keeps the compact HUD visible at level 80 when no Echo board is active.
+- Refreshes Still Needed and Missing Tomes when Echo or tome learning changes the client's live data.
+- Widens the HUD to 340 pixels, gives every HUD state more vertical room, and keeps TO LOCK below the full Still Needed list.
+- Fits the in-game update notice inside its frame and removes the backup reminder from that popup.
+- Ignores interim `1.96.x` peer versions as update candidates while retaining the official Better-Nexus 1.20 handoff.
+
+This build passed the offline release suite and live play testing on Project Ebonhold.
+
 # Nexus 1.96.1 Community Release
 
 - Packages the working `good-enough-nexus` line as an interim community build while the official Better-Nexus 1.20 release is pending.

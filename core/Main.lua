@@ -7,7 +7,7 @@
 -- any closure that reads it.
 
 Nexus = Nexus or {}
-Nexus.VERSION = (Nexus.Release and Nexus.Release.version) or "1.96.1"
+Nexus.VERSION = (Nexus.Release and Nexus.Release.version) or "1.96.2"
 
 local Model, Policy, Ratchet, Strategy, Store, Adapter
 local Readout, Panel, JournalTab, DefaultProfile
@@ -2184,8 +2184,10 @@ local function Step()
                 StepRun(level, plan, slots, owned, flags, disabledLevers)
             elseif Adapter.InFlight() then
                 SetStatus("finishing final Echo selections")
+                RenderIdlePanel(plan, owned, slots, catalog)
             else
                 SetStatus(string.format("finishing run — %d/79 Echoes", rolledTotal))
+                RenderIdlePanel(plan, owned, slots, catalog)
             end
         end
     end
@@ -3129,6 +3131,9 @@ EH = CreateFrame("Frame")
 EH:RegisterEvent("ADDON_LOADED")
 EH:RegisterEvent("PLAYER_ENTERING_WORLD")
 EH:RegisterEvent("PLAYER_LEVEL_UP")
+EH:RegisterEvent("SPELLS_CHANGED")
+EH:RegisterEvent("LEARNED_SPELL_IN_TAB")
+EH:RegisterEvent("SKILL_LINES_CHANGED")
 EH:RegisterEvent("CHAT_MSG_CHANNEL")
 EH:RegisterEvent("PLAYER_REGEN_DISABLED")
 EH:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -3165,7 +3170,8 @@ EH:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4,
                 Nexus.DpsCapture.Init(Adapter, Nexus.Sync)
             end
         end
-    elseif event == "PLAYER_LEVEL_UP" then
+    elseif event == "PLAYER_LEVEL_UP" or event == "SPELLS_CHANGED"
+        or event == "LEARNED_SPELL_IN_TAB" or event == "SKILL_LINES_CHANGED" then
         if initialized then Adapter.OnEvent(event) end
     elseif event == "PLAYER_UPDATE_RESTING" or event == "ZONE_CHANGED_NEW_AREA" then
         if initialized and Nexus.Sync and Nexus.Sync.ContextChanged then

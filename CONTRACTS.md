@@ -1,4 +1,4 @@
-# Nexus — internal module contracts (v1.96.1)
+# Nexus — internal module contracts (v1.96.2)
 
 Binding interface spec for all modules. Authored from `WISHLIST_REALIZER_BUILD_PROMPT.md`
 + `WISHLIST_REALIZER_SPEC_ADDENDUM.md` + `WISHLIST_REALIZER_DESIGN.md` (the addendum wins
@@ -7,8 +7,8 @@ SavedVariables, NO `ProjectEbonhold.*` — loadable under bare LuaJIT. All cross
 data is plain tables produced by `core/GameAdapter.lua` (the only IO module).
 
 Global namespace: `Nexus` (each file: `Nexus = Nexus or {};
-local M = {}; Nexus.<Name> = M`). Version: `Nexus.VERSION = "1.96.1"`
-comes from `data/Release.lua`; .toc `## Version: 1.96.1` stays in lockstep.
+local M = {}; Nexus.<Name> = M`). Version: `Nexus.VERSION = "1.96.2"`
+comes from `data/Release.lua`; .toc `## Version: 1.96.2` stays in lockstep.
 
 Lua 5.1 rules: no `goto`, no `#` on non-sequences, `unpack` global, sort pairs for
 deterministic output, forward-declare every closure-captured local BEFORE the closure,
@@ -330,6 +330,11 @@ and auto signatures. Unchanged snapshots do no widget/layout work; status, notic
 performance, and auto-only changes update only their bounded controls. Full
 adaptive layout remains reserved for represented layout changes.
 
+The active HUD is 340 pixels wide. Optional TO LOCK content sits below the
+three-line Still Needed and To Shed rows, and every adaptive state reserves its
+footer clearance. At level 80, Main renders an idle progress snapshot while no
+board is active instead of leaving the compact HUD blank.
+
 `Nexus.Theme.StyleTree(root)` marks a completed static subtree, and repeated
 calls stop at that root. `StyleVirtualRow(row, controls)` applies the shared
 border and styles its bounded child-button list once. Community and Leaderboard
@@ -448,7 +453,9 @@ metadata. Only versions with neither prerelease nor build metadata are eligible
 published candidates. `Nexus.Updates` observes versions only after Sync accepts a
 recognized message, persists the highest candidate newer than `baseVersion`, and
 emits at most one enabled chat notice per session. Opt-out hides chat/UI without
-erasing the candidate. No module performs an update network request or install.
+erasing the candidate. Interim `1.96.x` community versions are not official
+update candidates; the official `1.20.0` handoff remains eligible. No module
+performs an update network request or install.
 
 ## core/BuildCatalog.lua — `Nexus.BuildCatalog`
 

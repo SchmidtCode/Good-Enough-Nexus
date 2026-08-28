@@ -11,7 +11,7 @@ compatibility with existing installations and user data.
 
 - Repository visibility: public.
 - Official stable base: Nexus 1.19.5.
-- Interim community release: Nexus 1.96.1 from `good-enough-nexus`.
+- Interim community release: Nexus 1.96.2 from `good-enough-nexus`.
 - Intended handoff: the official Better-Nexus 1.20 release from Visceral.
 - Client target: World of Warcraft 3.3.5a / Project Ebonhold.
 - Language target: Lua 5.1.
@@ -95,7 +95,7 @@ verification must still be reported separately.
 
 ## Community release packaging
 
-The `v1.96.1` tag workflow accepts only a tag on the exact remote tip of
+The `v1.96.2` tag workflow accepts only a tag on the exact remote tip of
 `good-enough-nexus`. It runs the offline release checks, builds a `Nexus` ZIP
 from the tagged commit, writes a SHA-256 checksum and commit manifest, records a
 GitHub build-provenance attestation, and creates a draft GitHub release. A human
@@ -106,8 +106,8 @@ Tests, benchmarks, tools, reports, dependency caches, and repository metadata
 do not enter the archive.
 
 In-addon update notices continue to point to Visceral's official releases page.
-The release ignores peer advertisements for its own `1.96.1` version, while an
-official `1.20.0` peer can still trigger the handoff notice.
+The release ignores peer advertisements from the interim `1.96.x` line, while
+an official `1.20.0` peer can still trigger the handoff notice.
 
 ## Performance benchmarks
 

@@ -27,7 +27,7 @@ for _, invalid in ipairs({"", "v", "01.2.3", "1..2", "1.2.3-", "1.2.3+",
     assert(Version.Parse(invalid) == nil, "malformed version accepted: " .. tostring(invalid))
 end
 
-assert(Nexus.Release.version == "1.96.1"
+assert(Nexus.Release.version == "1.96.2"
     and Nexus.Release.baseVersion == "1.19.5"
     and Nexus.Release.published == true
     and Nexus.Release.emergencyCommunityOff == false,
@@ -58,8 +58,10 @@ assert(NexusDB.updateNotice == nil and #notices == 0,
     "persisted prerelease poison survived sanitation or notified")
 assert(not Updates.Observe("1.19.4", "Older") and not Updates.Observe("1.19.5", "Equal"),
     "older/equal version created an update")
-assert(not Updates.Observe("1.96.1", "SameCommunity"),
-    "installed community version created its own update notice")
+assert(not Updates.Observe("1.96.1", "OlderCommunity")
+    and not Updates.Observe("1.96.2", "SameCommunity")
+    and not Updates.Observe("1.96.9", "NewerCommunity"),
+    "interim community version created an official update notice")
 assert(not Updates.Observe("9.0.0-dev", "Dev")
     and not Updates.Observe("9.0.0-rc.1", "Prerelease")
     and not Updates.Observe("9.0.0+local", "Metadata"),

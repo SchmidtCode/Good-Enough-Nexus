@@ -38,6 +38,12 @@ local function IsInstalledVersion(parsed)
     return Nexus.Version.Compare(parsed, release.version) == 0
 end
 
+-- 1.96.x is the interim community line, not an official upstream release.
+-- Its numeric ordering must not hide the intended official 1.20 handoff.
+local function IsCommunityVersion(parsed)
+    return parsed and parsed.major == 1 and parsed.minor == 96
+end
+
 local function Refresh()
     if type(callbacks.refresh) == "function" then pcall(callbacks.refresh) end
 end
@@ -58,7 +64,7 @@ local function SanitizeCandidate()
         and Nexus.Version.Parse(candidate.version) or nil
     local comparison = parsed and Nexus.Version.Compare(parsed, BaseVersion()) or nil
     if not parsed or not parsed.publishedCandidate or comparison ~= 1
-        or IsInstalledVersion(parsed) then
+        or IsInstalledVersion(parsed) or IsCommunityVersion(parsed) then
         NexusDB.updateNotice = nil
         return nil
     end
@@ -83,6 +89,7 @@ function Updates.Observe(version, source)
         or (Nexus.Version and Nexus.Version.Parse and Nexus.Version.Parse(version))
     if not parsed or not parsed.publishedCandidate then return false, "not published" end
     if IsInstalledVersion(parsed) then return false, "already installed" end
+    if IsCommunityVersion(parsed) then return false, "community release" end
     if Nexus.Version.Compare(parsed, BaseVersion()) ~= 1 then return false, "not newer" end
 
     local current = SanitizeCandidate()

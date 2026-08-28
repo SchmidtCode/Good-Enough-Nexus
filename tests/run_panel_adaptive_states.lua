@@ -15,16 +15,16 @@ Nexus.Panel.Init({ ToggleAuto=function() return true end })
 
 Nexus.Panel.Render({progress={},cards={},recommendation="",auto=true,version="2.12"})
 local panel = _G.NexusPanel
-assert(panel and panel:GetHeight() == 219, "setup state should match the compact 1.19.3 layout")
+assert(panel and panel:GetHeight() == 239, "setup state must reserve the 1.96.2 footer room")
 
 Nexus.Panel.Render({progress={wishlistName="Leveling",owned=25,total=79,missing={"A","B"},shed={"C"},dpsEchoes={{spellId=1,stacks=1}}},cards={},recommendation="",auto=true,version="2.12"})
-assert(panel:GetHeight() == 208, "progress state height incorrect")
+assert(panel:GetHeight() == 228, "progress state height incorrect")
 
 Nexus.Panel.Render({progress={wishlistName="Complete",owned=79,total=79,missing={},shed={},dpsEchoes={{spellId=1,stacks=1}}},cards={},recommendation="",auto=true,version="2.12"})
-assert(panel:GetHeight() == 109, "completed state should collapse progress lists")
+assert(panel:GetHeight() == 129, "completed state should collapse progress lists")
 
 Nexus.Panel.Render({progress={wishlistName="Complete",owned=79,total=79,missing={},shed={},dpsEchoes={{spellId=1,stacks=1}},activeSlot=3},cards={{text="Echo A"}},recommendation="Take Echo A",auto=true,version="2.12"})
-assert(panel:GetHeight() == 233, "live roll should expand completed HUD")
+assert(panel:GetHeight() == 253, "live roll should expand completed HUD")
 
 -- Enabling Performance must reserve a separate row for character Best DPS
 -- above the footer in both the merged-PEH and stock-HUD layouts.
@@ -55,6 +55,6 @@ local function AssertPerformanceGap(withStatus, expectedHeight)
     assert(perfBottom - bestTop >= 8,
         "performance row overlaps Best DPS in " .. (withStatus and "merged PEH" or "server HUD") .. " mode")
 end
-AssertPerformanceGap(true, 347)
-AssertPerformanceGap(false, 288)
+AssertPerformanceGap(true, 367)
+AssertPerformanceGap(false, 308)
 print("adaptive panel states OK")
