@@ -1,3 +1,10 @@
+# Nexus 1.96.3 Recovery Update
+
+- Keeps ordinary peer-posted community builds at the 1.96.2 capacity while bounding disposable automatic DPS pages.
+- Prevents large synced caches from making the old 32-bit client crash during `/reload`.
+- Uses the current level-80 Echo loadout for HUD comparison while retaining exact wishlist-quality matching.
+- Ignores later 1.20 patch peers without suppressing the documented official 1.20.0 handoff.
+
 # Nexus 1.96.2 Community Update
 
 - Keeps the compact HUD visible at level 80 when no Echo board is active.

@@ -27,7 +27,7 @@ for _, invalid in ipairs({"", "v", "01.2.3", "1..2", "1.2.3-", "1.2.3+",
     assert(Version.Parse(invalid) == nil, "malformed version accepted: " .. tostring(invalid))
 end
 
-assert(Nexus.Release.version == "1.96.2"
+assert(Nexus.Release.version == "1.96.3"
     and Nexus.Release.baseVersion == "1.19.5"
     and Nexus.Release.published == true
     and Nexus.Release.emergencyCommunityOff == false,
@@ -59,14 +59,24 @@ assert(NexusDB.updateNotice == nil and #notices == 0,
 assert(not Updates.Observe("1.19.4", "Older") and not Updates.Observe("1.19.5", "Equal"),
     "older/equal version created an update")
 assert(not Updates.Observe("1.96.1", "OlderCommunity")
-    and not Updates.Observe("1.96.2", "SameCommunity")
+    and not Updates.Observe("1.96.3", "SameCommunity")
     and not Updates.Observe("1.96.9", "NewerCommunity"),
     "interim community version created an official update notice")
+NexusDB.updateNotice={version="1.20.2",observedAt=123,source="RefactorPeer"}
+InitUpdates()
+assert(NexusDB.updateNotice == nil and #notices == 0
+    and not Updates.Observe("1.20.2", "RefactorPatch"),
+    "separate 1.20 patch line created a community-patch update notice")
+assert(Updates.Observe("1.20.0", "OfficialHandoff")
+    and Updates.GetCandidate().version == "1.20.0",
+    "official 1.20.0 handoff was suppressed")
+NexusDB.updateNotice, notices = nil, {}
+InitUpdates()
 assert(not Updates.Observe("9.0.0-dev", "Dev")
     and not Updates.Observe("9.0.0-rc.1", "Prerelease")
     and not Updates.Observe("9.0.0+local", "Metadata"),
     "development/prerelease/build metadata created a published notice")
-assert(Updates.Observe("1.20.0", "Newer"))
+assert(Updates.Observe("1.19.6", "Newer"))
 assert(Updates.Observe("1.19.9", "LaterOlder"))
 assert(Updates.Observe("v2", "Highest"))
 assert(Updates.Observe("1.21.0", "LastOlder"))
@@ -76,7 +86,7 @@ assert(candidate and candidate.version == "2.0.0" and candidate.source == "Highe
 candidate.version = "0.0.0"
 assert(Updates.GetCandidate().version == "2.0.0",
     "candidate query exposed mutable persisted update state")
-assert(#notices == 1 and notices[1].version == "1.20.0",
+assert(#notices == 1 and notices[1].version == "1.19.6",
     "update chat was not limited to one per session")
 assert(notices[1].url == Nexus.Release.releasesUrl,
     "notice did not expose the stable releases page")

@@ -178,6 +178,7 @@ function Store.Init()
 
     NexusDB = type(NexusDB) == "table" and NexusDB or {}
     local db = NexusDB
+    db.echoSourceDebug = nil
     if type(db.chars) ~= "table" then db.chars = {} end
     if type(db.settings) ~= "table" then db.settings = {} end
     if type(db.accountCharacters) ~= "table" then db.accountCharacters = {} end

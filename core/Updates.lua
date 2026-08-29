@@ -44,6 +44,18 @@ local function IsCommunityVersion(parsed)
     return parsed and parsed.major == 1 and parsed.minor == 96
 end
 
+-- Valentine's later 1.20 patch peers are a separate addon line and must not
+-- create a recurring prompt here. Preserve the explicit official 1.20.0
+-- handoff promised by the compatibility-line contract.
+local function IsSeparateRefactorVersion(parsed)
+    local release = Release()
+    local installed = Nexus.Version and Nexus.Version.Parse
+        and Nexus.Version.Parse(release.version) or nil
+    return IsCommunityVersion(installed)
+        and parsed and parsed.major == 1 and parsed.minor == 20
+        and parsed.patch ~= 0
+end
+
 local function Refresh()
     if type(callbacks.refresh) == "function" then pcall(callbacks.refresh) end
 end
@@ -64,7 +76,8 @@ local function SanitizeCandidate()
         and Nexus.Version.Parse(candidate.version) or nil
     local comparison = parsed and Nexus.Version.Compare(parsed, BaseVersion()) or nil
     if not parsed or not parsed.publishedCandidate or comparison ~= 1
-        or IsInstalledVersion(parsed) or IsCommunityVersion(parsed) then
+        or IsInstalledVersion(parsed) or IsCommunityVersion(parsed)
+        or IsSeparateRefactorVersion(parsed) then
         NexusDB.updateNotice = nil
         return nil
     end
@@ -90,6 +103,7 @@ function Updates.Observe(version, source)
     if not parsed or not parsed.publishedCandidate then return false, "not published" end
     if IsInstalledVersion(parsed) then return false, "already installed" end
     if IsCommunityVersion(parsed) then return false, "community release" end
+    if IsSeparateRefactorVersion(parsed) then return false, "separate refactor line" end
     if Nexus.Version.Compare(parsed, BaseVersion()) ~= 1 then return false, "not newer" end
 
     local current = SanitizeCandidate()

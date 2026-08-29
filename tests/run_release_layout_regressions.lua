@@ -30,7 +30,7 @@ dofile("ui/Changelog.lua")
 Nexus.Changelog.ShowIfNeeded()
 
 local changelog = _G.NexusChangelogPopup
-local changelogBody = FindText("Core HUD fixes")
+local changelogBody = FindText("Reload safety")
 assert(changelog and changelogBody, "release update window was not created")
 Check(changelog:GetHeight() >= 360,
     "release update window is too short for its content")

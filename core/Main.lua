@@ -7,7 +7,7 @@
 -- any closure that reads it.
 
 Nexus = Nexus or {}
-Nexus.VERSION = (Nexus.Release and Nexus.Release.version) or "1.96.2"
+Nexus.VERSION = (Nexus.Release and Nexus.Release.version) or "1.96.3"
 
 local Model, Policy, Ratchet, Strategy, Store, Adapter
 local Readout, Panel, JournalTab, DefaultProfile
@@ -742,6 +742,9 @@ end
 -- wishlist, and the loadout's specific missing echoes (what "close to
 -- ideal" actually means, not just a percentage).
 local function BuildProgress(plan, owned, slots, catalog, wishlistOverride, previewBuildId)
+    if tonumber(Adapter.Level()) == 80 and Adapter.CurrentOwned then
+        owned = Adapter.CurrentOwned()
+    end
     local wl = wishlistOverride or Adapter.Wishlist()
     local lockOnlyFamilies = LockOnlyFamilies(plan, wl)
     local runStacks, wishTotal, wishlistMissing, toLock =
@@ -752,28 +755,42 @@ local function BuildProgress(plan, owned, slots, catalog, wishlistOverride, prev
     -- Build a set of families that are LOCKED in the active slot -- the
     -- player intentionally placed these and they should never appear as
     -- "to shed" even if they aren't on the wishlist.
-    local lockedByFamily = {}
+    local lockedByFamily, lockedBySpell = {}, {}
     if Adapter.LockedOwned then
         local lockedOwned = Adapter.LockedOwned()
         if lockedOwned and type(lockedOwned.byFamily) == "table" then
             lockedByFamily = lockedOwned.byFamily
         end
+        if lockedOwned and type(lockedOwned.bySpell) == "table" then
+            lockedBySpell = lockedOwned.bySpell
+        end
     end
     local activeRow = ActiveSlotRow(slots)
+    local activeLockedByFamily, activeLockedBySpell = {}, {}
     if type(activeRow) == "table" and type(activeRow.echoes) == "table" then
         for _, e in ipairs(activeRow.echoes) do
             if e.locked and e.family then
-                lockedByFamily[e.family] = (lockedByFamily[e.family] or 0)
+                activeLockedByFamily[e.family] = (activeLockedByFamily[e.family] or 0)
                     + (tonumber(e.stacks) or 1)
+                local id = tonumber(e.spellId)
+                if id then
+                    activeLockedBySpell[id] = (activeLockedBySpell[id] or 0)
+                        + (tonumber(e.stacks) or 1)
+                end
             end
         end
     end
+    -- GetLockedPerks and the active saved slot describe the same permanent
+    -- copies. Treat them as two observations of one set, not additive counts.
+    for family, count in pairs(activeLockedByFamily) do
+        lockedByFamily[family] = math.max(tonumber(lockedByFamily[family]) or 0, count)
+    end
+    for id, count in pairs(activeLockedBySpell) do
+        lockedBySpell[id] = math.max(tonumber(lockedBySpell[id]) or 0, count)
+    end
 
-    -- Shed echoes at EXACT spell/quality granularity. The server persists and
-    -- guarantees exact spell IDs, so a Common Agility Boost cannot be hidden
-    -- behind the family's requested Rare copy. Wrong-quality siblings and
-    -- exact over-stacks are listed independently. Locked exact copies remain
-    -- protected even when they are outside the current wishlist.
+    -- Shed echoes at exact spell/quality granularity. A sibling quality does
+    -- not satisfy the selected wishlist's requested spell ID.
     local shed = {}
     if type(plan) == "table" and type(owned) == "table"
         and type(owned.bySpell) == "table" then
@@ -788,19 +805,20 @@ local function BuildProgress(plan, owned, slots, catalog, wishlistOverride, prev
             end
         end
         local qualityNames = { [0] = "Common", [1] = "Uncommon", [2] = "Rare", [3] = "Epic" }
+        local function AddShed(id, shedCount)
+            if shedCount <= 0 then return end
+            local row = catalog and catalog.rows and catalog.rows[id]
+            local nm = row and row.name or ("spell " .. tostring(id))
+            local q = row and tonumber(row.quality)
+            local label = q ~= nil and qualityNames[q] or nil
+            shed[#shed + 1] = tostring(nm)
+                .. (label and (" (" .. label .. ")") or "")
+                .. (shedCount > 1 and (" ×" .. shedCount) or "")
+        end
         for id, count in pairs(owned.bySpell) do
             local keepCount = math.max(tonumber(wantedExact[id]) or 0,
                 tonumber(lockedExact[id]) or 0)
-            local shedCount = math.max(0, (tonumber(count) or 0) - keepCount)
-            if shedCount > 0 then
-                local row = catalog and catalog.rows and catalog.rows[id]
-                local nm = row and row.name or ("spell " .. tostring(id))
-                local q = row and tonumber(row.quality)
-                local label = q ~= nil and qualityNames[q] or nil
-                shed[#shed + 1] = tostring(nm)
-                    .. (label and (" (" .. label .. ")") or "")
-                    .. (shedCount > 1 and (" ×" .. shedCount) or "")
-            end
+            AddShed(id, math.max(0, (tonumber(count) or 0) - keepCount))
         end
         table.sort(shed)
     end

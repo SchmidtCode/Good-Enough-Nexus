@@ -2,7 +2,7 @@
 ## Title: Nexus
 ## Notes: Nexus — Echo build automation, bounded community builds, DPS leaderboards, and auto-snapshot convergence.
 ## Author: Boganic
-## Version: 1.96.2
+## Version: 1.96.3
 ## OptionalDeps: ProjectEbonhold
 ## SavedVariables: NexusDB WishlistRealizerDB
 

@@ -453,9 +453,9 @@ function A.MaxPermanentEchoes()
     return tonumber(svc and SafeCall(svc.GetMaximumPermanentEchoes)) or 6
 end
 
-local function GrantedSignature(granted)
-    if type(granted) ~= "table" then return nil end
+local function GrantedCounts(granted)
     local counts = {}
+    if type(granted) ~= "table" then return counts end
     for _, entries in pairs(granted) do
         if type(entries) == "table" then
             for i = 1, #entries do
@@ -465,6 +465,48 @@ local function GrantedSignature(granted)
             end
         end
     end
+    return counts
+end
+
+local function EchoListCounts(loadout)
+    local counts = {}
+    if type(loadout) ~= "table" then return counts end
+    local echoes = type(loadout.echoes) == "table" and loadout.echoes or loadout
+    for i = 1, #echoes do
+        local echo = echoes[i]
+        local id = type(echo) == "table" and tonumber(echo.spellId)
+        if id then
+            local count = math.max(1,
+                tonumber(echo.stacks or echo.stack or echo.count) or 1)
+            counts[id] = (counts[id] or 0) + count
+        end
+    end
+    return counts
+end
+
+local function OwnedSnapshot(counts, synced, source)
+    local catalog = A.Catalog()
+    local bySpell, byFamily, distinct, total = {}, {}, 0, 0
+    for id, count in pairs(type(counts) == "table" and counts or {}) do
+        id, count = tonumber(id), tonumber(count)
+        if id and count and count > 0 and catalog and catalog.rows[id] then
+            bySpell[id] = count
+            local family = FamilyOf(id) or id
+            byFamily[family] = (byFamily[family] or 0) + count
+            distinct = distinct + 1
+            total = total + count
+        end
+    end
+    return {
+        bySpell = bySpell, byFamily = byFamily,
+        synced = synced and true or false,
+        distinct = distinct, total = total, source = source,
+    }
+end
+
+local function GrantedSignature(granted)
+    if type(granted) ~= "table" then return nil end
+    local counts = GrantedCounts(granted)
     local ids = {}
     for id in pairs(counts) do ids[#ids + 1] = id end
     table.sort(ids)
@@ -537,9 +579,17 @@ function A.Owned()
     -- captured for leaderboard/build metadata through LockedOwned(), but they
     -- are never part of the current run's rolled ownership, guarantee queue,
     -- wishlist progress, board decisions, or save candidate.
-    -- auto-chained boards are stale-by-one: union our own confirmed picks
-    for id, n in pairs(recordedPicks) do
-        if (bySpell[id] or 0) < n then bySpell[id] = n end
+    -- Auto-chained boards can be stale by one selection. Overlay the expected
+    -- count only until GetGrantedPerks catches up, then retire it. Keeping this
+    -- as a run-long pick history made replaced qualities remain in TO SHED.
+    for id, expected in pairs(recordedPicks) do
+        local current = tonumber(bySpell[id]) or 0
+        expected = tonumber(expected) or 0
+        if current >= expected then
+            recordedPicks[id] = nil
+        elseif expected > 0 then
+            bySpell[id] = expected
+        end
     end
     local byFamily, distinct, total = {}, 0, 0
     for id, n in pairs(bySpell) do
@@ -569,6 +619,30 @@ function A.Owned()
              synced = synced, ghostSuspect = ghost,
              distinct = distinct, total = total,
              generation = ownedGeneration }
+end
+
+-- Level 80 has a separate live loadout after saved-build activation and Orb
+-- replacements. GetGrantedPerks remains the leveling-run source, so the HUD
+-- must read GetActiveEchoLoadout instead. A verified active server slot is a
+-- fallback for the short window where the direct mirror is unavailable.
+function A.CurrentOwned()
+    if A.Level() ~= 80 then return A.Owned() end
+    local service = PS()
+    local active = service and SafeCall(service.GetActiveEchoLoadout)
+    if type(active) == "table" then
+        return OwnedSnapshot(EchoListCounts(active), true, "active-echo-loadout")
+    end
+
+    local slots = A.Slots()
+    local activeSlot = slots and tonumber(slots.activeSlot) or 0
+    local row = slots and slots.bySlot and slots.bySlot[activeSlot]
+    if row and row.verified and row.verifiedFieldPresent
+        and not row.suspectParse and type(row.echoes) == "table" then
+        return OwnedSnapshot(EchoListCounts(row.echoes), true, "active-server-slot")
+    end
+    local fallback = A.Owned()
+    fallback.source = "granted-fallback"
+    return fallback
 end
 
 -- Run boundary (each visit to level 1): the previous run's recorded picks
@@ -1491,7 +1565,11 @@ local function ResolveInFlight()
             if ch == nil or resolvedSig ~= inFlightSig then
                 -- success: board consumed (auto-chain requests the next one)
                 if pendingOwnPick then
-                    recordedPicks[pendingOwnPick] = (recordedPicks[pendingOwnPick] or 0) + 1
+                    local svc = PS()
+                    local live = GrantedCounts(svc and SafeCall(svc.GetGrantedPerks))
+                    local current = tonumber(live[pendingOwnPick]) or 0
+                    local expected = tonumber(recordedPicks[pendingOwnPick]) or current
+                    recordedPicks[pendingOwnPick] = math.max(current, expected) + 1
                 end
             end
             -- failure (SS-1000 "0"): latch cleared, same board -> just release

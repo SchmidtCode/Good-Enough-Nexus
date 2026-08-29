@@ -4,8 +4,8 @@ Nexus = Nexus or {}
 local M = {}
 Nexus.Changelog = M
 
-local VERSION = "1.96.2"
-local RELEASE_KEY = "1.96.2"
+local VERSION = "1.96.3"
+local RELEASE_KEY = "1.96.3"
 local frame
 local shownThisSession = false
 
@@ -43,32 +43,27 @@ local function Create()
 
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -20)
-    title:SetText("Nexus 1.96.2 Community Update")
+    title:SetText("Nexus 1.96.3 Recovery Update")
 
     local body = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     body:SetPoint("TOPLEFT", 28, -52)
     body:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 52)
     body:SetJustifyH("LEFT")
     body:SetJustifyV("TOP")
-    body:SetText([[|cffffd200Core HUD fixes|r
+    body:SetText([[|cffffd200Reload safety|r
 
-- Fixes the compact HUD opening blank at level 80 with no active Echo board.
-- Refreshes Still Needed and Missing Tomes after Echo or tome learning changes.
+- Keeps synced community data within the old client's SavedVariables limits.
+- Prevents oversized Nexus data from building up again after recovery.
 
-|cffffd200HUD layout|r
+|cffffd200Update notices|r
 
-- Uses a 340-pixel-wide HUD with more vertical room and readable columns.
-- Keeps unchanged learning checks from rebuilding or repainting the HUD.
+- Ignores peer versions from Valentine's separate Nexus 1.20 refactor line.
+- Keeps Good-Enough-Nexus on the 1.96 compatibility release line.
 
-|cffffd200Official handoff|r
+|cffffd200Echoes to shed|r
 
-- Ignores interim 1.96.x peer versions in the official update notice.
-- Still points users to Visceral's official Better-Nexus 1.20 release when seen.
-
-|cffffd200Support scope|r
-
-- This unofficial package has no routine hotpatch schedule.
-- Maintenance is limited to problems that block core addon functionality.]])
+- Removes replaced Common, Uncommon, Rare, and Epic copies after ownership catches up.
+- Keeps only the current loadout's removable Echoes in the list.]])
 
     local close = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     close:SetSize(92, 24)

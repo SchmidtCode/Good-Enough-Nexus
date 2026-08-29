@@ -69,12 +69,14 @@ local function ResolveLimits(database)
         end
     end
     if not enabled then
-        -- "Off" disables the smaller ranking policy, not the absolute safety
-        -- boundary. A compromised/noisy mesh must never grow SavedVariables
-        -- without limit.
-        for name, spec in pairs(CONFIGURED_LIMITS) do
-            limits[name] = spec.max
-        end
+        -- Preserve the 1.96.2 capacity for ordinary peer-posted pages and
+        -- personal history. Ranked automatic DPS pages remain bounded because
+        -- that disposable cache was the source of the old-client reload crash.
+        limits = Copy(DEFAULT_LIMITS)
+        limits.otherRemoteBuilds = CONFIGURED_LIMITS.otherRemoteBuilds.max
+        limits.remotePerAuthor = CONFIGURED_LIMITS.remotePerAuthor.max
+        limits.personalFingerprints = CONFIGURED_LIMITS.personalFingerprints.max
+        limits.buildBestFingerprints = CONFIGURED_LIMITS.buildBestFingerprints.max
     end
     limits.enabled = enabled
     limits.minPerClassPerCategory = math.min(

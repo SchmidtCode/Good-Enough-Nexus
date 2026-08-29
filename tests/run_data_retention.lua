@@ -275,11 +275,28 @@ local relaxedLimits = Nexus.DataRetention.Limits({settings={
     communityRetentionMaxPerAuthor=1,
 }})
 assert(relaxedLimits.enabled == false
-    and relaxedLimits.topPerCategory == 1000
-    and relaxedLimits.minPerClassPerCategory == 100
-    and relaxedLimits.topAverage == 1000
+    and relaxedLimits.topPerCategory == 100
+    and relaxedLimits.minPerClassPerCategory == 15
+    and relaxedLimits.topAverage == 50
     and relaxedLimits.otherRemoteBuilds == 1000
     and relaxedLimits.remotePerAuthor == 250,
-    "disabled ranked retention did not retain hard safety ceilings")
+    "disabled ranked retention did not preserve peer pages within safe ceilings")
+
+local carryOver = {
+    settings={communityRetentionEnabled=false},
+    communityBuilds={}, syncTombstones={},
+    dpsCapture={personalBest={},buildBest={},characterBest={dummy={},lk={}}},
+}
+for i = 1, 300 do
+    local id = string.format("carry-over-%03d", i)
+    carryOver.communityBuilds[id] = {
+        id=id, title=id, author="Peer" .. tostring(i),
+        class="WARRIOR", lastModified=i, loadoutAvailable=true,
+    }
+end
+local carrySummary = Nexus.DataRetention.Enforce(carryOver, "carry-over regression")
+assert(carrySummary.overlayRemoved == 0
+    and carrySummary.overlayAfter == 300,
+    "retention-off startup removed peer-posted builds carried from 1.96.2")
 
 print("bounded community/DPS retention and tombstone compaction -- OK")
