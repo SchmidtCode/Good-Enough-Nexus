@@ -1,3 +1,53 @@
+# Unreleased
+
+- Treats every Echo board slot as random; Saved Builds no longer predict future offerings.
+- Freezes one of two simultaneously offered wishlist Echoes so both random opportunities can be kept.
+- Falls back to the verified active server slot when the level-80 live loadout mirror is temporarily empty.
+
+# Nexus 1.96.3 Recovery Update
+
+- Keeps ordinary peer-posted community builds at the 1.96.2 capacity while bounding disposable automatic DPS pages.
+- Prevents large synced caches from making the old 32-bit client crash during `/reload`.
+- Uses the current level-80 Echo loadout for HUD comparison while retaining exact wishlist-quality matching.
+- Ignores later 1.20 patch peers without suppressing the documented official 1.20.0 handoff.
+
+# Nexus 1.96.2 Community Update
+
+- Keeps the compact HUD visible at level 80 when no Echo board is active.
+- Refreshes Still Needed and Missing Tomes when Echo or tome learning changes the client's live data.
+- Widens the HUD to 340 pixels, gives every HUD state more vertical room, and keeps TO LOCK below the full Still Needed list.
+- Fits the in-game update notice inside its frame and removes the backup reminder from that popup.
+- Ignores interim `1.96.x` peer versions as update candidates while retaining the official Better-Nexus 1.20 handoff.
+
+This build passed the offline release suite and live play testing on Project Ebonhold.
+
+# Nexus 1.96.1 Community Release
+
+- Packages the working `good-enough-nexus` line as an interim community build while the official Better-Nexus 1.20 release is pending.
+- Retains the bounded community-build and DPS data model, compatibility migrations, Sync safety work, and wishlist automation behavior from the 1.20 beta line.
+- Includes cached and incremental UI projections, virtualized lists, scheduler budgets, and the leaderboard catalog-copy removal tested during live performance investigation.
+- Adds offline functional coverage, observational performance benchmarks, production-only CRAP reporting, and deeper runtime module boundaries for maintenance.
+- Keeps the official update baseline at Nexus 1.19.5 and ignores the installed community version when peers advertise it, allowing a future official 1.20 release to appear as an update.
+
+This is an unofficial interim package. Maintenance is limited to issues that block core addon functionality. Back up `NexusDB` and `WishlistRealizerDB` before installing.
+
+# Nexus 1.20 Beta
+
+- Beta 5 ranks retained DPS builds independently for Dummy and Lich King (top 100 overall plus top 15 per class) and preserves the contributing rows for Average (top 50 overall plus top 10 per class). Account-owned builds are exempt and all limits are configurable.
+- Beta 5 adds a My Account reference view for saved loadouts and uploads from every character seen by Nexus. Offline-character records are read-only, and saved-loadout IDs now include realm identity.
+- A read-only simulation against an 11.18 MB real save reduced Community build pages from 1,149 to 325 while retaining every currently valid Average pair.
+- Adds persistent Off, Manual, and Automatic Sync modes; Automatic transport runs only while resting, out of combat, and outside configured instance types.
+- Caps unrelated remote Community posts separately from the DPS-ranked retention set while preserving account-owned builds.
+- Ships a versioned baseline of community builds and synchronizes smaller incremental changes instead of repeatedly exchanging the full catalog.
+- Makes Sync response preparation incremental and queue-aware so busy sessions avoid frame stalls and resume fairly as capacity becomes available.
+- Keeps personal builds, newer revisions, filters, DPS records, and deletions intact while migrating existing data additively.
+- Adds bounded, coalesced, and virtualized Builds, Leaderboard, HUD, and wishlist rendering for large collections.
+- Adds session diagnostics, structured error history, and aggregate performance counters for easier tester reports without storing raw samples.
+- Refreshes the Project Ebonhold Echo catalog when represented source data changes while retaining the last known-good catalog on failure.
+- Expands deterministic compatibility and reliability coverage across data migration, synchronization, UI refreshes, reloads, and automation boundaries.
+
+This is a public beta validated by offline harnesses. Back up `NexusDB` and `WishlistRealizerDB` before testing and report `/reload`, migration, large-library, and long-session behavior.
+
 # Nexus 1.19.5
 
 - Fixed the Wishlist button for active Saved Builds without an association; it now opens a persistent Create New Wishlist editor instead of hiding the Nexus menu.

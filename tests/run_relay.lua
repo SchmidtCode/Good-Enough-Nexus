@@ -1,4 +1,4 @@
--- Offline regression coverage for the two-Snapshot guarantee relay.
+-- Offline compatibility coverage for the historical two-Snapshot relay.
 -- Run from the Nexus addon root with Lua 5.1/LuaJIT:
 --   luajit tests/run_relay.lua
 

@@ -1459,6 +1459,30 @@ local function LoadEditorForLoadout(slot)
     M.Refresh()
 end
 
+-- A character with no active numbered Saved Build uses the account-local
+-- first-run target until their first real loadout exists. Candidate buttons
+-- previously sent activeSlot=0 through SetLoadoutWishlist, which can only
+-- accept numbered slots and therefore reported "invalid loadout".
+function M.AssignWishlistCandidate(candidate)
+    local wishlistSlot = type(candidate) == "table" and tonumber(candidate.slot)
+    if not wishlistSlot then return false, "invalid wishlist" end
+    local slots = Adapter and Adapter.Slots and Adapter.Slots()
+    local active = slots and tonumber(slots.activeSlot) or 0
+    local maxSlots = slots and (tonumber(slots.maxSlots) or 5) or 5
+    if active >= 1 and active <= maxSlots then
+        if not (Adapter and Adapter.SetLoadoutWishlist) then
+            return false, "loadout association unavailable"
+        end
+        local ok, err = Adapter.SetLoadoutWishlist(active, wishlistSlot, candidate)
+        return ok, err, active, false
+    end
+    if not (Adapter and Adapter.SetFirstRunWishlist) then
+        return false, "first-run association unavailable"
+    end
+    local ok, err = Adapter.SetFirstRunWishlist(wishlistSlot, candidate)
+    return ok, err, nil, true
+end
+
 local function ShowLoadoutSwitchMenu(anchor)
     if loadoutSwitchMenu and frame and loadoutSwitchMenu:GetParent() ~= frame then loadoutSwitchMenu:SetParent(frame) end
     -- Saved Builds are the server's fixed slots 1-5. Build this selector
@@ -1583,42 +1607,41 @@ local function EnsureFrame()
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
     frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
-    local refreshTicker = 0
-    local applyTicker = 0
+    local scheduler = assert(Nexus.Scheduler, "Scheduler required")
+    local updateKey = "ui.wishlist-editor.tick"
+    local retryElapsed = 0
     frame:SetScript("OnUpdate", function(_, elapsed)
-        applyTicker = applyTicker + (elapsed or 0)
-        if applyTicker >= 0.5 then
-            applyTicker = 0
+        retryElapsed = retryElapsed + elapsed
+        if retryElapsed >= 0.5 then
+            retryElapsed = 0
             if M._PumpApplyRetry then M._PumpApplyRetry() end
         end
-        refreshTicker = refreshTicker + (elapsed or 0)
-        if refreshTicker >= 0.5 then
-            refreshTicker = 0
-            -- Go quiet during a PerkService sniff (/nexus sniff): this
-            -- ticker's own Adapter.Slots() polling (both the check below and
-            -- inside M.Refresh() itself) would otherwise keep calling
-            -- GetServerBuildSlots/GetServerActiveSlot/GetServerMaxSlots every
-            -- half second regardless of Main.lua's own poll pause, flooding
-            -- the 200-call ring buffer with noise unrelated to whatever the
-            -- player is actually doing in the native lock UI.
-            if not (Nexus and Nexus.sniffPaused) then
-                HideServerEchoUI()
-                if pendingLoadoutOpen then
-                    local slots = Adapter and Adapter.Slots and Adapter.Slots()
-                    local active = slots and tonumber(slots.activeSlot)
-                    if active == tonumber(pendingLoadoutOpen.slot)
-                        or (GetTime() - (pendingLoadoutOpen.at or 0)) >= 1.5 then
-                        local target = pendingLoadoutOpen.slot
-                        pendingLoadoutOpen = nil
-                        LoadEditorForLoadout(target)
-                    end
-                end
-                M.Refresh()
-            end
-        end
     end)
-    frame:SetScript("OnShow", function() HideServerEchoUI() end)
+    local function ScheduledUpdate()
+        -- Go quiet during a PerkService sniff (/nexus sniff): this tick's
+        -- Adapter.Slots() polling would otherwise flood the diagnostic ring.
+        if not (Nexus and Nexus.sniffPaused) then
+            HideServerEchoUI()
+            if pendingLoadoutOpen then
+                local slots = Adapter and Adapter.Slots and Adapter.Slots()
+                local active = slots and tonumber(slots.activeSlot)
+                if active == tonumber(pendingLoadoutOpen.slot)
+                    or (GetTime() - (pendingLoadoutOpen.at or 0)) >= 1.5 then
+                    local target = pendingLoadoutOpen.slot
+                    pendingLoadoutOpen = nil
+                    LoadEditorForLoadout(target)
+                end
+            end
+            M.Refresh()
+        end
+    end
+    frame:SetScript("OnShow", function()
+        HideServerEchoUI()
+        scheduler.Init()
+        scheduler.Every(updateKey, 0.5, ScheduledUpdate)
+    end)
     frame:SetScript("OnHide", function()
+        scheduler.Cancel(updateKey)
         if displayPopup then displayPopup:Hide() end
         HideWishlistSwitchMenu()
         HideLoadoutSwitchMenu()
@@ -1666,6 +1689,12 @@ local function EnsureFrame()
         frame:Hide()
         if Nexus.Leaderboard then Nexus.Leaderboard.Show() end
     end)
+    if Nexus.Emergency and Nexus.Emergency.communityDisabled then
+        buildsNav:SetText("Builds (Off)")
+        buildsNav:Disable()
+        boardNav:SetText("Ranks (Off)")
+        boardNav:Disable()
+    end
     local wishNav = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     wishNav:SetSize(92, 22)
     wishNav:SetPoint("LEFT", boardNav, "RIGHT", 4, 0)
@@ -1865,6 +1894,7 @@ local function EnsureFrame()
     autoLockCheck:SetScript("OnClick", function(self)
         NexusDB.settings = NexusDB.settings or {}
         NexusDB.settings.autoLockEchoes = self:GetChecked() and true or false
+        if Nexus.RequestRecompute then Nexus.RequestRecompute() end
     end)
     autoLockCheck:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -2371,13 +2401,16 @@ function M.Refresh()
                     b:SetText(string.format("%s (%d)",
                         (c.name ~= "" and c.name) or ("Slot " .. tostring(c.slot)), c.count))
                     b:SetScript("OnClick", function()
-                        local slots = Adapter.Slots and Adapter.Slots()
-                        local active = slots and tonumber(slots.activeSlot)
-                        local ok, err = active and Adapter.SetLoadoutWishlist
-                            and Adapter.SetLoadoutWishlist(active, c.slot)
+                        local ok, err, active, firstRun =
+                            M.AssignWishlistCandidate(c)
                         if ok then
-                            print("|cff4dff80Nexus:|r associated '" .. tostring(c.name)
-                                .. "' with Loadout " .. tostring(active) .. ".")
+                            if firstRun then
+                                print("|cff4dff80Nexus:|r selected '" .. tostring(c.name)
+                                    .. "' as the first-run wishlist.")
+                            else
+                                print("|cff4dff80Nexus:|r associated '" .. tostring(c.name)
+                                    .. "' with Loadout " .. tostring(active) .. ".")
+                            end
                             M.Refresh()
                         else
                             print("|cffff6060Nexus:|r " .. tostring(err or
@@ -2396,13 +2429,16 @@ function M.Refresh()
             candidateButtons[1]:SetText(candidates[1].name ~= "" and candidates[1].name
                 or ("Slot " .. tostring(candidates[1].slot)))
             candidateButtons[1]:SetScript("OnClick", function()
-                local slots = Adapter.Slots and Adapter.Slots()
-                local active = slots and tonumber(slots.activeSlot)
-                local ok, err = active and Adapter.SetLoadoutWishlist
-                    and Adapter.SetLoadoutWishlist(active, candidates[1].slot)
+                local ok, err, active, firstRun =
+                    M.AssignWishlistCandidate(candidates[1])
                 if ok then
-                    print("|cff4dff80Nexus:|r associated '" .. tostring(candidates[1].name)
-                        .. "' with Loadout " .. tostring(active) .. ".")
+                    if firstRun then
+                        print("|cff4dff80Nexus:|r selected '" .. tostring(candidates[1].name)
+                            .. "' as the first-run wishlist.")
+                    else
+                        print("|cff4dff80Nexus:|r associated '" .. tostring(candidates[1].name)
+                            .. "' with Loadout " .. tostring(active) .. ".")
+                    end
                     M.Refresh()
                 else
                     print("|cffff6060Nexus:|r " .. tostring(err or

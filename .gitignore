@@ -9,6 +9,8 @@ Thumbs.db
 coverage/
 dist/
 build/
+benchmark-results/
+crap-results/
 tmp/
 temp/
 *.log

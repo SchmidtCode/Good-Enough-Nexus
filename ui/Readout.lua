@@ -56,12 +56,11 @@ function M.Status(model)
     return main
 end
 
--- "[G] Name (Epic) +100 wanted". card = board card (+ bridged .name),
+-- "Name (Epic) +100 wanted". card = board card (+ bridged .name),
 -- annotation = Policy annotation word or nil, delta = number or nil.
 function M.CardLine(card, annotation, delta)
     if type(card) ~= "table" then return "" end
     local parts = {}
-    if card.isGuaranteed then parts[#parts + 1] = "[G]" end
     parts[#parts + 1] = NameOf(card)
     local q = QUALITY_NAMES[card.quality]
     if q then parts[#parts + 1] = "(" .. q .. ")" end
@@ -74,9 +73,8 @@ function M.CardLine(card, annotation, delta)
     return table.concat(parts, " ")
 end
 
--- Next n predicted guaranteed arrivals, "(predicted)" suffixed --
--- injection order is measured but not version-stable, never state it
--- as fact. queue = Ratchet.PredictQueue output (entries pre-bridged).
+-- Compatibility formatter for historical diagnostics. Current queues are
+-- empty because Saved Builds no longer predict future Echoes.
 function M.QueueLines(queue, n)
     local out = {}
     if type(queue) ~= "table" then return out end

@@ -1,12 +1,11 @@
 -- Nexus: logic/Ratchet.lua
--- Outer convergence: predicted guaranteed queue, domination-guarded
--- overwrite, slot scoring, runs estimate. PURE -- no WoW API, no
+-- Outer convergence: domination-guarded overwrite, slot scoring, and runs
+-- estimate. PURE -- no WoW API, no
 -- ProjectEbonhold, no SavedVariables; loads under bare LuaJIT.
 --
--- Draw suppression remains family-aware, but convergence and save safety are
--- exact-spell/quality aware. The server serializes and guarantees exact spell
--- IDs, so a lower-quality sibling is persistence filler, not wishlist coverage.
--- The predicted queue is planning/UI-only -- save coverage never reads it.
+-- Convergence and save safety are exact-spell/quality aware. Saved Builds are
+-- comparison targets only; current Ebonhold offerings are random. A
+-- lower-quality sibling is persistence filler, not wishlist coverage.
 
 Nexus = Nexus or {}
 local M = {}
@@ -92,103 +91,21 @@ local function SortedNames(set, catalog)
 end
 
 ------------------------------------------------------------------------
--- Predicted guaranteed queue: activeEchoes in given (loadout-index)
--- order, expanded by exact saved stack count, minus exact copies already
--- owned this run, minus disabled-lever members when the
--- (user-confirmed, runtime-demotable) suppression flag holds.
+-- Compatibility seam retained for callers and old diagnostics. Current
+-- Ebonhold Saved Builds do not produce guaranteed future Echoes, so the queue
+-- is always empty.
 ------------------------------------------------------------------------
 
 function M.PredictQueue(activeEchoes, owned, plan, flags, disabledLevers, catalog)
-    local out = { entries = {} }
-    if type(activeEchoes) ~= "table" then return out end
-    local byFamily = (type(owned) == "table" and owned.byFamily) or {}
-    local bySpell = (type(owned) == "table" and owned.bySpell) or {}
-    local wished = (type(plan) == "table" and plan.wishedFamilies) or {}
-    local queueOwned = { byFamily = {}, bySpell = {} }
-    for family, count in pairs(byFamily) do
-        queueOwned.byFamily[family] = tonumber(count) or 0
-    end
-    for id, count in pairs(bySpell) do
-        queueOwned.bySpell[id] = tonumber(count) or 0
-    end
-    local suppress = type(flags) == "table"
-        and flags.DISABLE_SUPPRESSES_GUARANTEE == true
-    local rows = catalog and catalog.rows
-    local levers = catalog and catalog.levers
-
-    -- Saved Build stacks are a guaranteed FLOOR. Expand every serialized
-    -- stack into one predicted delivery and subtract only copies of the same
-    -- exact spell already owned this run. Test 5 confirmed that taking a copy
-    -- early reduces the later guaranteed amount; it does not add on top.
-    local consumedExact = {}
-    local consumedFamily = {}
-    for i = 1, #activeEchoes do
-        local e = activeEchoes[i]
-        local spellId = type(e) == "table" and e.spellId or nil
-        if spellId ~= nil then
-            local fam = FamOf(e, catalog)
-            local count = math.max(1, tonumber(e.stacks or e.count or e.stack) or 1)
-            local disabled = false
-            if suppress and rows and levers and type(disabledLevers) == "table" then
-                local row = rows[spellId]
-                local lever = row and row.requiredSpell
-                disabled = lever and lever ~= 0 and levers[lever]
-                    and disabledLevers[lever] and true or false
-            end
-            if not disabled then
-                local exactHave = tonumber(bySpell[spellId])
-                local alreadyConsumed = tonumber(consumedExact[spellId]) or 0
-                local consume = 0
-                if exactHave ~= nil then
-                    consume = math.min(count, math.max(0, exactHave - alreadyConsumed))
-                    consumedExact[spellId] = alreadyConsumed + consume
-                else
-                    -- Defensive fallback for an unreadable bySpell map. Family
-                    -- subtraction is less precise, but safer than predicting a
-                    -- full duplicate baseline from no ownership information.
-                    local famHave = tonumber(byFamily[fam]) or 0
-                    local famConsumed = tonumber(consumedFamily[fam]) or 0
-                    consume = math.min(count, math.max(0, famHave - famConsumed))
-                    consumedFamily[fam] = famConsumed + consume
-                end
-                for _ = 1, count - consume do
-                    local row = rows and rows[spellId]
-                    local quality = type(row) == "table"
-                        and tonumber(row.quality) or tonumber(e.quality)
-                    local wanted = not not wished[fam]
-                    local model = Nexus.Model
-                    if wanted and type(model) == "table"
-                        and type(model.QualityOfferNeeded) == "function"
-                        and quality ~= nil then
-                        wanted = model.QualityOfferNeeded(
-                            plan, catalog, fam, quality, queueOwned)
-                    end
-                    out.entries[#out.entries + 1] = {
-                        spellId = spellId,
-                        family = fam,
-                        quality = quality,
-                        wanted = wanted,
-                    }
-                    if wanted then
-                        queueOwned.byFamily[fam] =
-                            (tonumber(queueOwned.byFamily[fam]) or 0) + 1
-                        queueOwned.bySpell[spellId] =
-                            (tonumber(queueOwned.bySpell[spellId]) or 0) + 1
-                    end
-                end
-            end
-        end
-    end
-    return out
+    return { entries = {}, random = true }
 end
 
 ------------------------------------------------------------------------
 -- Exact wishlist targets: the ONE coverage identity every consumer shares.
 --
--- Coverage is counted per exact spellId, never per family. The server
--- serializes and guarantees exact spell IDs, so an Uncommon Quick Hands is
--- persistence filler that will occupy a future guaranteed slot -- not one of
--- the five Rare copies the wishlist asked for. A player who genuinely wants
+-- Coverage is counted per exact spellId, never per family. An Uncommon Quick
+-- Hands is persistence filler, not one of the five Rare copies the wishlist
+-- asked for. A player who genuinely wants
 -- lower tiers says so with a multi-tier wishlist entry, which arrives here as
 -- separate qualityTiers rows and is counted tier by tier.
 --
@@ -365,12 +282,11 @@ function M.Dominates(candidateOwned, incumbentEchoes, plan, catalog, forcedBySpe
     end
 
     -- A newly-added lower-quality sibling of a wished family is persistent
-    -- poison: it can become part of the next Saved Build guarantee
-    -- sequence. Tracked per-spell (forced vs avoidable) rather than an
+    -- pollution in the saved baseline. Tracked per-spell (forced vs avoidable) rather than an
     -- automatic veto, same reasoning as exact-target excess above.
     -- Removing one of these is real cleanup, not a coverage loss: it frees a
-    -- guaranteed-queue slot that would otherwise keep re-delivering the wrong
-    -- tier. Tracked symmetrically with the added case (wrongQShed) so the gate
+    -- saved-baseline entry that would otherwise keep the wrong tier. Tracked
+    -- symmetrically with the added case (wrongQShed) so the gate
     -- can credit a run for clearing them instead of only ever punishing their
     -- arrival -- otherwise a pure wrong-quality cleanup pass scores zero and
     -- gets blocked by the cleanup branch below.
@@ -473,9 +389,10 @@ function M.Dominates(candidateOwned, incumbentEchoes, plan, catalog, forcedBySpe
             return false, "cleanup-only save added new excess/wrong-quality pollution", diag
         end
         -- A clean one-for-one wishlist rotation advances convergence even
-        -- though aggregate exact progress is unchanged: the next run can
-        -- guarantee the newly acquired target and search for the rotated-out
-        -- target. New filler or persistence pollution still blocks the save.
+        -- though aggregate exact progress is unchanged: the new baseline keeps
+        -- the acquired target while later random boards search for the
+        -- rotated-out target. New filler or persistence pollution still blocks
+        -- the save.
         if gainedStacks > 0 and lostStacks > 0
             and fillerDelta <= 0 and unrelatedFillerDelta <= 0 then
             return true, string.format(
@@ -572,25 +489,13 @@ function M.RunsEstimate(plan, owned, queue, support, catalog)
         local have, want = TargetProgress(plan, catalog, fam, owned)
         if have < want then pending = pending + 1 end
     end
-    local queued, seen = 0, {}
-    local entries = type(queue) == "table" and queue.entries or nil
-    if type(entries) == "table" then
-        for i = 1, #entries do
-            local e = entries[i]
-            local fam = type(e) == "table" and e.family or nil
-            if fam ~= nil and e.wanted and not seen[fam] then
-                seen[fam] = true
-                queued = queued + 1
-            end
-        end
-    end
     local text
     if pending == 0 then
         text = "wishlist complete - 0 wanted echoes pending"
     else
         text = string.format(
-            "~%d wishlist echo%s pending, %d in guaranteed queue (rate unmeasured)",
-            pending, pending == 1 and "" or "es", queued)
+            "~%d wishlist echo%s pending from random offerings (rate unmeasured)",
+            pending, pending == 1 and "" or "es")
     end
     return { text = text, unknown = true }
 end

@@ -8,7 +8,6 @@ Nexus.ServerStatus = M
 
 local rootFrame
 local scanner
-local elapsed = 0
 local hideHooked = false
 local cachedSummary = { mode = nil, tier = nil, ash = nil, gain = nil, intensity = nil, intensityLevel = nil, raw = "" }
 local cachedSignature = ""
@@ -162,12 +161,22 @@ end
 local function EnsureDefaultMode()
     NexusDB = NexusDB or {}
     if NexusDB.soulAshHudMode ~= "server" and NexusDB.soulAshHudMode ~= "nexus" then
-        NexusDB.soulAshHudMode = "nexus"
+        NexusDB.soulAshHudMode = Nexus.Release
+            and Nexus.Release.preferStockServerHud == true
+            and "server" or "nexus"
     end
 end
 
 local function UsingNexusHud()
     EnsureDefaultMode()
+    -- Emergency isolation is a hard override. The Beta 3 stock-HUD flag is
+    -- only a safe default: once the player explicitly chooses a HUD in the
+    -- Nexus menu, honor that choice instead of making the button a no-op.
+    if Nexus.Release and Nexus.Release.emergencyCommunityOff == true then
+        return false
+    end
+    if Nexus.Release and Nexus.Release.preferStockServerHud == true
+        and NexusDB.soulAshHudModeExplicit ~= true then return false end
     return NexusDB.soulAshHudMode == "nexus"
 end
 
@@ -210,11 +219,9 @@ function M.Init()
         rootFrame = nil
         hideHooked = false
     end)
-    scanner:SetScript("OnUpdate", function(_, dt)
-        elapsed = elapsed + (tonumber(dt) or 0)
-        if elapsed < 1.0 then return end
-        elapsed = 0
-
+    local scheduler = assert(Nexus.Scheduler, "Scheduler required")
+    scheduler.Init()
+    scheduler.Every("ui.server-status.scan", 1, function()
         if not rootFrame then FindFrames() end
         ApplyVisibility()
         local summary = ParseSummary(GetAllSourceTexts())
@@ -260,8 +267,13 @@ end
 function M.SetMode(mode)
     NexusDB = NexusDB or {}
     NexusDB.soulAshHudMode = mode == "server" and "server" or "nexus"
+    NexusDB.soulAshHudModeExplicit = true
+    -- Capture PEH's current text before hiding its root so the first Nexus HUD
+    -- repaint can merge Difficulty, Soul Ash, multiplier, and Intensity now.
+    if NexusDB.soulAshHudMode == "nexus" then M.GetSummary() end
     ApplyVisibility()
     if Nexus.Panel and Nexus.Panel.Refresh then Nexus.Panel.Refresh() end
+    return NexusDB.soulAshHudMode
 end
 
 local function CollectClickableChildren(frame, out, seen, depth)

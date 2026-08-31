@@ -7,8 +7,13 @@
 -- the exact Echo loadout published by that build.
 
 Nexus = Nexus or {}
+local DiagnosticHistory = Nexus.DiagnosticHistory
+if not (DiagnosticHistory and type(DiagnosticHistory.New) == "function") then
+    error("Nexus DiagnosticHistory must load before DpsCapture")
+end
 local DPS = {}
 Nexus.DpsCapture = DPS
+local Ranking = assert(Nexus.DpsRanking, "DpsRanking required")
 
 ------------------------------------------------------------------------
 -- Constants / state
@@ -43,8 +48,21 @@ local sampleTicker     = 0
 local lastTargetGUID   = nil
 local lastTargetName   = nil
 local sessionCategory  = nil
-local debugLog          = {}
 local MAX_DEBUG_LINES   = 120
+local DEBUG_TRIM_AT     = 150
+local DEBUG_TEXT_BYTES  = 2048
+local debugHistory      = DiagnosticHistory.New({
+    cap=MAX_DEBUG_LINES, trimAt=DEBUG_TRIM_AT,
+    maxTextBytes=DEBUG_TEXT_BYTES,
+})
+
+local function Measure(name, callback, ...)
+    local performance = Nexus and Nexus.Performance
+    if performance and type(performance.Measure) == "function" then
+        return performance.Measure(name, callback, ...)
+    end
+    return callback(...)
+end
 
 local TRAINING_DUMMIES = {
     [36476] = true, [36855] = true, [32541] = true, [30527] = true,
@@ -55,22 +73,27 @@ local LICH_KING_NPCS = { [36597] = true, [72523] = true, [36730] = true }
 
 local function Debug(msg)
     local stamp = (date and date("%H:%M:%S")) or tostring((GetTime and GetTime()) or 0)
-    debugLog[#debugLog + 1] = "[" .. stamp .. "] " .. tostring(msg)
-    while #debugLog > MAX_DEBUG_LINES do table.remove(debugLog, 1) end
+    debugHistory.Append("[" .. DiagnosticHistory.SafeText(stamp, 32) .. "] "
+        .. DiagnosticHistory.SafeText(msg, DEBUG_TEXT_BYTES))
 end
 
 function DPS.ClearDebugLog()
-    debugLog = {}
+    debugHistory.Clear()
 end
 
 function DPS.GetDebugLog()
     local out = { "Nexus DPS capture log", "" }
+    local debugLog = debugHistory.Snapshot()
     if #debugLog == 0 then
         out[#out + 1] = "No DPS activity logged this session."
     else
         for i = 1, #debugLog do out[#out + 1] = debugLog[i] end
     end
     return table.concat(out, "\n")
+end
+
+function DPS.DebugLogStats()
+    return debugHistory.Stats()
 end
 
 ------------------------------------------------------------------------
@@ -82,6 +105,62 @@ local function DB()
     NexusDB.dpsCapture = NexusDB.dpsCapture or {}
     return NexusDB.dpsCapture
 end
+
+local function BumpDps(reason, detail)
+    local revisions = Nexus and Nexus.Revisions
+    if revisions and type(revisions.Advance) == "function" then
+        detail = type(detail) == "table" and detail or {scope="all"}
+        if detail.reason == nil then detail.reason = reason end
+        pcall(revisions.Advance, revisions.DPS_CHANGED, detail)
+    end
+end
+
+local function RequestDataViewRefresh()
+    local refresh = Nexus and Nexus.ViewRefresh
+    if refresh and type(refresh.Request) == "function" then
+        return refresh.Request()
+    end
+    if Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then
+        return pcall(Nexus.CommunityBuilds.Refresh)
+    end
+end
+
+local function RequestRetention(reason)
+    local retention = Nexus and Nexus.DataRetention
+    if retention and type(retention.Request) == "function" then
+        pcall(retention.Request, reason)
+    end
+end
+
+local function ReleaseSupersededAutoBuild(buildId)
+    local retention = Nexus and Nexus.DataRetention
+    if buildId and retention
+        and type(retention.ReleaseSupersededAutoBuild) == "function" then
+        pcall(retention.ReleaseSupersededAutoBuild, buildId, NexusDB)
+    end
+end
+
+local function Catalog()
+    return Nexus and Nexus.BuildCatalog
+end
+
+local function CatalogGet(id)
+    local catalog = Catalog()
+    if not (catalog and catalog.Get) then return nil end
+    return catalog.Get(id)
+end
+
+local function CatalogAll()
+    local catalog = Catalog()
+    return catalog and catalog.All and catalog.All() or {}
+end
+
+local function CatalogPut(build)
+    local catalog = Catalog()
+    return catalog and catalog.Put and catalog.Put(build) or false
+end
+
+local ReferenceEvidence, StoredEchoes
 
 -- Version 4 stores only the data the feature needs:
 -- personalBest[fingerprint][category] = this character's highest pull
@@ -111,13 +190,18 @@ local function CharacterBestStore()
 end
 
 local function PlayerKey(name)
-    return tostring(name or "?"):lower()
+    local key = Ranking.PlayerKey(name)
+    return key ~= "" and key or "?"
+end
+
+local function NormalizeRealm(realm)
+    return Ranking.NormalizeRealm(realm)
 end
 
 local function CurrentRealm()
     local realm = GetNormalizedRealmName and GetNormalizedRealmName()
     if not realm or realm == "" then realm = GetRealmName and GetRealmName() end
-    return tostring(realm or "unknown"):lower():gsub("%s+", "")
+    return NormalizeRealm(realm) or "unknown"
 end
 
 local function OwnerKey(name, realm)
@@ -125,6 +209,13 @@ local function OwnerKey(name, realm)
     if name == "" then return nil end
     realm = tostring(realm or CurrentRealm()):lower():gsub("%s+", "")
     return name .. "@" .. realm
+end
+
+local function CharacterKey(name, ownerKey, realm)
+    local key = Ranking.CharacterKey({
+        player=name, ownerKey=ownerKey, realm=realm,
+    })
+    return key ~= "" and key or "?"
 end
 
 -- Repair legacy class metadata only for the exact character currently logged
@@ -140,7 +231,6 @@ local function RepairCurrentCharacterClass()
     local localOwner = OwnerKey(me, realm)
     if not localOwner then return false end
     local changed = false
-    local builds = NexusDB and NexusDB.communityBuilds or {}
     local character = CharacterBestStore()
     local personal = PersonalBestStore()
 
@@ -155,11 +245,20 @@ local function RepairCurrentCharacterClass()
                     and personal[row.fingerprint][category]
                 if prow then
                     if prow.class ~= class then prow.class = class; changed = true end
-                    prow.ownerKey = prow.ownerKey or localOwner
-                    prow.realm = prow.realm or realm
+                    if not prow.ownerKey then
+                        prow.ownerKey = localOwner
+                        changed = true
+                    end
+                    if not prow.realm then
+                        prow.realm = realm
+                        changed = true
+                    end
                 end
 
-                local build = row.buildId and builds[row.buildId]
+                -- This repair only needs the build attached to the matching
+                -- local row. CatalogAll() defensive-copies every saved Echo
+                -- and made opening the leaderboard pay the full catalog cost.
+                local build = row.buildId and CatalogGet(row.buildId) or nil
                 if build and build.autoDps then
                     local buildOwner = tostring(build.ownerKey or ""):lower()
                     local legacyOwned = buildOwner == ""
@@ -177,6 +276,7 @@ local function RepairCurrentCharacterClass()
                             local now = (time and time()) or 0
                             local old = tonumber(build.lastModified or build.postedAt) or 0
                             build.lastModified = now > old and now or old + 1
+                            CatalogPut(build)
                             changed = true
                         end
                     end
@@ -200,46 +300,67 @@ local function BetterRow(candidate, existing)
 end
 
 local function MigrateLegacyLeaderboard()
-    if legacyMigrated then return end
-    legacyMigrated = true
+    if legacyMigrated then return false end
     local db = DB()
     local me = (UnitName and UnitName("player")) or "?"
     local personal = PersonalBestStore()
     local character = CharacterBestStore()
+    local changed = false
 
-    -- Normalize any existing CharacterBestStore keys that were stored
-    -- with original casing (pre-PlayerKey-lowercase era). Collect all
-    -- non-lowercase keys and merge them into the canonical lowercase key.
+    -- Normalize existing public rows to realm-qualified identities whenever
+    -- their metadata permits it. Legacy rows without realm data retain their
+    -- old realm-less key until a later verified copy enriches them.
     for _, category in ipairs({ "dummy", "lk" }) do
         local bucket = character[category]
         if type(bucket) == "table" then
             local toMerge = {}
-            for k in pairs(bucket) do
-                if k ~= k:lower() then toMerge[#toMerge+1] = k end
+            for key, row in pairs(bucket) do
+                local target = CharacterKey(
+                    type(row) == "table" and row.player or key,
+                    type(row) == "table" and row.ownerKey or nil,
+                    type(row) == "table" and row.realm or nil)
+                if key ~= target then
+                    toMerge[#toMerge + 1] = {
+                        source=key, target=target, row=row,
+                    }
+                end
             end
-            for _, k in ipairs(toMerge) do
-                local lk = k:lower()
-                local row = bucket[k]
-                if BetterRow(row, bucket[lk]) then bucket[lk] = row end
-                bucket[k] = nil
+            for _, item in ipairs(toMerge) do bucket[item.source] = nil end
+            for _, item in ipairs(toMerge) do
+                if BetterRow(item.row, bucket[item.target]) then
+                    bucket[item.target] = item.row
+                    changed = true
+                end
+                changed = true
             end
         end
     end
 
     local function Consider(row, fingerprint, category, fallbackPlayer)
         if type(row) ~= "table" or not tonumber(row.dps) then return end
-        row.player = row.player or fallbackPlayer or "?"
-        row.fingerprint = row.fingerprint or fingerprint
+        if not row.player then
+            row.player = fallbackPlayer or "?"
+            changed = true
+        end
+        if not row.fingerprint and fingerprint then
+            row.fingerprint = fingerprint
+            changed = true
+        end
+        if ReferenceEvidence(row) then changed = true end
         if PlayerKey(row.player) == PlayerKey(me) and fingerprint then
             personal[fingerprint] = personal[fingerprint] or {}
             if BetterRow(row, personal[fingerprint][category]) then
                 personal[fingerprint][category] = row
+                changed = true
             end
         end
         local bucket = character[category]
         if bucket then
-            local pk = PlayerKey(row.player)
-            if BetterRow(row, bucket[pk]) then bucket[pk] = row end
+            local pk = CharacterKey(row.player, row.ownerKey, row.realm)
+            if BetterRow(row, bucket[pk]) then
+                bucket[pk] = row
+                changed = true
+            end
         end
     end
 
@@ -267,6 +388,16 @@ local function MigrateLegacyLeaderboard()
             end
         end
     end
+    if changed then BumpDps("legacy DPS migrated") end
+    legacyMigrated = true
+    return changed
+end
+
+-- Store.Init calls this after the build catalog/evidence pool are bound and
+-- before startup retention. Keeping the migration callable also makes the
+-- ordering contract explicit and regression-testable.
+function DPS.MigrateLegacyLeaderboard()
+    return MigrateLegacyLeaderboard()
 end
 
 ------------------------------------------------------------------------
@@ -377,6 +508,32 @@ local function LockedKey(echoes)
     return EchoKey(NormalizeEchoes(echoes)) or "0"
 end
 
+ReferenceEvidence = function(row)
+    local compaction = Nexus and Nexus.DataCompaction
+    if compaction and type(compaction.Enabled) == "function"
+        and compaction.Enabled(NexusDB)
+        and type(compaction.CompactDpsRow) == "function" then
+        local ok, changed = pcall(compaction.CompactDpsRow, row)
+        if ok then return changed == true end
+    end
+    local evidence = Nexus and Nexus.LoadoutEvidence
+    if evidence and type(evidence.ReferenceDpsRow) == "function" then
+        local ok, changed = pcall(evidence.ReferenceDpsRow, row)
+        return ok and changed == true
+    end
+    return false
+end
+
+StoredEchoes = function(row, locked)
+    if type(row) ~= "table" then return nil end
+    local evidence = Nexus and Nexus.LoadoutEvidence
+    if evidence and type(evidence.ResolveDpsEchoes) == "function" then
+        local ok, echoes = pcall(evidence.ResolveDpsEchoes, row, locked == true)
+        if ok and type(echoes) == "table" then return echoes end
+    end
+    return NormalizeEchoes(row[locked and "lockedEchoes" or "echoes"])
+end
+
 -- Locked perks can arrive from the server after a combat record is committed.
 -- Backfill this character's public rows once the API becomes ready so the
 -- metadata is not permanently lost just because GetLockedPerks was late.
@@ -392,13 +549,17 @@ local function BackfillLocalLockedRows()
     end)() or nil)
     if not snap then return false end
 
-    local me = PlayerKey((UnitName and UnitName("player")) or "?")
+    local meName = (UnitName and UnitName("player")) or "?"
+    local me = CharacterKey(meName, OwnerKey(meName), CurrentRealm())
+    local legacyMe = PlayerKey(meName)
     local changed = false
     local changedRows = {}
     for _, category in ipairs({ "dummy", "lk" }) do
-        local row = CharacterBestStore()[category][me]
-        if row and LockedKey(row.lockedEchoes) ~= LockedKey(snap) then
+        local bucket = CharacterBestStore()[category]
+        local row = bucket[me] or bucket[legacyMe]
+        if row and LockedKey(StoredEchoes(row, true)) ~= LockedKey(snap) then
             row.lockedEchoes = snap
+            ReferenceEvidence(row)
             changed = true
             changedRows[#changedRows + 1] = row
         end
@@ -431,7 +592,7 @@ local function CorrectLockedRows(store, lockedBySpell)
     local moves = {}
     for oldKey, categories in pairs(store) do
         for category, row in pairs(type(categories) == "table" and categories or {}) do
-            local oldEchoes = row and NormalizeEchoes(row.echoes)
+            local oldEchoes = StoredEchoes(row, false)
             if oldEchoes then
                 local corrected = {}
                 for _, e in ipairs(oldEchoes) do
@@ -454,6 +615,7 @@ local function CorrectLockedRows(store, lockedBySpell)
         local current = store[m.newKey][m.category]
         if not current or (tonumber(m.row.dps) or 0) > (tonumber(current.dps) or 0) then
             m.row.echoes, m.row.fingerprint = m.echoes, m.newKey
+            ReferenceEvidence(m.row)
             store[m.newKey][m.category] = m.row
         end
         -- Only clear the old slot after successfully writing the new one
@@ -476,6 +638,31 @@ local function DeepCopy(value, seen)
     return copy
 end
 
+function DPS.MaterializeRecord(row)
+    if type(row) ~= "table" then return nil end
+    local evidence = Nexus and Nexus.LoadoutEvidence
+    if evidence and type(evidence.ResolveDpsRow) == "function" then
+        local ok, resolved = pcall(evidence.ResolveDpsRow, row)
+        if ok and type(resolved) == "table" then return resolved end
+    end
+    return DeepCopy(row)
+end
+
+local function DeepEqual(left, right, seen)
+    if left == right then return true end
+    if type(left) ~= type(right) or type(left) ~= "table" then return false end
+    seen = seen or {}
+    if seen[left] then return seen[left] == right end
+    seen[left] = right
+    for key, value in pairs(left) do
+        if not DeepEqual(value, right[key], seen) then return false end
+    end
+    for key in pairs(right) do
+        if left[key] == nil then return false end
+    end
+    return true
+end
+
 local function MigrateLocalLockedBaseline()
     if migratedLockedBaseline then return end
     local db = DB()
@@ -490,6 +677,18 @@ local function MigrateLocalLockedBaseline()
     end
     MigrateLegacyLeaderboard()
     local lockedBySpell = locked and locked.bySpell or {}
+    local beforeState = {
+        personalBest=DeepCopy(PersonalBestStore()),
+        buildBest=DeepCopy(BuildBestStore()),
+        characterBest=DeepCopy(CharacterBestStore()),
+    }
+    local function RevisionIfChanged()
+        local changed = not DeepEqual(beforeState.personalBest, PersonalBestStore())
+            or not DeepEqual(beforeState.buildBest, BuildBestStore())
+            or not DeepEqual(beforeState.characterBest, CharacterBestStore())
+        if changed then BumpDps("locked baseline migrated") end
+        return changed
+    end
 
     -- Preserve an immutable source before any subtraction. An interrupted
     -- pass restores this snapshot and recomputes instead of subtracting twice.
@@ -515,7 +714,7 @@ local function MigrateLocalLockedBaseline()
         if anyLocked then
             for _, category in ipairs({ "dummy", "lk" }) do
                 for _, row in pairs(character[category] or {}) do
-                    local oldEchoes = row and NormalizeEchoes(row.echoes)
+                    local oldEchoes = StoredEchoes(row, false)
                     if oldEchoes then
                         local corrected = {}
                         for _, e in ipairs(oldEchoes) do
@@ -531,42 +730,120 @@ local function MigrateLocalLockedBaseline()
                         if newKey and newKey ~= row.fingerprint then
                             row.echoes, row.fingerprint = corrected, newKey
                             row.loadoutHash = EchoHashFromKey(newKey)
+                            ReferenceEvidence(row)
                         end
                     end
                 end
             end
         end
     end)
-    if not ok then return end
+    if not ok then RevisionIfChanged(); return end
     db.lockedMigrationSource = nil
     db.lockedMigrationVersion = LOCKED_MIGRATION_VERSION
     migratedLockedBaseline = true
+    RevisionIfChanged()
 end
 
 local function BuildSnapshot(build)
     return build and NormalizeEchoes(build.echoes)
 end
 
+-- Exact wishlist matching used to call BuildCatalog.All() on every HUD
+-- progress render. All() is intentionally defensive and deep-copies every
+-- Echo in every build, so the shipped 504-build/36k-Echo catalog made this
+-- single lookup take hundreds of milliseconds. Build lightweight identity
+-- summaries once per represented library revision, then hydrate only the one
+-- matching record.
+local buildMatchIndex = {
+    initialized=false, revisionSource=nil, observedRevision=nil,
+    byFingerprint={},
+    stats={rebuilds=0, summariesScanned=0, hydratedMissing=0, lookups=0},
+}
+
+local function CurrentBuildRevision()
+    local revisions = Nexus and Nexus.Revisions
+    local revision = revisions and type(revisions.Get) == "function"
+        and revisions.Get(revisions.BUILD_LIBRARY_CHANGED) or nil
+    return revisions, revision
+end
+
+local function PreferBuildMatch(existing, id, build)
+    local candidate = {id=id, autoDps=build and build.autoDps == true}
+    if not existing then return candidate end
+    if existing.autoDps ~= candidate.autoDps then
+        return existing.autoDps and candidate or existing
+    end
+    return tostring(candidate.id) < tostring(existing.id)
+        and candidate or existing
+end
+
+local function RebuildBuildMatchIndex()
+    local catalog = Catalog()
+    local summaries = catalog and type(catalog.Summaries) == "function"
+        and catalog.Summaries() or {}
+    local byFingerprint = {}
+    local scanned, hydrated = 0, 0
+    for id, summary in pairs(summaries) do
+        scanned = scanned + 1
+        local fingerprint = type(summary) == "table" and summary.fingerprint or nil
+        local matchShape = summary
+        -- Old local overlays can predate stored fingerprints. Hydrate only
+        -- those exceptional rows once, never the complete catalog.
+        if type(fingerprint) ~= "string" or fingerprint == "" then
+            local build = CatalogGet(id)
+            hydrated = hydrated + 1
+            fingerprint = build and (build.fingerprint
+                or EchoKey(BuildSnapshot(build))) or nil
+            matchShape = build
+        end
+        if type(fingerprint) == "string" and fingerprint ~= "" then
+            byFingerprint[fingerprint] = PreferBuildMatch(
+                byFingerprint[fingerprint], id, matchShape)
+        end
+    end
+    buildMatchIndex.byFingerprint = byFingerprint
+    buildMatchIndex.initialized = true
+    buildMatchIndex.revisionSource, buildMatchIndex.observedRevision =
+        CurrentBuildRevision()
+    buildMatchIndex.stats.rebuilds = buildMatchIndex.stats.rebuilds + 1
+    buildMatchIndex.stats.summariesScanned =
+        buildMatchIndex.stats.summariesScanned + scanned
+    buildMatchIndex.stats.hydratedMissing =
+        buildMatchIndex.stats.hydratedMissing + hydrated
+end
+
+local function EnsureBuildMatchIndex()
+    local revisionSource, revision = CurrentBuildRevision()
+    if not buildMatchIndex.initialized
+        or buildMatchIndex.revisionSource ~= revisionSource
+        or revision == nil
+        or buildMatchIndex.observedRevision ~= revision then
+        RebuildBuildMatchIndex()
+    end
+end
+
 local function FindMatchingBuild(snap)
     local key = EchoKey(snap)
     if not key then return nil, nil end
-    local builds = (NexusDB and NexusDB.communityBuilds) or {}
-    local fallbackId, fallbackBuild
-    for id, build in pairs(builds) do
-        if (build.fingerprint or EchoKey(BuildSnapshot(build))) == key then
-            -- Prefer a player-authored build with its real title/description.
-            -- Auto-generated record pages are only a fallback when no posted
-            -- build exists for the exact same Echo IDs and stack quantities.
-            if not build.autoDps then return id, build end
-            fallbackId, fallbackBuild = fallbackId or id, fallbackBuild or build
-        end
-    end
-    return fallbackId, fallbackBuild
+    EnsureBuildMatchIndex()
+    buildMatchIndex.stats.lookups = buildMatchIndex.stats.lookups + 1
+    local match = buildMatchIndex.byFingerprint[key]
+    if not match then return nil, nil end
+    return match.id, CatalogGet(match.id)
+end
+
+function DPS.BuildMatchLookupStats()
+    local stats = buildMatchIndex.stats
+    return {
+        rebuilds=stats.rebuilds,
+        summariesScanned=stats.summariesScanned,
+        hydratedMissing=stats.hydratedMissing,
+        lookups=stats.lookups,
+    }
 end
 
 local function BuildKey(buildId)
-    local builds = (NexusDB and NexusDB.communityBuilds) or {}
-    local build = builds[buildId]
+    local build = CatalogGet(buildId)
     if not build then return nil, nil end
     local key = build.fingerprint or EchoKey(BuildSnapshot(build))
     if not key and build.fingerprintHash then key = "@"..tostring(build.fingerprintHash) end
@@ -688,6 +965,7 @@ local function StoreRow(store, key, category, create)
 end
 
 local function SetStoreRow(store, key, category, row)
+    ReferenceEvidence(row)
     store[key] = store[key] or {}
     store[key][category] = row
 end
@@ -711,6 +989,113 @@ local function GlobalForBuild(buildId, key, category)
     local bucket = CharacterBestStore()[category] or {}
     for _, row in pairs(bucket) do
         if RowMatchesBuild(row, buildId, key, hash) and BetterRow(row, best) then
+            best = row
+        end
+    end
+    return best
+end
+
+-- Community projections ask for two categories for every visible catalog
+-- candidate. Scanning every character row for each of those lookups made one
+-- refresh O(builds * DPS rows). Keep a revision-scoped identity index instead:
+-- one bounded store walk after represented DPS changes, then only exact
+-- candidate checks until the next revision.
+local identityIndex = {
+    initialized=false, revisionSource=nil, observedRevision=nil,
+    categories={dummy=nil,lk=nil},
+    stats={rebuilds=0,rowsScanned=0,indexedRows=0,lookups=0,candidateChecks=0},
+}
+
+local function IdentityPart(value)
+    if value == nil then return nil end
+    return type(value) .. ":" .. tostring(value)
+end
+
+local function AddIdentityRow(map, value, row)
+    local key = IdentityPart(value)
+    if not key then return end
+    local rows = map[key]
+    if not rows then rows = {}; map[key] = rows end
+    rows[#rows + 1] = row
+end
+
+local function NewIdentityCategory()
+    return {buildId={},fingerprint={},hash={}}
+end
+
+local function CurrentDpsRevision()
+    local revisions = Nexus and Nexus.Revisions
+    local revision = revisions and type(revisions.Get) == "function"
+        and revisions.Get(revisions.DPS_CHANGED) or nil
+    return revisions, revision
+end
+
+local function RebuildIdentityIndex()
+    MigrateLegacyLeaderboard()
+    local categories = {dummy=NewIdentityCategory(),lk=NewIdentityCategory()}
+    local scanned, indexed = 0, 0
+    local store = CharacterBestStore()
+    for _, category in ipairs({"dummy", "lk"}) do
+        local target = categories[category]
+        for _, row in pairs(store[category] or {}) do
+            scanned = scanned + 1
+            if type(row) == "table" then
+                local fingerprint = row.fingerprint
+                local hash = row.loadoutHash
+                    or (fingerprint and EchoHashFromKey(fingerprint))
+                AddIdentityRow(target.buildId, row.buildId, row)
+                AddIdentityRow(target.fingerprint, fingerprint, row)
+                AddIdentityRow(target.hash, hash, row)
+                indexed = indexed + 1
+            end
+        end
+    end
+    identityIndex.categories = categories
+    identityIndex.initialized = true
+    identityIndex.revisionSource, identityIndex.observedRevision =
+        CurrentDpsRevision()
+    identityIndex.stats.rebuilds = identityIndex.stats.rebuilds + 1
+    identityIndex.stats.rowsScanned = identityIndex.stats.rowsScanned + scanned
+    identityIndex.stats.indexedRows = indexed
+end
+
+local function EnsureIdentityIndex()
+    local revisionSource, revision = CurrentDpsRevision()
+    if not identityIndex.initialized
+        or identityIndex.revisionSource ~= revisionSource
+        or revision == nil
+        or identityIndex.observedRevision ~= revision then
+        RebuildIdentityIndex()
+    end
+end
+
+local function AddIdentityCandidates(out, seen, rows)
+    for _, row in ipairs(type(rows) == "table" and rows or {}) do
+        if not seen[row] then
+            seen[row] = true
+            out[#out + 1] = row
+        end
+    end
+end
+
+local function GlobalForIdentity(buildId, key, hash, category)
+    EnsureIdentityIndex()
+    identityIndex.stats.lookups = identityIndex.stats.lookups + 1
+    local best
+    local index = identityIndex.categories[category]
+        or NewIdentityCategory()
+    local candidates, seen = {}, {}
+    AddIdentityCandidates(candidates, seen,
+        index.buildId[IdentityPart(buildId)])
+    AddIdentityCandidates(candidates, seen,
+        index.fingerprint[IdentityPart(key)])
+    AddIdentityCandidates(candidates, seen,
+        index.hash[IdentityPart(hash)])
+    for _, row in ipairs(candidates) do
+        identityIndex.stats.candidateChecks =
+            identityIndex.stats.candidateChecks + 1
+        if RowMatchesBuild(row, buildId, key, hash)
+            and BetterRow(row, best) then
             best = row
         end
     end
@@ -759,6 +1144,37 @@ function DPS.GetLeaderboard(buildId, category)
     return key and SortedEntries(GlobalForBuild(buildId, key, category)) or {}
 end
 
+-- Projection-facing lookup. BuildCatalog summaries already carry the stable
+-- identity fields, so browser refreshes need not hydrate/copy every Echo list
+-- merely to find a DPS row.
+function DPS.GetLeaderboardForIdentity(buildId, fingerprint, fingerprintHash, category)
+    local key = type(fingerprint) == "string" and fingerprint or nil
+    local hash = fingerprintHash ~= nil and tostring(fingerprintHash) or nil
+    if not key and not hash then return {} end
+    return SortedEntries(GlobalForIdentity(buildId, key, hash, category))
+end
+
+-- Detail-facing lookup. Unlike the compact leaderboard result above, this
+-- returns one defensive full record so locked-Echo metadata can be rendered
+-- without materializing and scanning every public character row.
+function DPS.GetBestRecordForIdentity(buildId, fingerprint, fingerprintHash,
+                                      category)
+    local key = type(fingerprint) == "string" and fingerprint or nil
+    local hash = fingerprintHash ~= nil and tostring(fingerprintHash) or nil
+    if not key and not hash then return nil end
+    return DPS.MaterializeRecord(
+        GlobalForIdentity(buildId, key, hash, category))
+end
+
+function DPS.IdentityLookupStats()
+    local stats = identityIndex.stats
+    return {
+        rebuilds=stats.rebuilds, rowsScanned=stats.rowsScanned,
+        indexedRows=stats.indexedRows, lookups=stats.lookups,
+        candidateChecks=stats.candidateChecks,
+    }
+end
+
 -- A build is Details-verified only when a valid public record exists for its
 -- exact loadout and the capture met the shared 30-second evidence floor.
 function DPS.GetBuildVerification(buildId)
@@ -781,11 +1197,13 @@ end
 
 function DPS.GetPersonalBest(buildId, category)
     local key = BuildKey(buildId)
-    return key and PersonalForBuild(buildId, key, category) or nil
+    return key and DPS.MaterializeRecord(
+        PersonalForBuild(buildId, key, category)) or nil
 end
 
 function DPS.GetBestRecordForEchoes(echoes, category)
-    return GlobalForKey(DPS.GetEchoKey(echoes), category)
+    return DPS.MaterializeRecord(
+        GlobalForKey(DPS.GetEchoKey(echoes), category))
 end
 
 local function HashStrings(items)
@@ -816,10 +1234,14 @@ local function SplitBucketHash(value)
     return out
 end
 
-function DPS.GetSyncHash()
-    MigrateLocalLockedBaseline()
-    MigrateLegacyLeaderboard()
-    BackfillLocalLockedRows()
+local function DpsHashEntry(category, playerKey, row)
+    if not (row and (tonumber(row.dps) or 0) > 0) then return nil end
+    return table.concat({ category, tostring(playerKey),
+        tostring(math.floor(tonumber(row.dps) or 0)),
+        tostring(row.loadoutHash or EchoHashFromKey(row.fingerprint or "") or "0") }, "|")
+end
+
+local function ComputeDpsSyncHash()
     local buckets = {}
     for i = 1, DPS_BUCKETS do buckets[i] = {} end
     local store = CharacterBestStore()
@@ -827,15 +1249,167 @@ function DPS.GetSyncHash()
         for playerKey, row in pairs(store[category] or {}) do
             if row and (tonumber(row.dps) or 0) > 0 then
                 local b = DpsBucket(category, playerKey)
-                buckets[b][#buckets[b]+1] = table.concat({ category, tostring(playerKey),
-                    tostring(math.floor(tonumber(row.dps) or 0)),
-                    tostring(row.loadoutHash or EchoHashFromKey(row.fingerprint or "") or "0") }, "|")
+                buckets[b][#buckets[b]+1] = DpsHashEntry(category, playerKey, row)
             end
         end
     end
     local hashes = {}
     for i = 1, DPS_BUCKETS do hashes[i] = #buckets[i] > 0 and HashStrings(buckets[i]) or "0" end
     return table.concat(hashes, ",")
+end
+
+local dpsHashCache = {
+    initialized=false, entries={}, hashes={}, dirty={},
+    revisionSource=nil, observedRevision=nil,
+    stats={
+        hits=0, collectionWalks=0, fullRebuilds=0,
+        bucketRebuilds=0, targetedInvalidations=0, fullInvalidations=0,
+    },
+}
+
+local function NewDpsBuckets()
+    local buckets = {}
+    for bucket = 1, DPS_BUCKETS do buckets[bucket] = {} end
+    return buckets
+end
+
+local function RebuildDpsBucket(bucket)
+    local values = {}
+    for _, value in pairs(dpsHashCache.entries[bucket] or {}) do
+        values[#values + 1] = value
+    end
+    dpsHashCache.hashes[bucket] = #values > 0 and HashStrings(values) or "0"
+    dpsHashCache.dirty[bucket] = nil
+    dpsHashCache.stats.bucketRebuilds = dpsHashCache.stats.bucketRebuilds + 1
+end
+
+local function WarmDpsHashCache()
+    local entries = NewDpsBuckets()
+    local store = CharacterBestStore()
+    dpsHashCache.stats.collectionWalks = dpsHashCache.stats.collectionWalks + 1
+    for _, category in ipairs({ "dummy", "lk" }) do
+        for playerKey, row in pairs(store[category] or {}) do
+            local entry = DpsHashEntry(category, playerKey, row)
+            if entry then
+                local bucket = DpsBucket(category, playerKey)
+                entries[bucket][category .. "|" .. tostring(playerKey)] = entry
+            end
+        end
+    end
+    dpsHashCache.entries, dpsHashCache.hashes, dpsHashCache.dirty = entries, {}, {}
+    for bucket = 1, DPS_BUCKETS do
+        dpsHashCache.dirty[bucket] = true
+        RebuildDpsBucket(bucket)
+    end
+    dpsHashCache.initialized = true
+    dpsHashCache.stats.fullRebuilds = dpsHashCache.stats.fullRebuilds + 1
+    local revisions = Nexus and Nexus.Revisions
+    dpsHashCache.observedRevision = revisions and revisions.Get
+        and revisions.Get(revisions.DPS_CHANGED) or nil
+end
+
+local function InvalidateAllDpsHashes()
+    if dpsHashCache.initialized then
+        dpsHashCache.initialized = false
+        dpsHashCache.stats.fullInvalidations = dpsHashCache.stats.fullInvalidations + 1
+    end
+end
+
+local function UpdateDpsHashRecord(category, player, ownerKey, realm,
+        characterKey, previousCharacterKey)
+    if not dpsHashCache.initialized then return end
+    if category ~= "dummy" and category ~= "lk" then
+        InvalidateAllDpsHashes()
+        return
+    end
+    local playerKey = characterKey
+        or CharacterKey(player, ownerKey, realm)
+    if previousCharacterKey and previousCharacterKey ~= playerKey then
+        local previousBucket = DpsBucket(category, previousCharacterKey)
+        dpsHashCache.entries[previousBucket]
+            [category .. "|" .. previousCharacterKey] = nil
+        dpsHashCache.dirty[previousBucket] = true
+    end
+    local bucket = DpsBucket(category, playerKey)
+    local row = CharacterBestStore()[category][playerKey]
+    dpsHashCache.entries[bucket][category .. "|" .. playerKey] =
+        DpsHashEntry(category, playerKey, row)
+    dpsHashCache.dirty[bucket] = true
+    dpsHashCache.stats.targetedInvalidations =
+        dpsHashCache.stats.targetedInvalidations + 1
+end
+
+local function OnDpsRevision(_, revision, detail)
+    dpsHashCache.observedRevision = revision
+    if type(detail) == "table" and detail.scope == "record"
+        and detail.category and detail.player then
+        UpdateDpsHashRecord(detail.category, detail.player,
+            detail.ownerKey, detail.realm, detail.characterKey,
+            detail.previousCharacterKey)
+    elseif type(detail) ~= "table"
+        or (detail.scope ~= "local" and detail.scope ~= "metadata") then
+        InvalidateAllDpsHashes()
+    end
+end
+
+local function EnsureDpsHashSubscription()
+    local revisions = Nexus and Nexus.Revisions
+    if not (revisions and type(revisions.Subscribe) == "function") then return end
+    if dpsHashCache.revisionSource ~= revisions then
+        dpsHashCache.revisionSource = revisions
+        dpsHashCache.observedRevision = revisions.Get
+            and revisions.Get(revisions.DPS_CHANGED) or nil
+        revisions.Subscribe(revisions.DPS_CHANGED, OnDpsRevision)
+        InvalidateAllDpsHashes()
+    end
+end
+
+local function CachedDpsSyncHash()
+    EnsureDpsHashSubscription()
+    local revisions = Nexus and Nexus.Revisions
+    local currentRevision = revisions and revisions.Get
+        and revisions.Get(revisions.DPS_CHANGED) or nil
+    if dpsHashCache.initialized and currentRevision ~= nil
+        and dpsHashCache.observedRevision ~= nil
+        and currentRevision ~= dpsHashCache.observedRevision then
+        InvalidateAllDpsHashes()
+    end
+    if not dpsHashCache.initialized then WarmDpsHashCache() end
+    local rebuilt = false
+    for bucket = 1, DPS_BUCKETS do
+        if dpsHashCache.dirty[bucket] then
+            RebuildDpsBucket(bucket)
+            rebuilt = true
+        end
+    end
+    if not rebuilt then dpsHashCache.stats.hits = dpsHashCache.stats.hits + 1 end
+    return table.concat(dpsHashCache.hashes, ",")
+end
+
+function DPS.GetSyncHash()
+    MigrateLocalLockedBaseline()
+    MigrateLegacyLeaderboard()
+    if BackfillLocalLockedRows() then
+        BumpDps("locked metadata backfilled", {scope="metadata"})
+    end
+    return CachedDpsSyncHash()
+end
+
+function DPS.GetSyncHashUncached()
+    MigrateLocalLockedBaseline()
+    MigrateLegacyLeaderboard()
+    if BackfillLocalLockedRows() then
+        BumpDps("locked metadata backfilled", {scope="metadata"})
+    end
+    return ComputeDpsSyncHash()
+end
+
+function DPS.HashCacheStats()
+    local out = {}
+    for key, value in pairs(dpsHashCache.stats) do out[key] = value end
+    out.initialized = dpsHashCache.initialized
+    out.revision = dpsHashCache.observedRevision
+    return out
 end
 
 -- Broadcast only the single highest known result for this exact build.
@@ -854,8 +1428,8 @@ function DPS.BroadcastBestForBuild(buildId)
                     duration = tonumber(row.duration) or 0, ts = tonumber(row.ts) or 0,
                     player = row.player or "?", level = tonumber(row.level) or 0, buildId = buildId,
                     class = row.class, ownerKey = row.ownerKey, realm = row.realm,
-                    echoes = row.echoes or BuildSnapshot(build),
-                    lockedEchoes = row.lockedEchoes,
+                    echoes = StoredEchoes(row, false) or BuildSnapshot(build),
+                    lockedEchoes = StoredEchoes(row, true),
                 }
                 local ok, result = pcall(Sync.BroadcastDpsRecord, record)
                 if ok and result ~= false then sent = true end
@@ -865,101 +1439,175 @@ function DPS.BroadcastBestForBuild(buildId)
     return sent
 end
 
-function DPS.BroadcastAllBuildBests(peerHash, onlyBucket, progress)
-    if peerHash and tostring(peerHash) == tostring(DPS.GetSyncHash()) then
-        return 0, true
-    end
+function DPS.BroadcastAllBuildBests(peerHash, onlyBucket, progress, maxItems,
+                                    localOnly)
+    local localHash = tostring(DPS.GetSyncHash())
+    if peerHash and tostring(peerHash) == localHash then return 0, true end
     progress = type(progress) == "table" and progress or {}
     MigrateLegacyLeaderboard()
     local peerBuckets = SplitBucketHash(peerHash)
-    local myBuckets = SplitBucketHash(DPS.GetSyncHash())
+    local myBuckets = SplitBucketHash(localHash)
     local legacyPeer = #peerBuckets ~= DPS_BUCKETS
-    local n, complete = 0, true
+    local stateKey = table.concat({tostring(peerHash or "0"),
+        tostring(onlyBucket or "*"), localHash,
+        localOnly and "local" or "mesh"}, "|")
+    local state = progress._responseState
+    if state and state.key ~= stateKey then
+        progress._responseState = nil
+        state = nil
+    end
+    if not state then
+        state = {key=stateKey, localHash=localHash, categoryIndex=1,
+            cursor=nil, scanComplete=false, candidates={}, sendCursor=1}
+        progress._responseState = state
+    elseif tostring(DPS.GetSyncHash()) ~= state.localHash then
+        progress._responseState = nil
+        return 0, false, true, "stale candidate snapshot"
+    end
+
+    local limit = tonumber(maxItems)
+    if not limit or limit < 1 then limit = math.huge end
+    local work, n, progressed = 0, 0, false
+    local categories = {"dummy", "lk"}
     local store = CharacterBestStore()
-    local candidates = {}
-    for _, category in ipairs({ "dummy", "lk" }) do
-        for playerKey, row in pairs(store[category] or {}) do
-            local bucket = DpsBucket(category, playerKey)
-            if (not onlyBucket or bucket == onlyBucket) and (legacyPeer or tostring(peerBuckets[bucket] or "") ~= tostring(myBuckets[bucket] or ""))
-                and row and (tonumber(row.dps) or 0) > 0 and Sync and Sync.BroadcastDpsRecord then
-                local loadoutHash = row.loadoutHash
-                    or EchoHashFromKey(row.fingerprint or "")
-                candidates[#candidates + 1] = {
-                    key=table.concat({ category, tostring(playerKey),
-                        tostring(math.floor(tonumber(row.dps) or 0)),
-                        tostring(loadoutHash or "0") }, "|"),
-                    category=category, row=row, loadoutHash=loadoutHash,
-                }
-            end
-        end
-    end
-    table.sort(candidates, function(a, b) return a.key < b.key end)
-    for _, item in ipairs(candidates) do
-        if not progress[item.key] then
-            local row, category = item.row, item.category
-            local record = {
-                protocolVersion=PROTOCOL_VERSION, fingerprint=row.fingerprint,
-                loadoutHash=item.loadoutHash,
-                category=category, dps=math.floor(tonumber(row.dps) or 0),
-                duration=tonumber(row.duration) or 0, ts=tonumber(row.ts) or 0,
-                player=row.player or "?", level=tonumber(row.level) or 0,
-                buildId=row.buildId, class=row.class, ownerKey=row.ownerKey,
-                realm=row.realm, echoes=row.echoes,
-                lockedEchoes=row.lockedEchoes,
-            }
-            local ok, result, why=pcall(Sync.BroadcastDpsRecord,record)
-            if ok and result~=false then
-                progress[item.key] = "admitted"
-                n=n+1
-                -- Also broadcast the build's echo list so peers can view and
-                -- copy it. DPS progress does not depend on this convenience
-                -- copy because the record already carries exact Echo evidence.
-                local build = row.buildId
-                    and (NexusDB and NexusDB.communityBuilds or {})[row.buildId]
-                if build and type(build.echoes)=="table"
-                    and #build.echoes>0 and Sync.BroadcastBuild then
-                    pcall(Sync.BroadcastBuild, build)
-                end
-            elseif not ok or why == "sync queue full" then
-                -- Stop at the first transient failure. The caller preserves
-                -- progress so the next attempt resumes here.
-                complete=false
-                break
+    local me = (UnitName and UnitName("player")) or "?"
+    local localCharacterKey = CharacterKey(me, OwnerKey(me), CurrentRealm())
+    while work < limit do
+        if not state.scanComplete then
+            local category = categories[state.categoryIndex]
+            if not category then
+                state.scanComplete = true
+                progressed = true
+                work = work + 1
             else
-                -- Invalid/non-owner records are not retryable queue work.
+                local playerKey, row = next(store[category] or {}, state.cursor)
+                work = work + 1
+                progressed = true
+                if playerKey == nil then
+                    state.categoryIndex = state.categoryIndex + 1
+                    state.cursor = nil
+                else
+                    state.cursor = playerKey
+                    local bucket = DpsBucket(category, playerKey)
+                    if (not onlyBucket or bucket == onlyBucket)
+                        and (legacyPeer or tostring(peerBuckets[bucket] or "")
+                            ~= tostring(myBuckets[bucket] or ""))
+                        and row and (tonumber(row.dps) or 0) > 0
+                        and (not localOnly or CharacterKey(row.player,
+                            row.ownerKey, row.realm) == localCharacterKey)
+                        and Sync and Sync.BroadcastDpsRecord then
+                        local loadoutHash = row.loadoutHash
+                            or EchoHashFromKey(row.fingerprint or "")
+                        local key = table.concat({category, tostring(playerKey),
+                            tostring(math.floor(tonumber(row.dps) or 0)),
+                            tostring(loadoutHash or "0")}, "|")
+                        state.candidates[#state.candidates + 1] = {
+                            key=key,
+                            record={
+                                protocolVersion=PROTOCOL_VERSION,
+                                fingerprint=row.fingerprint,
+                                loadoutHash=loadoutHash,
+                                category=category,
+                                dps=math.floor(tonumber(row.dps) or 0),
+                                duration=tonumber(row.duration) or 0,
+                                ts=tonumber(row.ts) or 0,
+                                player=row.player or "?",
+                                level=tonumber(row.level) or 0,
+                                buildId=row.buildId, class=row.class,
+                                ownerKey=row.ownerKey, realm=row.realm,
+                                echoes=StoredEchoes(row, false),
+                                lockedEchoes=StoredEchoes(row, true),
+                            },
+                        }
+                    end
+                end
+            end
+        else
+            while state.sendCursor <= #state.candidates
+                and progress[state.candidates[state.sendCursor].key] do
+                state.sendCursor = state.sendCursor + 1
+            end
+            if state.sendCursor > #state.candidates then
+                return n, true, progressed
+            end
+            local item = state.candidates[state.sendCursor]
+            work = work + 1
+            local ok, result, why, retryPrepared = pcall(
+                Sync.BroadcastDpsRecord, item.record, item.prepared, true)
+            if ok and result ~= false then
+                progress[item.key] = "admitted"
+                state.sendCursor = state.sendCursor + 1
+                item.prepared = nil
+                n, progressed = n + 1, true
+            elseif ok and why == "sync queue full" then
+                item.prepared = retryPrepared or item.prepared
+                return n, false, progressed, why
+            else
                 progress[item.key] = "skipped"
+                state.sendCursor = state.sendCursor + 1
+                item.prepared = nil
+                progressed = true
             end
         end
     end
-    return n, complete
+    local complete = state.scanComplete
+        and state.sendCursor > #state.candidates
+    return n, complete, progressed
 end
 
 -- Public board: one row per character for the selected encounter. The row is
 -- that character's highest known DPS and retains the exact winning loadout.
 function DPS.GetDpsBoard(category)
     if category ~= "dummy" and category ~= "lk" then return {} end
-    MigrateLocalLockedBaseline()
-    MigrateLegacyLeaderboard()
-    RepairCurrentCharacterClass()
-    BackfillLocalLockedRows()
+    Measure("leaderboard.board.migrations", function()
+        Measure("leaderboard.board.locked-baseline", MigrateLocalLockedBaseline)
+        Measure("leaderboard.board.legacy", MigrateLegacyLeaderboard)
+        local repaired = Measure(
+            "leaderboard.board.class", RepairCurrentCharacterClass)
+        if repaired then
+            BumpDps("local class repaired", {scope="metadata"})
+        end
+        local backfilled = Measure(
+            "leaderboard.board.locked-backfill", BackfillLocalLockedRows)
+        if backfilled then
+            BumpDps("locked metadata backfilled", {scope="metadata"})
+        end
+    end)
     local out = {}
     local seenPlayer = {}   -- dedup by lowercase player name
+    local performance = Nexus and Nexus.Performance
+    local rowsStarted = performance and performance.Begin
+        and performance.Begin("leaderboard.board.rows")
     for _, row in pairs(CharacterBestStore()[category] or {}) do
         if type(row) == "table" and (tonumber(row.dps) or 0) > 0 then
             local buildId = row.buildId
-            local build = (NexusDB and NexusDB.communityBuilds or {})[buildId]
-            if not build and row.echoes then
-                buildId, build = FindMatchingBuild(NormalizeEchoes(row.echoes))
+            local build = CatalogGet(buildId)
+            local rowEchoes = StoredEchoes(row, false)
+            if build and rowEchoes then
+                local buildKey = build.fingerprint
+                    or EchoKey(BuildSnapshot(build))
+                if row.fingerprint and buildKey
+                    and tostring(buildKey) ~= tostring(row.fingerprint) then
+                    -- An opaque claimed ID may collide with an unrelated page.
+                    -- Keep the verified row exact and detach only the bad view
+                    -- association; the evidence itself remains independently
+                    -- usable and copyable.
+                    build = nil
+                end
             end
-            if build then
-                local pkey = PlayerKey(row.player or "?")
+            if not build and rowEchoes then
+                buildId, build = FindMatchingBuild(rowEchoes)
+            end
+            if build or rowEchoes then
+                local pkey = CharacterKey(row.player or "?",
+                    row.ownerKey, row.realm)
                 local entry = {
                     player = row.player or "?", dps = math.floor(tonumber(row.dps) or 0),
                     class = row.class, ownerKey = row.ownerKey, realm = row.realm,
                     level = tonumber(row.level) or 0, ts = tonumber(row.ts) or 0,
                     duration = tonumber(row.duration) or 0, category = category,
-                    fingerprint = row.fingerprint, echoes = NormalizeEchoes(row.echoes) or BuildSnapshot(build),
-                    lockedEchoes = row.lockedEchoes,
+                    fingerprint = row.fingerprint, echoes = rowEchoes or BuildSnapshot(build),
+                    lockedEchoes = StoredEchoes(row, true),
                     buildId = buildId, build = build,
                 }
                 -- Keep only the highest-DPS entry per player
@@ -973,10 +1621,15 @@ function DPS.GetDpsBoard(category)
             end
         end
     end
-    table.sort(out, function(a, b)
-        if a.dps ~= b.dps then return a.dps > b.dps end
-        if a.ts ~= b.ts then return a.ts < b.ts end
-        return tostring(a.player):lower() < tostring(b.player):lower()
+    if performance and performance.Finish then
+        performance.Finish("leaderboard.board.rows", rowsStarted)
+    end
+    Measure("leaderboard.board.sort", function()
+        table.sort(out, function(a, b)
+            if a.dps ~= b.dps then return a.dps > b.dps end
+            if a.ts ~= b.ts then return a.ts < b.ts end
+            return tostring(a.player):lower() < tostring(b.player):lower()
+        end)
     end)
     return out
 end
@@ -990,19 +1643,23 @@ function DPS.GetCharacterBest(category, playerName)
     MigrateLocalLockedBaseline()
     MigrateLegacyLeaderboard()
     local name = playerName or ((UnitName and UnitName("player")) or "?")
-    local row = CharacterBestStore()[category][PlayerKey(name)]
+    local bucket = CharacterBestStore()[category]
+    local row = bucket[CharacterKey(name, nil, CurrentRealm())]
+        or bucket[PlayerKey(name)]
     if not row or (tonumber(row.dps) or 0) <= 0 then return nil end
-    return row
+    return DPS.MaterializeRecord(row)
 end
 
 function DPS.GetPlayerInfo(playerName)
     if not playerName or playerName == "" then return nil end
     MigrateLocalLockedBaseline()
     MigrateLegacyLeaderboard()
-    local pk = PlayerKey(playerName)
+    local qualified = CharacterKey(playerName, nil, CurrentRealm())
+    local legacy = PlayerKey(playerName)
     local best
     for _, category in ipairs({"dummy", "lk"}) do
-        local row = CharacterBestStore()[category][pk]
+        local bucket = CharacterBestStore()[category]
+        local row = bucket[qualified] or bucket[legacy]
         if row and (tonumber(row.dps) or 0) > 0 then
             if not best or (tonumber(row.dps) or 0) > (tonumber(best.dps) or 0) then
                 best = { dps = tonumber(row.dps), category = category,
@@ -1023,7 +1680,7 @@ function DPS.GetPlayerInfo(playerName)
     -- Resolve build title
     local buildTitle = nil
     if best.buildId then
-        local build = (NexusDB and NexusDB.communityBuilds or {})[best.buildId]
+        local build = CatalogGet(best.buildId)
         buildTitle = build and build.title or nil
     end
     return {
@@ -1055,7 +1712,8 @@ function DPS.GetCurrentLeaderboard(category)
 end
 
 function DPS.GetCurrentPersonalBest(category)
-    return PersonalForKey(DPS.GetCurrentEchoKey(), category)
+    return DPS.MaterializeRecord(
+        PersonalForKey(DPS.GetCurrentEchoKey(), category))
 end
 
 -- Direct exact-set access for wishlist panel display. A wishlist does not
@@ -1067,7 +1725,8 @@ end
 
 function DPS.GetPersonalBestForEchoes(echoes, category)
     MigrateLocalLockedBaseline()
-    return PersonalForKey(DPS.GetEchoKey(echoes), category)
+    return DPS.MaterializeRecord(
+        PersonalForKey(DPS.GetEchoKey(echoes), category))
 end
 
 function DPS.GetLeaderboardForEchoes(echoes, category)
@@ -1184,13 +1843,15 @@ local function CommitSession(category)
         -- public mesh. Exact-set personal bests remain local, so experimenting
         -- with weaker loadouts cannot create or sync leaderboard bloat.
         local characterBucket = CharacterBestStore()[category]
-        local pk = PlayerKey(player)
+        local pk = CharacterKey(player, personalRow.ownerKey,
+            personalRow.realm)
         local previousCharacterBest = characterBucket[pk]
         local becameCharacterBest = BetterRow(personalRow, previousCharacterBest)
         if becameCharacterBest then
-            local C = Nexus.CommunityBuilds
-            if C and C.EnsureDpsBuildForEchoes then
-                local ok, ensuredId, ensuredBuild = pcall(C.EnsureDpsBuildForEchoes, snap, category, personalRow)
+            local workspace = Nexus.AccountBuildWorkspace
+            if workspace and workspace.Execute then
+                local ok, ensuredId, ensuredBuild = pcall(
+                    workspace.Execute, "ensure-dps", snap, category, personalRow)
                 if ok and ensuredId then buildId, build = ensuredId, ensuredBuild or build end
                 personalRow.buildId = buildId
             end
@@ -1200,7 +1861,8 @@ local function CommitSession(category)
             -- local record page and no leaderboard row references it anymore,
             -- remove it from the mesh instead of accumulating dead experiments.
             local oldBuildId = previousCharacterBest and previousCharacterBest.buildId
-            if oldBuildId and oldBuildId ~= buildId and C and C.DeleteBuild then
+            if oldBuildId and oldBuildId ~= buildId
+                and workspace and workspace.Execute then
                 local stillUsed = false
                 for _, encounter in ipairs({ "dummy", "lk" }) do
                     for _, publicRow in pairs(CharacterBestStore()[encounter] or {}) do
@@ -1208,12 +1870,18 @@ local function CommitSession(category)
                     end
                     if stillUsed then break end
                 end
-                local oldBuild = NexusDB and NexusDB.communityBuilds and NexusDB.communityBuilds[oldBuildId]
+                local oldBuild = CatalogGet(oldBuildId)
                 if not stillUsed and oldBuild and oldBuild.autoDps and oldBuild.isMine then
-                    pcall(C.DeleteBuild, oldBuildId)
+                    pcall(workspace.Execute, "delete", oldBuildId)
                 end
             end
         end
+        BumpDps("personal best committed", becameCharacterBest and {
+            scope="record", category=category, player=player,
+            ownerKey=personalRow.ownerKey, realm=personalRow.realm,
+            characterKey=pk,
+        } or {scope="local"})
+        RequestRetention("personal DPS best committed")
         local catLabel = category == "lk" and "Lich King" or "Training Dummy"
         local setLabel = build and build.title or "current Echo set"
         print(string.format(
@@ -1224,7 +1892,7 @@ local function CommitSession(category)
 
         -- Global comparison is only meaningful when the exact current Echo
         -- set is already a published community build.
-        local characterNow = CharacterBestStore()[category][PlayerKey(player)]
+        local characterNow = CharacterBestStore()[category][pk]
         if characterNow == personalRow and Sync and Sync.BroadcastDpsRecord then
             pcall(Sync.BroadcastDpsRecord, {
                 protocolVersion = PROTOCOL_VERSION, fingerprint = key,
@@ -1241,9 +1909,7 @@ local function CommitSession(category)
         category, dpsFloor, build and build.title or "current Echo set")
     Debug("saved/retained best: " .. Nexus.lastDpsNote)
 
-    if Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then
-        pcall(Nexus.CommunityBuilds.Refresh)
-    end
+    RequestDataViewRefresh()
     if Nexus.RefreshPanel then
         pcall(Nexus.RefreshPanel)
     end
@@ -1367,7 +2033,20 @@ function DPS.ReceiveRecord(record, transportSender)
 
     MigrateLegacyLeaderboard()
     local bucket = CharacterBestStore()[category]
-    local existing = bucket[PlayerKey(player)]
+    local characterKey = CharacterKey(player, ownerKey, realm)
+    local existing = bucket[characterKey]
+    local existingKey = characterKey
+    local legacyKey = PlayerKey(player)
+    if not existing and legacyKey ~= characterKey then
+        local legacy = bucket[legacyKey]
+        local sameLegacyRecord = legacy
+            and math.floor(tonumber(legacy.dps) or 0) == math.floor(dps)
+            and tonumber(legacy.ts or 0) == tonumber(ts or 0)
+            and tostring(legacy.fingerprint or "") == tostring(fingerprint or "")
+        if sameLegacyRecord then
+            existing, existingKey = legacy, legacyKey
+        end
+    end
     local rawLocked = record.lk or record.lockedEchoes
     if rawLocked ~= nil and not ValidWireEchoList(rawLocked) then return false end
     local incomingLocked = NormalizeEchoes(rawLocked)
@@ -1382,6 +2061,7 @@ function DPS.ReceiveRecord(record, transportSender)
         lockedEchoes = incomingLocked,
         protocolVersion = PROTOCOL_VERSION,
     }
+    ReferenceEvidence(row)
     if not IsBetterPublicRecord(row, existing) then
         -- Metadata enrichment: the same winning parse may have been received
         -- before its source client's locked-perk API was ready. Accept a later
@@ -1405,19 +2085,39 @@ function DPS.ReceiveRecord(record, transportSender)
                 existing.realm = tostring(realm):lower()
                 enriched = true
             end
-            if incomingLocked and not NormalizeEchoes(existing.lockedEchoes) then
+            if incomingLocked and not StoredEchoes(existing, true) then
                 existing.lockedEchoes = incomingLocked
+                ReferenceEvidence(existing)
                 enriched = true
             end
-            if enriched then return true end
+            local rekeyed = existingKey ~= characterKey
+            if rekeyed then
+                bucket[existingKey] = nil
+                bucket[characterKey] = existing
+                enriched = true
+            end
+            if enriched then
+                if rekeyed then
+                    BumpDps("public record identity enriched", {
+                        scope="record", category=category, player=player,
+                        ownerKey=existing.ownerKey, realm=existing.realm,
+                        characterKey=characterKey,
+                        previousCharacterKey=existingKey,
+                    })
+                else
+                    BumpDps("public record enriched", {scope="metadata"})
+                end
+                return true
+            end
         end
         return false
     end
     -- A DPS row must always lead to a viewable/copyable exact loadout, even
     -- when the DPS chunks arrive before the corresponding build broadcast.
-    local C = Nexus.CommunityBuilds
-    if echoes and C and C.EnsureDpsBuildForEchoes then
-        local ok, ensuredId = pcall(C.EnsureDpsBuildForEchoes, echoes, category, row)
+    local workspace = Nexus.AccountBuildWorkspace
+    if echoes and workspace and workspace.Execute then
+        local ok, ensuredId = pcall(
+            workspace.Execute, "ensure-dps", echoes, category, row)
         if ok and ensuredId then
             row.buildId = ensuredId
         elseif row.buildId then
@@ -1426,14 +2126,22 @@ function DPS.ReceiveRecord(record, transportSender)
             -- deterministic record page instead of attaching to that build.
             row.buildId = nil
             local safeOk, safeId = pcall(
-                C.EnsureDpsBuildForEchoes, echoes, category, row)
+                workspace.Execute, "ensure-dps", echoes, category, row)
             if safeOk and safeId then row.buildId = safeId end
         end
     end
-    bucket[PlayerKey(player)] = row
-    if Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then
-        pcall(Nexus.CommunityBuilds.Refresh)
+    local supersededBuildId = existing and existing.buildId
+    if existingKey ~= characterKey then bucket[existingKey] = nil end
+    bucket[characterKey] = row
+    if supersededBuildId and supersededBuildId ~= row.buildId then
+        ReleaseSupersededAutoBuild(supersededBuildId)
     end
+    RequestRetention("public DPS record received")
+    BumpDps("public record received", {
+        scope="record", category=category, player=player,
+        ownerKey=row.ownerKey, realm=row.realm, characterKey=characterKey,
+    })
+    RequestDataViewRefresh()
     return true
 end
 
@@ -1443,17 +2151,26 @@ function DPS.ReceiveSubmission(buildId, player, dps, level, category, ts)
     local key = BuildKey(buildId)
     if not (key and player and dps and dps > 0) then return end
     local bucket = CharacterBestStore()[category]
-    local existing = bucket[PlayerKey(player)]
+    local characterKey = CharacterKey(player)
+    local existing = bucket[characterKey]
     local row = {
         dps = dps, level = level, ts = ts or 0, player = player, buildId = buildId,
-        echoes = BuildSnapshot((NexusDB.communityBuilds or {})[buildId]),
+        echoes = BuildSnapshot(CatalogGet(buildId)),
         fingerprint = key, protocolVersion = PROTOCOL_VERSION,
     }
+    ReferenceEvidence(row)
     if not IsBetterPublicRecord(row, existing) then return end
-    bucket[PlayerKey(player)] = row
-    if Nexus.CommunityBuilds and Nexus.CommunityBuilds.Refresh then
-        pcall(Nexus.CommunityBuilds.Refresh)
+    local supersededBuildId = existing and existing.buildId
+    bucket[characterKey] = row
+    if supersededBuildId and supersededBuildId ~= row.buildId then
+        ReleaseSupersededAutoBuild(supersededBuildId)
     end
+    RequestRetention("legacy DPS record received")
+    BumpDps("legacy submission received", {
+        scope="record", category=category, player=player,
+        characterKey=characterKey,
+    })
+    RequestDataViewRefresh()
 end
 
 ------------------------------------------------------------------------
@@ -1482,9 +2199,19 @@ end
 
 function DPS.Init(adapter, sync)
     Adapter, Sync = adapter, sync
+    NexusDB = NexusDB or {}
+    if Nexus.LoadoutEvidence and Nexus.LoadoutEvidence.Init then
+        Nexus.LoadoutEvidence.Init(NexusDB)
+    end
+    if Catalog() and Catalog().Init then
+        Catalog().Init(NexusDB, Nexus.BundledBuilds)
+    end
     MigrateLocalLockedBaseline()
-    MigrateLegacyLeaderboard()
-    RepairCurrentCharacterClass()
+    local migrated = MigrateLegacyLeaderboard()
+    if RepairCurrentCharacterClass() and not migrated then
+        BumpDps("local class repaired", {scope="metadata"})
+    end
+    RequestRetention("DPS initialized")
     Debug("initialized; current tracked key=" .. tostring(DPS.GetCurrentEchoKey()))
 end
 

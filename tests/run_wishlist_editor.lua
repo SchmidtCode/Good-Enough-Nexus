@@ -23,10 +23,36 @@ end
 local EW = Nexus.WishlistEditor
 EW.Init(Adapter, Model)
 
+local realCreateFrame = CreateFrame
+local checkFrames = {}
+CreateFrame = function(kind, name, parent, template)
+    local made = realCreateFrame(kind, name, parent, template)
+    if template == "UICheckButtonTemplate" then
+        checkFrames[#checkFrames + 1] = made
+    end
+    return made
+end
+local recomputeRequests = 0
+Nexus.RequestRecompute = function()
+    recomputeRequests = recomputeRequests + 1
+    return true
+end
+
 local ok = pcall(EW.OpenForCandidate, {title=H.wishlist.name, echoes=H.wishlist.echoes})
 assert(ok, "Show() threw")
 local frame = _G.NexusEditorFrame
 assert(frame:IsShown(), "editor frame not shown after Show()")
+
+-- The auto-lock setting changes Main's mutation plan. Its checkbox is the
+-- first checkbutton created by the editor and must request one next-tick
+-- recomputation instead of waiting for the slow fallback.
+local autoLockCheck = checkFrames[1]
+assert(autoLockCheck and autoLockCheck.scripts.OnClick,
+    "auto-lock checkbox was not created")
+autoLockCheck:SetChecked(true)
+autoLockCheck.scripts.OnClick(autoLockCheck)
+assert(NexusDB.settings.autoLockEchoes == true and recomputeRequests == 1,
+    "auto-lock setting did not request immediate safe recomputation")
 
 -- pending list should be seeded from the real wishlist: 2 entries
 assert(EW.DebugPendingCount() == 2,
@@ -86,4 +112,4 @@ assert(freshDraft.scrollOffset == 0 and freshDraft.pickOffset == 0
     and freshDraft.pendingLoadoutOpen == nil,
     "unassociated active loadout did not reset complete editor draft state")
 
-print("wishlist editor: lifecycle + clean unassociated loadout open OK (checks=11)")
+print("wishlist editor: lifecycle + clean unassociated loadout open OK (checks=13)")

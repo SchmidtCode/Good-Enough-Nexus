@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a reproducible Better Nexus public prerelease bug that is not primarily performance or multiplayer Sync related.
+description: Report a reproducible Good Enough Nexus compatibility bug that is not primarily performance or multiplayer Sync related.
 title: "[Bug]: "
 labels:
   - bug
@@ -8,7 +8,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for testing a Better Nexus public prerelease. Back up your Nexus SavedVariables before testing and search existing issues before submitting a new report.
+        Thanks for using Good Enough Nexus. Back up your Nexus SavedVariables before updating and search existing issues before submitting a new report.
 
   - type: input
     id: nexus-build
@@ -32,7 +32,7 @@ body:
     id: database-upgrade
     attributes:
       label: Existing or older Nexus database
-      description: Did this prerelease installation upgrade Nexus SavedVariables that already contained data?
+      description: Did this installation upgrade Nexus SavedVariables that already contained data?
       options:
         - Yes - upgraded an existing or older Nexus database
         - No - tested with a new or empty Nexus database
@@ -100,7 +100,7 @@ body:
     attributes:
       label: Reporting acknowledgements
       options:
-        - label: I understand that I am testing an unfinished Better Nexus prerelease.
+        - label: I understand that Good Enough Nexus is a community-maintained compatibility release.
           required: true
         - label: I searched existing issues and did not find a duplicate report.
           required: true

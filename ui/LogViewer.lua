@@ -18,14 +18,27 @@ local TABS = {
     { key = "sync",     label = "Sync" },
     { key = "dps",      label = "DPS" },
     { key = "autolock", label = "AutoLock" },
+    { key = "perf",     label = "Perf" },
+    { key = "errors",   label = "Errors" },
 }
 
 local frame, editBox, scroll, tabButtons, statusFS, exportButton
-local exportRunner, exportJob, exportGeneration = nil, nil, 0
+local exportJob, exportGeneration = nil, 0
 local provider, clearProvider
 local activeTab = "state"
 local repaintPending = false
 local MAX_TEXT_CHARS = 60000
+
+local function RunAfter(key, delay, callback)
+    local scheduler = assert(Nexus.Scheduler, "Scheduler required")
+    scheduler.Init()
+    return scheduler.After(key, delay, callback)
+end
+
+local function CancelAfter(key)
+    local scheduler = Nexus and Nexus.Scheduler
+    if scheduler then pcall(scheduler.Cancel, key) end
+end
 
 local function Repaint()
     repaintPending = false
@@ -64,35 +77,37 @@ end
 local function ScheduleRepaint()
     if repaintPending then return end
     repaintPending = true
-    local waiter = CreateFrame("Frame")
-    local elapsed = 0
-    waiter:SetScript("OnUpdate", function(self, dt)
-        elapsed = elapsed + (tonumber(dt) or 0)
-        if elapsed < 0.05 then return end
-        self:SetScript("OnUpdate", nil)
-        Repaint()
-    end)
+    RunAfter("log-viewer.repaint", 0.05, Repaint)
 end
 
 local function StopExport()
     exportGeneration = exportGeneration + 1
     exportJob = nil
-    if exportRunner then
-        exportRunner:SetScript("OnUpdate", nil)
-        exportRunner:Hide()
-    end
+    CancelAfter("log-viewer.export-run")
+    CancelAfter("log-viewer.export-finish")
+    CancelAfter("log-viewer.export-select")
+    if exportButton then exportButton:SetText("Copy Full Diagnostic Log") end
 end
 
 local function FinishExport(text)
     exportJob = nil
-    if exportRunner then exportRunner:SetScript("OnUpdate", nil); exportRunner:Hide() end
+    CancelAfter("log-viewer.export-run")
     text = tostring(text or "")
     local n = #text
     editBox:SetText(text)
-    editBox:SetCursorPosition(0)
-    editBox:SetFocus()
-    editBox:HighlightText()
-    statusFS:SetText(n .. " chars -- complete log selected; Ctrl-C")
+    statusFS:SetText(n .. " chars -- full log loaded; selecting...")
+    if exportButton then exportButton:SetText("Copy Full Diagnostic Log") end
+    local myGeneration = exportGeneration
+    -- Keep text layout and selection in different rendered frames. Both are
+    -- synchronous client operations, but separating them avoids combining two
+    -- large EditBox costs into one frame without dropping any export detail.
+    RunAfter("log-viewer.export-select", 0.01, function()
+        if myGeneration ~= exportGeneration or not editBox then return end
+        editBox:SetCursorPosition(0)
+        editBox:SetFocus()
+        editBox:HighlightText()
+        statusFS:SetText(n .. " chars -- complete log selected; Ctrl-C")
+    end)
 end
 
 local function StartExport()
@@ -101,6 +116,7 @@ local function StartExport()
     for _, b in ipairs(tabButtons or {}) do b:UnlockHighlight() end
     editBox:SetText("Preparing full diagnostic log...\n\nNexus is building this over multiple frames so gameplay stays responsive.")
     statusFS:SetText("Preparing export...")
+    if exportButton then exportButton:SetText("Building Export...") end
     local factory = Nexus and Nexus.NewAIExportCoroutine
     if type(factory) ~= "function" then
         editBox:SetText("Diagnostic export builder is unavailable.")
@@ -114,12 +130,15 @@ local function StartExport()
     exportJob = job
     exportGeneration = exportGeneration + 1
     local myGeneration = exportGeneration
-    if not exportRunner then exportRunner = CreateFrame("Frame") end
-    exportRunner:Show()
     local updateElapsed = 0
-    exportRunner:SetScript("OnUpdate", function(self, elapsed)
-        if myGeneration ~= exportGeneration or not exportJob then self:SetScript("OnUpdate", nil); self:Hide(); return end
-        updateElapsed = updateElapsed + (tonumber(elapsed) or 0)
+    local scheduler = assert(Nexus.Scheduler, "Scheduler required")
+    scheduler.Init()
+    scheduler.Every("log-viewer.export-run", 0.01, function()
+        if myGeneration ~= exportGeneration or not exportJob then
+            scheduler.Cancel("log-viewer.export-run")
+            return
+        end
+        updateElapsed = updateElapsed + 0.01
         -- Exactly one small coroutine slice per rendered frame. Each slice
         -- encodes only a handful of boards/audits, keeping frame time bounded
         -- even on low-end clients while combat or sync traffic is active.
@@ -127,22 +146,17 @@ local function StartExport()
             local okResume, value = coroutine.resume(exportJob)
             if not okResume then
                 exportJob = nil
-                self:SetScript("OnUpdate", nil); self:Hide()
+                scheduler.Cancel("log-viewer.export-run")
                 editBox:SetText("Diagnostic export failed: " .. tostring(value))
                 statusFS:SetText("export failed")
                 return
             end
             if coroutine.status(exportJob) == "dead" then
                 exportJob = nil
-                self:SetScript("OnUpdate", nil)
-                self:Hide()
+                scheduler.Cancel("log-viewer.export-run")
                 local finalText = value
-                local finisher = CreateFrame("Frame")
-                local waited = false
-                finisher:SetScript("OnUpdate", function(f)
-                    if not waited then waited = true; return end
-                    f:SetScript("OnUpdate", nil)
-                    FinishExport(finalText)
+                RunAfter("log-viewer.export-finish", 0.01, function()
+                    if myGeneration == exportGeneration then FinishExport(finalText) end
                     finalText = nil
                 end)
                 return
@@ -191,7 +205,9 @@ local function EnsureFrame()
     for i, tab in ipairs(TABS) do
         local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
         b:SetSize(76, 22)
-        if prev then
+        if i == 6 then
+            b:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -56)
+        elseif prev then
             b:SetPoint("LEFT", prev, "RIGHT", 4, 0)
         else
             b:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -30)
@@ -229,12 +245,13 @@ local function EnsureFrame()
     exportButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     exportButton:SetSize(148, 22)
     exportButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -12, 7)
+    frame._exportButton = exportButton
     exportButton:SetText("Copy Full Diagnostic Log")
     exportButton:SetScript("OnClick", StartExport)
     exportButton:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText("Copy every retained decision and mismatch")
-        GameTooltip:AddLine("Creates one compact diagnostic block and selects it for Ctrl-C. The normal tabs stay shortened to prevent freezes.", 1, 1, 1, true)
+        GameTooltip:AddLine("Creates one complete diagnostic block and selects it for Ctrl-C. Text layout and selection run in separate frames to reduce the final hitch.", 1, 1, 1, true)
         GameTooltip:Show()
     end)
     exportButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -245,39 +262,38 @@ local function EnsureFrame()
     clearButton:SetText("Clear Log")
     clearButton:SetScript("OnClick", function(self)
         StopExport()
+        local errorsOnly = activeTab == "errors"
         local ok, result = false, nil
         if type(clearProvider) == "function" then
-            ok, result = pcall(clearProvider)
+            ok, result = pcall(clearProvider, activeTab)
         end
-        activeTab = "state"
+        if activeTab ~= "errors" then activeTab = "state" end
         if ok and result ~= false then
             self:SetText("Cleared")
-            if statusFS then statusFS:SetText("Diagnostic history cleared") end
+            if statusFS then
+                statusFS:SetText(errorsOnly and "Error history cleared"
+                    or "Diagnostic history cleared")
+            end
         else
             self:SetText("Clear Failed")
             if statusFS then statusFS:SetText("Could not clear diagnostic history") end
         end
         ScheduleRepaint()
-        local resetter = CreateFrame("Frame")
-        local elapsed = 0
-        resetter:SetScript("OnUpdate", function(f, dt)
-            elapsed = elapsed + (tonumber(dt) or 0)
-            if elapsed < 1.2 then return end
-            f:SetScript("OnUpdate", nil)
+        RunAfter("log-viewer.clear-label", 1.2, function()
             if self then self:SetText("Clear Log") end
         end)
     end)
     clearButton:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText("Clear diagnostic history")
-        GameTooltip:AddLine("Clears retained boards, save/guarantee audits, UI probes, sync events, and DPS debug lines in one click. This does not change settings, builds, or automation.", 1, 1, 1, true)
+        GameTooltip:AddLine("On the Errors tab, clears only retained errors. On other tabs, clears retained boards, audits, UI probes, sync events, DPS debug lines, and errors. Settings, builds, and automation are unchanged.", 1, 1, 1, true)
         GameTooltip:Show()
     end)
     clearButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     scroll = CreateFrame("ScrollFrame", "NexusLogScroll", frame,
         "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -58)
+    scroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -84)
     scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 36)
 
     editBox = CreateFrame("EditBox", nil, scroll)
@@ -286,6 +302,7 @@ local function EnsureFrame()
     editBox:SetAutoFocus(false)
     editBox:SetFontObject(ChatFontNormal)
     editBox:SetWidth(646)
+    frame._editBox = editBox
     editBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     -- read-only in spirit: typing is harmless (nothing reads it back),
     -- but keep the text restorable via Refresh
@@ -294,6 +311,7 @@ local function EnsureFrame()
     statusFS = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     statusFS:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 12, 10)
     statusFS:SetJustifyH("LEFT")
+    frame._statusFS = statusFS
 
     frame:Hide()
     return frame

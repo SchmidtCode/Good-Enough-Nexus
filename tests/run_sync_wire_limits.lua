@@ -93,8 +93,7 @@ for _, m in ipairs(msgs) do
         Sync.ChannelName())                -- arg9, bare
 end
 
-local got = NexusDB.communityBuilds
-    and NexusDB.communityBuilds["mine-1784886552-123456"]
+local got = Nexus.BuildCatalog.Get("mine-1784886552-123456")
 assert(got, "the build was NOT received -- the 3.3.5 channel arg layout still isn't matched")
 assert(#got.echoes == 70, "received build lost echoes in transit (got " .. #got.echoes .. "/70)")
 assert(got.title == "Full Endgame Rogue Wishlist", "title corrupted in transit")

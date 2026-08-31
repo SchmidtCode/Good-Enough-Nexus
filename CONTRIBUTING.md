@@ -1,6 +1,6 @@
-# Contributing to Better Nexus
+# Contributing to Good Enough Nexus
 
-Better Nexus is in public prerelease stabilization. Keep contributions focused, evidence-based, and compatible with the existing addon and player data.
+Good Enough Nexus maintains Nexus 1.96 compatibility for Project Ebonhold while the official Better Nexus 1.20 release is pending. Keep contributions focused, evidence-based, and compatible with the existing addon and player data.
 
 ## Compatibility
 
@@ -29,8 +29,8 @@ Do not force-push, rebase, or otherwise rewrite a head that is already under exa
 ## Reports and requests
 
 - Use the repository's GitHub Issue Forms for bugs, performance or stutter reports, and Sync or multiplayer reports.
-- Feature requests are deferred while public prerelease stabilization is active.
-- Report vulnerabilities through [private vulnerability reporting](https://github.com/Viscerals/Better-Nexus/security/advisories/new), not a public issue.
+- Feature requests are deferred while the 1.96 compatibility line is maintained.
+- Report vulnerabilities through [private vulnerability reporting](https://github.com/SchmidtCode/Good-Enough-Nexus/security/advisories/new), not a public issue.
 
 ## Pull-request evidence
 

@@ -2,7 +2,7 @@
 
 ## Reporting
 
-Report suspected vulnerabilities, compromises, or release integrity issues privately through the Better Nexus security reporting path.
+Report suspected vulnerabilities, compromises, or release integrity issues through [Good Enough Nexus private vulnerability reporting](https://github.com/SchmidtCode/Good-Enough-Nexus/security/advisories/new).
 
 Do not publish credentials, access tokens, private data, exploit detail, private SavedVariables, or active incident details in public channels.
 

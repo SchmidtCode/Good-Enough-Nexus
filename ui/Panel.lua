@@ -27,8 +27,106 @@ local completeBadge, completeSubtext
 local setupText, setupHint, setupGetStartedBtn, setupImportBtn
 local autoBtn, buildsBtn, leaderboardBtn, menuBtn, versionText, worldStatusBox, worldStatusText, worldStatusAsh, worldStatusGain, worldStatusHit, bestDpsText, bestDpsHit
 local showPerformance = false
+local lastSignatures = nil
+local renderStats = {
+    calls=0, layouts=0, skipped=0, statusOnly=0,
+    performancePasses=0, noticePasses=0, themeTreeWalks=0,
+}
+
+StaticPopupDialogs["NEXUS_UPDATE_RELEASES"] = {
+    text = "Nexus %s was reported as available. Installation is manual. Copy the releases page below:",
+    button1 = "Close",
+    hasEditBox = true,
+    editBoxWidth = 380,
+    OnShow = function(self)
+        local url = Nexus.Updates and Nexus.Updates.ReleaseUrl
+            and Nexus.Updates.ReleaseUrl() or "https://github.com/Viscerals/Better-Nexus/releases"
+        if self.editBox then
+            self.editBox:SetText(url)
+            self.editBox:HighlightText()
+            self.editBox:SetFocus()
+        end
+    end,
+    EditBoxOnEnterPressed = function(self) self:HighlightText() end,
+    EditBoxOnEscapePressed = function(self) self:ClearFocus() end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
 
 local function SafeText(v) return v ~= nil and tostring(v) or "" end
+
+local function DefensiveCopy(value, seen)
+    if type(value) ~= "table" then return value end
+    seen = seen or {}
+    if seen[value] then return seen[value] end
+    local out = {}
+    seen[value] = out
+    for key, child in pairs(value) do
+        out[DefensiveCopy(key, seen)] = DefensiveCopy(child, seen)
+    end
+    return out
+end
+
+local function Signature(value, seen)
+    local kind = type(value)
+    if kind ~= "table" then
+        local text = SafeText(value)
+        return kind .. ":" .. tostring(#text) .. ":" .. text
+    end
+    seen = seen or { _nextId=0 }
+    if seen[value] then return "cycle:" .. tostring(seen[value]) end
+    seen._nextId = seen._nextId + 1
+    seen[value] = seen._nextId
+    local keys = {}
+    for key in pairs(value) do keys[#keys + 1] = key end
+    table.sort(keys, function(left, right)
+        return type(left) .. ":" .. tostring(left)
+            < type(right) .. ":" .. tostring(right)
+    end)
+    local out = {"{"}
+    for _, key in ipairs(keys) do
+        out[#out + 1] = Signature(key, seen)
+        out[#out + 1] = "="
+        out[#out + 1] = Signature(value[key], seen)
+        out[#out + 1] = ";"
+    end
+    out[#out + 1] = "}"
+    return table.concat(out)
+end
+
+local function ModelSignatures(model)
+    local source = type(model.progress) == "table" and model.progress or {}
+    local progress = {
+        wishlistName=source.wishlistName,
+        owned=source.owned,
+        total=source.total,
+        missing=source.missing,
+        shed=source.shed,
+        unknownTomes=source.unknownTomes,
+        toLock=source.toLock,
+        activeSlot=source.activeSlot,
+        isCommunityPreview=source.isCommunityPreview,
+    }
+    return {
+        layout = Signature({
+            progress=progress,
+            cards=model.cards,
+            recommendation=model.recommendation,
+            level=model.level,
+            serverStatus=model.serverStatus,
+            showPerformance=showPerformance,
+        }),
+        performance = Signature({
+            performance=type(model.progress) == "table" and model.progress.performance or nil,
+            bestDps=model.bestDps,
+        }),
+        notice = Signature(model.updateNotice),
+        status = Signature(model.status),
+        auto = Signature(model.auto),
+    }
+end
 
 local function ShortName(v, maxChars)
     local s = SafeText(v)
@@ -201,7 +299,7 @@ local function EnsureFrame()
     if frame then return frame end
 
     frame = CreateFrame("Frame", "NexusPanel", UIParent)
-    frame:SetSize(272, 210)
+    frame:SetSize(340, 230)
     frame:SetClampedToScreen(true)
     NexusDB = NexusDB or {}
     if tonumber(NexusDB.panelX) and tonumber(NexusDB.panelY) then
@@ -338,7 +436,7 @@ local function EnsureFrame()
         end
     end)
     worldStatusHit:SetScript("OnEnter", function(self)
-        local ss = Nexus.ServerStatus and Nexus.ServerStatus.GetSummary and Nexus.ServerStatus.GetSummary() or {}
+        local ss = worldStatusBox._summary or {}
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:AddLine(ss.tier or ss.mode or "Difficulty", 1, 0.25, 0.25)
         if ss.ash then GameTooltip:AddLine("Soul Ash: " .. tostring(ss.ash):gsub(",",""), 1, 1, 1) end
@@ -438,6 +536,7 @@ local function EnsureFrame()
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:AddLine("Still needed this run", 1, 1, 1)
         GameTooltip:AddLine("These wishlist Echoes have not been obtained yet.", 0.9, 0.9, 0.9, true)
+        GameTooltip:AddLine("Learning a tome unlocks an Echo for rolls; it does not grant the Echo to this run.", 0.9, 0.9, 0.9, true)
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("When your wishlist Echoes are not on the board,", 0.75, 0.75, 0.75, true)
         GameTooltip:AddLine("the addon picks filler. Filler is intentional —", 0.75, 0.75, 0.75, true)
@@ -631,7 +730,7 @@ local function EnsureFrame()
     buildsBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:AddLine("Builds", 1, 1, 1)
-        GameTooltip:AddLine("Open My Builds and browse shared community builds.", 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine("Open My Account and browse shared community builds.", 0.8, 0.8, 0.8, true)
         GameTooltip:Show()
     end)
     buildsBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -651,12 +750,20 @@ local function EnsureFrame()
     end)
     leaderboardBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+    if Nexus.Emergency and Nexus.Emergency.communityDisabled then
+        buildsBtn:SetText("Builds (Off)")
+        buildsBtn:Disable()
+        leaderboardBtn:SetText("Ranks (Off)")
+        leaderboardBtn:Disable()
+    end
+
     -- Compact settings control. Navigation stays visible in the footer while
     -- infrequent tools live behind this single unobtrusive button.
     menuBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     menuBtn:SetSize(30, 20)
     menuBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", 7, -6)
     menuBtn:SetText("...")
+    frame._menuBtn = menuBtn
     menuBtn:SetFrameLevel(frame:GetFrameLevel() + 8)
     menuBtn:SetScript("OnClick", function(self)
         if type(EasyMenu) ~= "function" then return end
@@ -669,6 +776,34 @@ local function EnsureFrame()
             end
         end
         local items = {
+            {
+                text = (Nexus.Updates and Nexus.Updates.GetVisibleNotice
+                    and Nexus.Updates.GetVisibleNotice())
+                    and ("Update available: v" .. tostring(Nexus.Updates.GetVisibleNotice().version))
+                    or "No published update reported",
+                notCheckable = true,
+                disabled = not (Nexus.Updates and Nexus.Updates.GetVisibleNotice
+                    and Nexus.Updates.GetVisibleNotice()),
+                func = MenuAction(function()
+                    local notice = Nexus.Updates and Nexus.Updates.GetVisibleNotice
+                        and Nexus.Updates.GetVisibleNotice()
+                    if notice then
+                        StaticPopup_Show("NEXUS_UPDATE_RELEASES", notice.version,
+                            Nexus.Updates.ReleaseUrl())
+                    end
+                end),
+            },
+            {
+                text = (Nexus.Updates and Nexus.Updates.IsEnabled
+                    and Nexus.Updates.IsEnabled())
+                    and "Disable Update Notices" or "Enable Update Notices",
+                notCheckable = true,
+                func = MenuAction(function()
+                    if Nexus.Updates and Nexus.Updates.SetEnabled then
+                        Nexus.Updates.SetEnabled(not Nexus.Updates.IsEnabled())
+                    end
+                end),
+            },
             {
                 text = showPerformance and "Hide Performance" or "Show Performance",
                 notCheckable = true,
@@ -728,6 +863,12 @@ local function EnsureFrame()
             GameTooltip:AddLine(" ")
             GameTooltip:AddLine("Status: " .. tostring(st), 0.6, 0.85, 1, true)
         end
+        local notice = M._lastModel and M._lastModel.updateNotice
+        if notice then
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddLine("Update available: v" .. tostring(notice.version), 1, 0.82, 0, true)
+            GameTooltip:AddLine("Click to copy the manual releases-page link.", 0.8, 0.8, 0.8, true)
+        end
         GameTooltip:Show()
     end)
     menuBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -737,9 +878,12 @@ local function EnsureFrame()
     bestDpsText:SetSize(280, 14)
     bestDpsText:SetJustifyH("CENTER")
     bestDpsText:SetText("|cff888888Best DPS: hit a training dummy to record|r")
+    frame._performanceBottomText = dummyGlobal
+    frame._bestDpsText = bestDpsText
     bestDpsHit = HitFrame(frame, bestDpsText)
     bestDpsHit:SetScript("OnEnter", function(self)
-        local info = Nexus.DpsCapture and Nexus.DpsCapture.GetPlayerInfo and Nexus.DpsCapture.GetPlayerInfo(UnitName("player"))
+        local info = M._lastModel and M._lastModel.bestDps
+            and M._lastModel.bestDps.info
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:AddLine("Character Best DPS", 1, 1, 1)
         if info then
@@ -832,7 +976,7 @@ local function PositionPerformance(topY, completed)
         -- Compact centered record table sized to stay inside the narrower HUD.
         -- Keep headings centered while pulling value columns inward so long DPS
         -- values do not hang off the right edge.
-        local left, width = 24, 224
+        local left, width = (frame:GetWidth() - 224) / 2, 224
         local labelW, valueW = 120, 72
 
         SetPoint(performanceLabel, "TOP", frame, "TOP", 0, topY)
@@ -862,26 +1006,27 @@ local function PositionPerformance(topY, completed)
         -- Expanded active-build performance is a separate section below progress.
         -- Keeping it out of the progress columns prevents every optional state
         -- (tomes, shed Echoes, live rolls) from competing for the same space.
-        local left, right = 20, 160
-        local colW = 120
+        local left, right = 12, frame:GetWidth() / 2 + 6
+        local colW = frame:GetWidth() / 2 - 18
+        local labelW, valueW = colW - 58, 58
         SetPoint(performanceLabel, "TOP", frame, "TOP", 0, topY)
-        performanceLabel:SetSize(260, 13)
+        performanceLabel:SetSize(frame:GetWidth() - 24, 13)
         performanceLabel:SetJustifyH("CENTER")
         SetPoint(setLabelText, "TOP", frame, "TOP", 0, topY - 15)
-        setLabelText:SetSize(260, 13)
+        setLabelText:SetSize(frame:GetWidth() - 24, 13)
         setLabelText:SetJustifyH("CENTER")
 
         SetPoint(dummyLabel, "TOPLEFT", frame, "TOPLEFT", left, topY - 38)
-        dummyLabel:SetSize(70, 14); dummyLabel:SetJustifyH("LEFT")
-        SetPoint(dummyValue, "TOPLEFT", frame, "TOPLEFT", left + 70, topY - 38)
-        dummyValue:SetSize(50, 14); dummyValue:SetJustifyH("RIGHT")
+        dummyLabel:SetSize(labelW, 14); dummyLabel:SetJustifyH("LEFT")
+        SetPoint(dummyValue, "TOPLEFT", frame, "TOPLEFT", left + labelW, topY - 38)
+        dummyValue:SetSize(valueW, 14); dummyValue:SetJustifyH("RIGHT")
         SetPoint(dummyGlobal, "TOPLEFT", frame, "TOPLEFT", left, topY - 57)
         dummyGlobal:SetSize(colW, 14); dummyGlobal:SetJustifyH("LEFT")
 
         SetPoint(lkLabel, "TOPLEFT", frame, "TOPLEFT", right, topY - 38)
-        lkLabel:SetSize(70, 14); lkLabel:SetJustifyH("LEFT")
-        SetPoint(lkValue, "TOPLEFT", frame, "TOPLEFT", right + 70, topY - 38)
-        lkValue:SetSize(50, 14); lkValue:SetJustifyH("RIGHT")
+        lkLabel:SetSize(labelW, 14); lkLabel:SetJustifyH("LEFT")
+        SetPoint(lkValue, "TOPLEFT", frame, "TOPLEFT", right + labelW, topY - 38)
+        lkValue:SetSize(valueW, 14); lkValue:SetJustifyH("RIGHT")
         SetPoint(lkGlobal, "TOPLEFT", frame, "TOPLEFT", right, topY - 57)
         lkGlobal:SetSize(colW, 14); lkGlobal:SetJustifyH("LEFT")
     end
@@ -895,16 +1040,11 @@ local function PositionPerformance(topY, completed)
 end
 
 local function RenderPerformance(pr, completed)
-    local D = Nexus.DpsCapture
-    local echoes = pr.dpsEchoes
-    local myDummy, myLK, topDummy, topLK
-    if D and type(echoes) == "table" then
-        myDummy = D.GetPersonalBestForEchoes and D.GetPersonalBestForEchoes(echoes, "dummy") or nil
-        myLK = D.GetPersonalBestForEchoes and D.GetPersonalBestForEchoes(echoes, "lk") or nil
-        local dRows = D.GetLeaderboardForEchoes and D.GetLeaderboardForEchoes(echoes, "dummy") or {}
-        local lRows = D.GetLeaderboardForEchoes and D.GetLeaderboardForEchoes(echoes, "lk") or {}
-        topDummy, topLK = dRows and dRows[1], lRows and lRows[1]
-    end
+    local performance = type(pr.performance) == "table" and pr.performance or {}
+    local dummy = type(performance.dummy) == "table" and performance.dummy or {}
+    local lk = type(performance.lk) == "table" and performance.lk or {}
+    local myDummy, myLK = dummy.personal, lk.personal
+    local topDummy, topLK = dummy.global, lk.global
 
     local count = tonumber(pr.total) or 0
     if completed then
@@ -955,6 +1095,9 @@ end
 
 local function RenderPerformanceState(pr, completed, enabled)
     ShowPerformance(enabled)
+    SetVisible(dummyGlobalValue, enabled and completed)
+    SetVisible(lkGlobalValue, enabled and completed)
+    SetVisible(lkPersonalLabel, enabled and completed)
     if enabled then RenderPerformance(pr, completed) end
 end
 
@@ -1074,11 +1217,81 @@ local function LayoutFooter(showAuto, completed)
     leaderboardBtn:Show()
 end
 
+local function RenderBestDps(model, complete, noBuild, activeRoll, statusVisible)
+    bestDpsText:SetWidth(frame:GetWidth() - 24)
+    local best = type(model.bestDps) == "table" and model.bestDps or {}
+    local dummyBest, lkBest = best.dummy, best.lk
+    if dummyBest or lkBest then
+        local dummyText = dummyBest and ("|cff4dff80" .. FmtDps(dummyBest.dps) .. "|r") or "|cff777777—|r"
+        local lkText = lkBest and ("|cff4dff80" .. FmtDps(lkBest.dps) .. "|r") or "|cff777777—|r"
+        bestDpsText:SetText("|cffb8b8b8Best DPS:|r  Dummy " .. dummyText .. "  |cff666666•|r  Lich King " .. lkText)
+    else
+        bestDpsText:SetText("|cff888888Best DPS: hit a training dummy to record|r")
+    end
+    bestDpsText:ClearAllPoints()
+    if complete and not noBuild and not activeRoll and not showPerformance then
+        bestDpsText:SetPoint("TOP", frame, "TOP", 0, statusVisible and -111 or -52)
+    else
+        bestDpsText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 32)
+    end
+    if not noBuild then
+        bestDpsText:Show()
+        bestDpsHit:Show()
+    else
+        bestDpsText:Hide()
+        bestDpsHit:Hide()
+    end
+end
+
 function M.Render(model)
     if type(model) ~= "table" then return end
-    M._lastModel = model
+    model = DefensiveCopy(model)
+    local signatures = ModelSignatures(model)
+    renderStats.calls = renderStats.calls + 1
     EnsureFrame()
     if not frame.toLockLabel then CreateToLockWidgets(frame) end
+    if lastSignatures and signatures.layout == lastSignatures.layout then
+        local changed = false
+        M._lastModel = model
+        if signatures.notice ~= lastSignatures.notice then
+            menuBtn:SetText(model.updateNotice and "!" or "...")
+            renderStats.noticePasses = renderStats.noticePasses + 1
+            changed = true
+        end
+        if signatures.performance ~= lastSignatures.performance then
+            local pr = type(model.progress) == "table" and model.progress or {}
+            local total, owned = tonumber(pr.total) or 0, tonumber(pr.owned) or 0
+            local complete = total > 0 and owned >= total
+                and #(type(pr.toLock) == "table" and pr.toLock or {}) == 0
+            local cards = type(model.cards) == "table" and model.cards or {}
+            local activeRoll = #cards > 0 or SafeText(model.recommendation) ~= ""
+            local noBuild = total <= 0 or not pr.wishlistName
+            local ss = type(model.serverStatus) == "table" and model.serverStatus or nil
+            local statusVisible = ss and (ss.tier or ss.mode or ss.ash
+                or ss.gain or ss.intensity ~= nil) and true or false
+            RenderPerformanceState(pr, complete, not noBuild and showPerformance)
+            RenderBestDps(model, complete, noBuild, activeRoll, statusVisible)
+            renderStats.performancePasses = renderStats.performancePasses + 1
+            changed = true
+        end
+        if signatures.auto ~= lastSignatures.auto and autoBtn:IsShown() then
+            autoBtn:SetText(AutoLabel(model.auto))
+            changed = true
+        end
+        if signatures.status ~= lastSignatures.status then
+            renderStats.statusOnly = renderStats.statusOnly + 1
+            changed = true
+        end
+        if not changed then renderStats.skipped = renderStats.skipped + 1 end
+        lastSignatures = signatures
+        if not userHidden and not menuSuppressed then frame:Show() else frame:Hide() end
+        return true
+    end
+    M._lastModel = model
+    renderStats.layouts = renderStats.layouts + 1
+    if menuBtn then
+        menuBtn:SetText(model.updateNotice and "!" or "...")
+    end
 
     local pr = type(model.progress) == "table" and model.progress or {}
     local name = pr.wishlistName
@@ -1093,10 +1306,9 @@ function M.Render(model)
     local recommendation = SafeText(model.recommendation)
     local activeRoll = #cards > 0 or recommendation ~= ""
     local noBuild = total <= 0 or not name
-    local usingNexusStatus = Nexus.ServerStatus and Nexus.ServerStatus.IsUsingNexusHud and Nexus.ServerStatus.IsUsingNexusHud()
-    local ss = usingNexusStatus and Nexus.ServerStatus.GetSummary and Nexus.ServerStatus.GetSummary() or nil
+    local ss = type(model.serverStatus) == "table" and model.serverStatus or nil
     local statusVisible = ss and (ss.tier or ss.mode or ss.ash or ss.gain or ss.intensity ~= nil) and true or false
-    local playerLevel = tonumber(model.level) or (UnitLevel and tonumber(UnitLevel("player"))) or 0
+    local playerLevel = tonumber(model.level) or 0
     -- Auto controls are useful only while actively progressing a build. At level
     -- 80 or once the destination is complete, the button is removed entirely
     -- instead of presenting an action that can no longer help the player.
@@ -1161,7 +1373,7 @@ function M.Render(model)
         -- (Create Wishlist is only needed first if no wishlist exists yet),
         -- so it sits right under the instructions instead of sharing a row
         -- with an equally-weighted second option.
-        frame:SetHeight((activeRoll and 428 or 278) - statusHeightReduction)
+        frame:SetHeight((activeRoll and 428 or 278) - statusHeightReduction + 20)
         SetPoint(setupText, "TOP", frame, "TOP", 0, contentTop - 18)
         setupText:SetText("Assign a wishlist to this loadout")
         SetPoint(setupHint, "TOP", frame, "TOP", 0, contentTop - 48)
@@ -1174,7 +1386,7 @@ function M.Render(model)
         -- Once a build is complete, progress text stops being the purpose of the
         -- HUD. The panel becomes a compact replacement for the stock difficulty /
         -- Soul Ash tracker, with Nexus navigation and the player's best DPS.
-        frame:SetHeight((showPerformance and (activeRoll and 430 or 286) or (activeRoll and 292 or 168)) - statusHeightReduction)
+        frame:SetHeight((showPerformance and (activeRoll and 430 or 286) or (activeRoll and 292 or 168)) - statusHeightReduction + 20)
         -- completeBadge/completeSubtext were created and toggled everywhere but
         -- never given text anywhere in this file -- when the server-status HUD
         -- has nothing to show (statusVisible false) and Performance is off, the
@@ -1214,8 +1426,12 @@ function M.Render(model)
         -- The TO LOCK row only exists when there's something to report --
         -- most wishlists design zero locked-slot targets, so the extra
         -- height stays reserved only while it's actually needed.
-        local toLockExtra = #toLockNamesCache > 0 and 34 or 0
-        frame:SetHeight((showPerformance and (activeRoll and 448 or 325) or (activeRoll and 388 or 267)) - statusHeightReduction + toLockExtra)
+        local toLockExtra = #toLockNamesCache > 0 and 56 or 0
+        -- Performance ends immediately above the character-best line and
+        -- footer. Reserve its full text height in both PEH-merged and stock-HUD
+        -- modes; the prior height ended at the same pixels as Best DPS.
+        local performanceFooterClearance = showPerformance and 22 or 0
+        frame:SetHeight((showPerformance and (activeRoll and 448 or 325) or (activeRoll and 388 or 267)) - statusHeightReduction + toLockExtra + performanceFooterClearance + 20)
         SetPoint(progressLabel, "TOPLEFT", frame, "TOPLEFT", 12, contentTop)
         SetPoint(progressValue, "TOPLEFT", frame, "TOPLEFT", 12, contentTop - 17)
         progressValue:SetText(string.format("%d / %d complete", owned, total))
@@ -1228,7 +1444,7 @@ function M.Render(model)
             -- Keep them on the progress line and preserve two clean Echo columns.
             tomesLabel:SetText("MISSING\nTOMES")
             SetPoint(tomesLabel, "TOPRIGHT", frame, "TOPRIGHT", -26, contentTop - 18)
-            tomesLabel:SetSize(58, 24)
+            tomesLabel:SetSize(92, 28)
             tomesLabel:SetJustifyH("RIGHT")
             tomesLabel:SetJustifyV("TOP")
             SetPoint(tomesValue, "TOPRIGHT", frame, "TOPRIGHT", -10, contentTop - 18)
@@ -1248,7 +1464,7 @@ function M.Render(model)
             tomesValue:Hide()
             tomesHit:Hide()
         end
-        needText:SetWidth(112)
+        needText:SetWidth(frame:GetWidth() / 2 - 18)
 
         SetPoint(needText, "TOPLEFT", frame, "TOPLEFT", 12, contentTop - 58)
         local needLines = {}
@@ -1261,9 +1477,9 @@ function M.Render(model)
         if #missingNamesCache > shown then needLines[#needLines + 1] = "+" .. (#missingNamesCache - shown) .. " more" end
         needText:SetText(#needLines > 0 and table.concat(needLines, "\n") or "|cff888888No remaining demand|r")
 
-        SetPoint(shedLabel, "TOPLEFT", frame, "TOPLEFT", 142, contentTop - 42)
-        SetPoint(shedText, "TOPLEFT", frame, "TOPLEFT", 142, contentTop - 58)
-        shedText:SetWidth(108)
+        SetPoint(shedLabel, "TOPLEFT", frame, "TOPLEFT", frame:GetWidth() / 2 + 6, contentTop - 42)
+        SetPoint(shedText, "TOPLEFT", frame, "TOPLEFT", frame:GetWidth() / 2 + 6, contentTop - 58)
+        shedText:SetWidth(frame:GetWidth() / 2 - 18)
         local shedLines = {}
         local shedShown = math.min(#shedNamesCache, 2)
         for i = 1, shedShown do shedLines[#shedLines + 1] = shedNamesCache[i] end
@@ -1271,9 +1487,9 @@ function M.Render(model)
         shedText:SetText(#shedLines > 0 and table.concat(shedLines, "\n") or "|cff888888None|r")
 
         if #toLockNamesCache > 0 then
-            SetPoint(frame.toLockLabel, "TOPLEFT", frame, "TOPLEFT", 12, contentTop - 90)
-            SetPoint(frame.toLockText, "TOPLEFT", frame, "TOPLEFT", 12, contentTop - 106)
-            frame.toLockText:SetWidth(238)
+            SetPoint(frame.toLockLabel, "TOPLEFT", frame, "TOPLEFT", 12, contentTop - 112)
+            SetPoint(frame.toLockText, "TOPLEFT", frame, "TOPLEFT", 12, contentTop - 128)
+            frame.toLockText:SetWidth(frame:GetWidth() - 24)
             local toLockLines = {}
             local toLockShown = math.min(#toLockNamesCache, 2)
             for i = 1, toLockShown do toLockLines[#toLockLines + 1] = toLockNamesCache[i] end
@@ -1300,6 +1516,7 @@ function M.Render(model)
     if not noBuild then RenderPerformanceState(pr, complete, showPerformance) end
 
     LayoutServerStatus(complete and not noBuild)
+    worldStatusBox._summary = DefensiveCopy(ss)
     if ss and (ss.tier or ss.mode or ss.ash or ss.gain or ss.intensity ~= nil) then
         local difficulty = ss.tier or ss.mode or "Difficulty"
         -- Parse and format the ash number for compact display
@@ -1339,50 +1556,38 @@ function M.Render(model)
         worldStatusBox:Hide()
     end
 
-    -- Keep both encounter records visible. Showing only the larger of the
-    -- two made a Lich King result hide a valid Training Dummy capture.
-    local capture = Nexus.DpsCapture
-    local dummyBest = capture and capture.GetCharacterBest and capture.GetCharacterBest("dummy", UnitName("player")) or nil
-    local lkBest = capture and capture.GetCharacterBest and capture.GetCharacterBest("lk", UnitName("player")) or nil
-    if dummyBest or lkBest then
-        local dummyText = dummyBest and ("|cff4dff80" .. FmtDps(dummyBest.dps) .. "|r") or "|cff777777—|r"
-        local lkText = lkBest and ("|cff4dff80" .. FmtDps(lkBest.dps) .. "|r") or "|cff777777—|r"
-        bestDpsText:SetText("|cffb8b8b8Best DPS:|r  Dummy " .. dummyText .. "  |cff666666•|r  Lich King " .. lkText)
-    else
-        bestDpsText:SetText("|cff888888Best DPS: hit a training dummy to record|r")
-    end
-    bestDpsText:ClearAllPoints()
-    if complete and not noBuild and not activeRoll and not showPerformance then
-        bestDpsText:SetPoint("TOP", frame, "TOP", 0, statusVisible and -111 or -52)
-    else
-        bestDpsText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 32)
-    end
-    -- The compact Best DPS prompt stays visible in every configured HUD state.
-    -- The Performance setting only controls the expanded Dummy/Lich King table.
-    if not noBuild then
-        bestDpsText:Show()
-        bestDpsHit:Show()
-    else
-        bestDpsText:Hide()
-        bestDpsHit:Hide()
-    end
+    RenderBestDps(model, complete, noBuild, activeRoll, statusVisible)
     if autoBtn:IsShown() then autoBtn:SetText(AutoLabel(model.auto)) end
     if not userHidden and not menuSuppressed then frame:Show() else frame:Hide() end
+    lastSignatures = signatures
+    if frame and Nexus.Theme and Nexus.Theme.StyleTree
+        and not frame._nexusHudTreeStyled then
+        Nexus.Theme.StyleTree(frame)
+        frame._nexusHudTreeStyled = true
+        renderStats.themeTreeWalks = renderStats.themeTreeWalks + 1
+    end
+    return true
 end
 
-function M.Refresh() if M._lastModel then M.Render(M._lastModel) end end
+function M.Refresh()
+    if callbacks and type(callbacks.RefreshDisplay) == "function" then
+        return callbacks.RefreshDisplay()
+    end
+    if M._lastModel then return M.Render(M._lastModel) end
+    return false
+end
+function M.SetStatus(status)
+    if not M._lastModel then return false end
+    local nextStatus = SafeText(status)
+    if SafeText(M._lastModel.status) == nextStatus then return false end
+    M._lastModel.status = nextStatus
+    if lastSignatures then lastSignatures.status = Signature(nextStatus) end
+    renderStats.statusOnly = renderStats.statusOnly + 1
+    return true
+end
+function M.RenderStats() return DefensiveCopy(renderStats) end
 function M.Show() userHidden = false; if not menuSuppressed then EnsureFrame():Show() end end
 function M.Hide() if frame then frame:Hide() end; userHidden = true end
 function M.IsShown() return frame and frame:IsShown() or false end
-
--- Apply the shared dark theme after every adaptive HUD render.
-do
-    local originalRender = M.Render
-    M.Render = function(...)
-        local result = originalRender(...)
-        if frame and Nexus.Theme then Nexus.Theme.StyleTree(frame) end
-        return result
-    end
-end
 
 return M

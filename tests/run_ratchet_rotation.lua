@@ -124,9 +124,8 @@ local qualityQueue = Ratchet.PredictQueue({
 }, {
     byFamily={}, bySpell={},
 }, qualityPlan, {}, {}, catalog)
-assert(qualityQueue.entries[1].wanted == false
-        and qualityQueue.entries[2].wanted == true,
-    "predicted guarantees must expose quality-qualified wanted state")
+assert(#qualityQueue.entries == 0 and qualityQueue.random == true,
+    "Saved Builds must not predict future Echoes on random boards")
 
 local lowEstimate = Ratchet.RunsEstimate(qualityPlan, {
     byFamily={ quality=1 },

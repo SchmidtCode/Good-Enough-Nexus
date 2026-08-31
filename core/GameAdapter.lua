@@ -17,6 +17,13 @@ A.DIAGNOSTIC_PASSIVE = false
 local Store
 local callbacks
 local catalogCache, playerMaskCache
+local catalogObservedRef, catalogObservedHint
+local catalogPublishedCanonical, catalogPublishedHash
+local catalogFailureMessage
+local catalogStatus = {
+    checks=0, fastHits=0, equivalent=0, rebuilds=0,
+    failures=0, familyBlocks=0, scheduled=false,
+}
 local boardDirty, slotsDirty, dataDirty = true, true, true
 local lastBoardSig
 local inFlightKind, inFlightSig, pendingOwnPick
@@ -41,6 +48,11 @@ local tomeMutationPausedUntil = 0
 local latchSince, deadLatch = {}, {}
 local slotsRetryAt, slotsRetries = nil, 0
 local slotsRefreshAt = 0
+local SLOT_REFRESH_SECONDS = 300
+local lastAutoAcceptState, lastRivalState = nil, nil
+local progressCheckAt, progressCheckRequested = 0, false
+local lastProgressSignature
+local knownDiscoveryKeys, knownDiscoveryCount = {}, 0
 
 local CORRECTED_CLASS_MASKS = {
     -- PerkClassMasks.DRUID is a client bug (0x200); every Druid DB row uses
@@ -72,94 +84,169 @@ local function SafeCall(fn, ...)
 end
 
 ------------------------------------------------------------------------
--- Catalog (built once; DBC name lookups are synchronous)
+-- Revision-aware catalog. Ordinary reads are O(1); the keyed noncritical
+-- scheduler performs the slower canonical source check for in-place edits.
 ------------------------------------------------------------------------
 
-local function EchoName(row, spellId)
-    local n = GetSpellInfo(spellId)
-    if n then return n end
-    -- comment carries "Name - Rarity"
-    local c = tostring(row.comment or "")
-    return (c:gsub(" %- %a+$", ""))
+local CATALOG_CHECK_INTERVAL = 30
+
+local function CatalogText(value)
+    local safe = Nexus.DiagnosticHistory and Nexus.DiagnosticHistory.SafeText
+    if type(safe) == "function" then return safe(value, 512) end
+    local ok, text = pcall(tostring, value)
+    return ok and tostring(text or "") or "unprintable catalog error"
 end
 
-function A.Catalog()
-    if catalogCache then return catalogCache end
+local function SourceVersionHint(pe)
+    if type(pe) ~= "table" then return "" end
+    for _, key in ipairs({"catalogVersion", "databaseVersion", "VERSION", "Version", "version"}) do
+        local value = rawget(pe, key)
+        local kind = type(value)
+        if kind == "string" or kind == "number" then return tostring(value) end
+    end
+    if type(GetAddOnMetadata) == "function" then
+        local ok, value = pcall(GetAddOnMetadata, "ProjectEbonhold", "Version")
+        local kind = ok and type(value) or "nil"
+        if kind == "string" or kind == "number" then return tostring(value) end
+    end
+    return ""
+end
+
+local function CaptureCatalogSource()
     local pe = PE()
-    local db = pe and pe.PerkDatabase
-    if type(db) ~= "table" then return nil end
+    if type(pe) ~= "table" then return nil, "" end
+    return pe.PerkDatabase, SourceVersionHint(pe)
+end
 
-    local rows, groupCount = {}, {}
-    for spellId, row in pairs(db) do
-        if type(spellId) == "number" and type(row) == "table" and row.maxStack then
-            rows[spellId] = {
-                spellId = spellId,
-                name = EchoName(row, spellId),
-                maxStack = tonumber(row.maxStack) or 1,
-                classMask = tonumber(row.classMask) or 0,
-                minLevel = tonumber(row.minLevel) or 1,
-                quality = tonumber(row.quality) or 0,
-                groupId = tonumber(row.groupId) or 0,
-                requiredSpell = tonumber(row.requiredSpell) or 0,
-            }
-            local g = rows[spellId].groupId
-            if g and g > 0 then groupCount[g] = (groupCount[g] or 0) + 1 end
+local function RecordCatalogFailure(message, familyBlock)
+    message = CatalogText(message)
+    catalogStatus.failures = catalogStatus.failures + 1
+    if familyBlock then catalogStatus.familyBlocks = catalogStatus.familyBlocks + 1 end
+    catalogStatus.lastResult = familyBlock and "family-blocked" or "failed"
+    catalogStatus.lastError = message
+    if message ~= catalogFailureMessage then
+        catalogFailureMessage = message
+        local errors = Nexus and Nexus.Errors
+        if errors and type(errors.Record) == "function" then
+            pcall(errors.Record, "GameAdapter.Catalog", message)
         end
     end
+end
 
-    local familyOf, familyMembers, familyName = {}, {}, {}
-    for spellId, row in pairs(rows) do
-        local fam
-        if row.groupId > 0 and (groupCount[row.groupId] or 0) > 1 then
-            fam = "g" .. row.groupId
-        else
-            fam = "s" .. spellId
-        end
-        familyOf[spellId] = fam
-        familyMembers[fam] = familyMembers[fam] or {}
-        local m = familyMembers[fam]
-        m[#m + 1] = spellId
-        familyName[fam] = familyName[fam] or row.name
-    end
-    for _, members in pairs(familyMembers) do table.sort(members) end
-
-    -- Tome levers: keyed by requiredSpell (the actual wire key -- many-to-one).
-    -- Conformant iff EVERY member's gate spell is named exactly
-    -- "Tome of <member name>" (the proven v3.5.0 filter). The garbage
-    -- requiredSpell=9 cohort fails this and is NEVER toggled.
-    local levers = {}
-    for spellId, row in pairs(rows) do
-        if row.requiredSpell ~= 0 then
-            local lv = levers[row.requiredSpell]
-            if not lv then
-                lv = { lever = row.requiredSpell, members = {}, conformant = true,
-                       tomeName = GetSpellInfo(row.requiredSpell) }
-                levers[row.requiredSpell] = lv
-            end
-            lv.members[#lv.members + 1] = spellId
-            if lv.tomeName ~= ("Tome of " .. row.name) then
-                lv.conformant = false
-            end
-        end
-    end
-    for _, lv in pairs(levers) do table.sort(lv.members) end
+local function InspectCatalogSource(database, sourceHint)
+    catalogStatus.checks = catalogStatus.checks + 1
+    catalogObservedRef, catalogObservedHint = database, sourceHint
 
     local _, classToken = UnitClass("player")
     local mask = CORRECTED_CLASS_MASKS[classToken or ""]
     if not mask then
-        -- class not resolved yet (pre-PLAYER_ENTERING_WORLD / loading
-        -- screen): DO NOT cache -- a 0 mask would permanently empty the
-        -- draw support. Return nil so callers wait and we rebuild once the
-        -- class is known (addendum B5).
-        return nil
+        -- Do not mark an unresolved login-time class as a durable source
+        -- failure. A first build retries once the player is known.
+        catalogStatus.lastResult = "waiting-for-class"
+        return catalogCache
     end
-    playerMaskCache = mask
+    if type(database) ~= "table" then
+        if catalogCache then RecordCatalogFailure("Project Ebonhold catalog source unavailable") end
+        return catalogCache
+    end
 
-    catalogCache = {
-        rows = rows, familyOf = familyOf, familyMembers = familyMembers,
-        familyName = familyName, levers = levers, playerMask = playerMaskCache,
-    }
+    local source = Nexus and Nexus.EchoCatalogSource
+    if not source or type(source.Materialize) ~= "function" then
+        RecordCatalogFailure("EchoCatalogSource module unavailable")
+        return catalogCache
+    end
+    local candidate, canonicalOrError, hash = source.Materialize(
+        database, function(spellId) return GetSpellInfo(spellId) end)
+    if not candidate then
+        RecordCatalogFailure(canonicalOrError)
+        return catalogCache
+    end
+    local canonical = canonicalOrError
+    catalogStatus.sourceVersion = sourceHint ~= "" and sourceHint or nil
+    catalogStatus.observedHash = hash
+
+    if catalogCache and canonical == catalogPublishedCanonical then
+        catalogStatus.equivalent = catalogStatus.equivalent + 1
+        catalogStatus.lastResult = "unchanged"
+        catalogStatus.lastError = nil
+        catalogFailureMessage = nil
+        return catalogCache
+    end
+
+    if catalogCache and type(source.FamilyDrift) == "function" then
+        local drift = source.FamilyDrift(catalogCache, candidate)
+        if drift then
+            RecordCatalogFailure(string.format(
+                "family migration required for spell %s (%s -> %s)",
+                tostring(drift.spellId), tostring(drift.before), tostring(drift.after)), true)
+            return catalogCache
+        end
+    end
+
+    candidate.playerMask = mask
+    playerMaskCache = mask
+    catalogCache = candidate
+    catalogPublishedCanonical = canonical
+    catalogPublishedHash = hash
+    catalogStatus.rebuilds = catalogStatus.rebuilds + 1
+    catalogStatus.lastResult = "rebuilt"
+    catalogStatus.lastError = nil
+    catalogStatus.publishedHash = hash
+    catalogStatus.rows = candidate.rowCount
+    catalogFailureMessage = nil
+
+    local revisions = Nexus and Nexus.Revisions
+    if revisions and type(revisions.Advance) == "function" then
+        pcall(revisions.Advance, revisions.CATALOG_CHANGED,
+            catalogStatus.rebuilds == 1 and "Echo catalog built" or "Echo catalog source changed")
+    end
     return catalogCache
+end
+
+function A.Catalog()
+    local ok, database, sourceHint = pcall(CaptureCatalogSource)
+    if not ok then
+        RecordCatalogFailure(database)
+        return catalogCache
+    end
+    if catalogCache and database == catalogObservedRef
+        and sourceHint == catalogObservedHint then
+        catalogStatus.fastHits = catalogStatus.fastHits + 1
+        return catalogCache
+    end
+    return InspectCatalogSource(database, sourceHint)
+end
+
+function A.CheckCatalogSource()
+    local ok, database, sourceHint = pcall(CaptureCatalogSource)
+    if not ok then
+        RecordCatalogFailure(database)
+        return false, CatalogText(database)
+    end
+    local before = catalogCache
+    local result = InspectCatalogSource(database, sourceHint)
+    local completed = result ~= nil and catalogStatus.lastResult ~= "failed"
+        and catalogStatus.lastResult ~= "family-blocked"
+        and catalogStatus.lastResult ~= "waiting-for-class"
+    return completed, catalogStatus.lastResult, result ~= before
+end
+
+function A.CatalogStatus()
+    return {
+        checks=catalogStatus.checks,
+        fastHits=catalogStatus.fastHits,
+        equivalent=catalogStatus.equivalent,
+        rebuilds=catalogStatus.rebuilds,
+        failures=catalogStatus.failures,
+        familyBlocks=catalogStatus.familyBlocks,
+        scheduled=catalogStatus.scheduled,
+        lastResult=catalogStatus.lastResult,
+        lastError=catalogStatus.lastError,
+        sourceVersion=catalogStatus.sourceVersion,
+        observedHash=catalogStatus.observedHash,
+        publishedHash=catalogPublishedHash,
+        rows=catalogStatus.rows or 0,
+    }
 end
 
 -- True only once the client can answer per-character getters safely: PEW
@@ -178,14 +265,14 @@ local function FamilyOf(spellId)
 end
 
 ------------------------------------------------------------------------
--- Board (deep copy; guaranteed by FLAG, never position)
+-- Board (deep copy; every offered slot is random in current Ebonhold)
 ------------------------------------------------------------------------
 
 function A.Board()
     local svc = PS()
     local ch = svc and SafeCall(svc.GetCurrentChoice)
     if type(ch) ~= "table" or #ch == 0 then return nil end
-    local cards, gi = {}, nil
+    local cards = {}
     local sigParts = {}
     for i = 1, #ch do
         local c = ch[i]
@@ -196,15 +283,16 @@ function A.Board()
                 family = FamilyOf(c.spellId),
                 isFrozen = c.isFrozen and true or false,
                 isCarried = c.isCarried and true or false,
-                isGuaranteed = c.isGuaranteed and true or false,
+                -- Current Ebonhold offerings are fully random. Keep no legacy
+                -- right-slot/flag-3 guarantee semantics in the adapter model.
+                isGuaranteed = false,
                 -- stamped onto the live entry by the SS-104 handler; preserve
                 justFrozen = c.justFrozen and true or false,
             }
             cards[#cards + 1] = card
-            if card.isGuaranteed and not gi then gi = #cards end
             sigParts[#sigParts + 1] = tostring(c.spellId)
                 .. (card.isFrozen and "F" or "") .. (card.isCarried and "C" or "")
-                .. (card.isGuaranteed and "G" or "") .. (card.justFrozen and "J" or "")
+                .. (card.justFrozen and "J" or "")
         end
     end
     if #cards == 0 then return nil end
@@ -219,7 +307,7 @@ function A.Board()
     if selfFreezeSig == sig and selfFreezeIndex and cards[selfFreezeIndex] then
         cards[selfFreezeIndex].justFrozen = true
     end
-    return { cards = cards, guaranteedIndex = gi, signature = sig,
+    return { cards = cards, guaranteedIndex = nil, signature = sig,
              idSignature = idSig }
 end
 
@@ -366,9 +454,9 @@ function A.MaxPermanentEchoes()
     return tonumber(svc and SafeCall(svc.GetMaximumPermanentEchoes)) or 6
 end
 
-local function GrantedSignature(granted)
-    if type(granted) ~= "table" then return nil end
+local function GrantedCounts(granted)
     local counts = {}
+    if type(granted) ~= "table" then return counts end
     for _, entries in pairs(granted) do
         if type(entries) == "table" then
             for i = 1, #entries do
@@ -378,6 +466,48 @@ local function GrantedSignature(granted)
             end
         end
     end
+    return counts
+end
+
+local function EchoListCounts(loadout)
+    local counts = {}
+    if type(loadout) ~= "table" then return counts end
+    local echoes = type(loadout.echoes) == "table" and loadout.echoes or loadout
+    for i = 1, #echoes do
+        local echo = echoes[i]
+        local id = type(echo) == "table" and tonumber(echo.spellId)
+        if id then
+            local count = math.max(1,
+                tonumber(echo.stacks or echo.stack or echo.count) or 1)
+            counts[id] = (counts[id] or 0) + count
+        end
+    end
+    return counts
+end
+
+local function OwnedSnapshot(counts, synced, source)
+    local catalog = A.Catalog()
+    local bySpell, byFamily, distinct, total = {}, {}, 0, 0
+    for id, count in pairs(type(counts) == "table" and counts or {}) do
+        id, count = tonumber(id), tonumber(count)
+        if id and count and count > 0 and catalog and catalog.rows[id] then
+            bySpell[id] = count
+            local family = FamilyOf(id) or id
+            byFamily[family] = (byFamily[family] or 0) + count
+            distinct = distinct + 1
+            total = total + count
+        end
+    end
+    return {
+        bySpell = bySpell, byFamily = byFamily,
+        synced = synced and true or false,
+        distinct = distinct, total = total, source = source,
+    }
+end
+
+local function GrantedSignature(granted)
+    if type(granted) ~= "table" then return nil end
+    local counts = GrantedCounts(granted)
     local ids = {}
     for id in pairs(counts) do ids[#ids + 1] = id end
     table.sort(ids)
@@ -386,6 +516,46 @@ local function GrantedSignature(granted)
         out[#out + 1] = tostring(ids[i]) .. ":" .. tostring(counts[ids[i]])
     end
     return table.concat(out, ",")
+end
+
+-- Learning can update the client's live tables without a journal repaint.
+-- Compare local data only: no requests, catalog scans, or full HUD rebuilds
+-- on unchanged polls. Presence (not enabled/disabled state) means tome-known.
+local function DiscoveryChanged(discovered)
+    discovered = type(discovered) == "table" and discovered or {}
+    local changed, count = false, 0
+    for id in pairs(discovered) do
+        count = count + 1
+        if not knownDiscoveryKeys[id] then changed = true end
+    end
+    changed = changed or count ~= knownDiscoveryCount
+    if changed then
+        knownDiscoveryKeys, knownDiscoveryCount = {}, count
+        for id in pairs(discovered) do knownDiscoveryKeys[id] = true end
+    end
+    return changed
+end
+
+local function ProgressSignature()
+    local svc = PS()
+    if not svc then return nil end
+    return (GrantedSignature(SafeCall(svc.GetGrantedPerks)) or "?")
+        .. "|" .. ClientOwnedSig(ReadLockedPerks(SafeCall(svc.GetLockedPerks))),
+        SafeCall(svc.GetDiscoveredEchoes)
+end
+
+local function PollProgressChanges()
+    local now = GetTime()
+    if not progressCheckRequested and now < progressCheckAt then return end
+    progressCheckRequested = false
+    progressCheckAt = now + 5
+    local signature, discovered = ProgressSignature()
+    local discoveryChanged = DiscoveryChanged(discovered)
+    if lastProgressSignature ~= nil
+        and (signature ~= lastProgressSignature or discoveryChanged) then
+        dataDirty = true
+    end
+    lastProgressSignature = signature
 end
 
 function A.Owned()
@@ -408,11 +578,19 @@ function A.Owned()
     end
     -- Locked Echoes are a separate, permanent player selection. They are
     -- captured for leaderboard/build metadata through LockedOwned(), but they
-    -- are never part of the current run's rolled ownership, guarantee queue,
-    -- wishlist progress, board decisions, or save candidate.
-    -- auto-chained boards are stale-by-one: union our own confirmed picks
-    for id, n in pairs(recordedPicks) do
-        if (bySpell[id] or 0) < n then bySpell[id] = n end
+    -- are never part of the current run's rolled ownership, wishlist progress,
+    -- board decisions, or save candidate.
+    -- Auto-chained boards can be stale by one selection. Overlay the expected
+    -- count only until GetGrantedPerks catches up, then retire it. Keeping this
+    -- as a run-long pick history made replaced qualities remain in TO SHED.
+    for id, expected in pairs(recordedPicks) do
+        local current = tonumber(bySpell[id]) or 0
+        expected = tonumber(expected) or 0
+        if current >= expected then
+            recordedPicks[id] = nil
+        elseif expected > 0 then
+            bySpell[id] = expected
+        end
     end
     local byFamily, distinct, total = {}, 0, 0
     for id, n in pairs(bySpell) do
@@ -442,6 +620,31 @@ function A.Owned()
              synced = synced, ghostSuspect = ghost,
              distinct = distinct, total = total,
              generation = ownedGeneration }
+end
+
+-- Level 80 has a separate live loadout after saved-build activation and Orb
+-- replacements. GetGrantedPerks remains the leveling-run source, so the HUD
+-- must read GetActiveEchoLoadout instead. A verified active server slot is a
+-- fallback for the short window where the direct mirror is unavailable.
+function A.CurrentOwned()
+    if A.Level() ~= 80 then return A.Owned() end
+    local service = PS()
+    local active = service and SafeCall(service.GetActiveEchoLoadout)
+    local activeCounts = EchoListCounts(active)
+    if next(activeCounts) ~= nil then
+        return OwnedSnapshot(activeCounts, true, "active-echo-loadout")
+    end
+
+    local slots = A.Slots()
+    local activeSlot = slots and tonumber(slots.activeSlot) or 0
+    local row = slots and slots.bySlot and slots.bySlot[activeSlot]
+    if row and row.verified and row.verifiedFieldPresent
+        and not row.suspectParse and type(row.echoes) == "table" then
+        return OwnedSnapshot(EchoListCounts(row.echoes), true, "active-server-slot")
+    end
+    local fallback = A.Owned()
+    fallback.source = "granted-fallback"
+    return fallback
 end
 
 -- Run boundary (each visit to level 1): the previous run's recorded picks
@@ -571,6 +774,71 @@ local function WishlistIdentity(echoes)
     return table.concat(parts, ",")
 end
 
+local function CopyWishlistEchoes(echoes)
+    local out = {}
+    if type(echoes) ~= "table" then return out end
+    for i = 1, #echoes do
+        local e = echoes[i]
+        local id = type(e) == "table" and tonumber(e.spellId)
+        if id then
+            out[#out + 1] = {
+                spellId = id,
+                quality = tonumber(e.quality) or 0,
+                stacks = math.max(1, tonumber(e.stacks) or 1),
+                locked = e.locked and true or false,
+            }
+        end
+    end
+    return out
+end
+
+-- Association fingerprints already contain the complete ordinary wishlist
+-- (spellId:stacks pairs).  Decode that bounded snapshot when Project
+-- Ebonhold briefly reports no designed slots so a transient empty response
+-- cannot make an existing target disappear.
+local function WishlistEchoesFromIdentity(key)
+    local out = {}
+    if type(key) ~= "string" or key == "" then return out end
+    for part in string.gmatch(key, "[^,]+") do
+        local idText, stacksText = string.match(part, "^(%d+):(%d+)$")
+        local id, stacks = tonumber(idText), tonumber(stacksText)
+        if id and id > 0 and stacks and stacks > 0 then
+            out[#out + 1] = {
+                spellId = id, quality = 0, stacks = math.max(1, stacks),
+                locked = false,
+            }
+        end
+    end
+    return out
+end
+
+local function StoredWishlistRecord(candidate)
+    local echoes = CopyWishlistEchoes(type(candidate) == "table" and candidate.echoes)
+    local key = type(candidate) == "table" and candidate.key or nil
+    if (not key or key == "") and #echoes > 0 then key = WishlistIdentity(echoes) end
+    local record = {
+        slot = type(candidate) == "table" and tonumber(candidate.slot) or nil,
+        key = key,
+        name = type(candidate) == "table" and tostring(candidate.name or "") or "",
+    }
+    if #echoes > 0 then record.echoes = echoes end
+    return record
+end
+
+local function CandidateFromStoredRecord(saved)
+    if type(saved) ~= "table" then return nil end
+    local echoes = CopyWishlistEchoes(saved.echoes)
+    if #echoes == 0 then echoes = WishlistEchoesFromIdentity(saved.key) end
+    if #echoes == 0 then return nil end
+    local key = tostring(saved.key or "")
+    if key == "" then key = WishlistIdentity(echoes) end
+    return {
+        slot = tonumber(saved.slot), name = tostring(saved.name or ""),
+        count = #echoes, echoes = echoes, key = key, active = false,
+        stored = true,
+    }
+end
+
 -- Public wrapper: a stable, content-based wishlist identity (spellId:stacks
 -- pairs, sorted) usable outside this file. See LockDesignTargetsFor/
 -- LockDesignTargets (core/Main.lua, ui/WishlistEditor.lua) -- this is what
@@ -583,7 +851,7 @@ function A.WishlistKey(echoes)
     return WishlistIdentity(echoes)
 end
 
-function A.GetWishlistCandidates()
+local function LiveWishlistCandidates()
     local slots = A.Slots()
     if not slots then return {} end
     local maxSlots = slots.maxSlots or 5
@@ -635,6 +903,31 @@ function A.GetWishlistCandidates()
     return out
 end
 
+function A.GetWishlistCandidates()
+    local out = LiveWishlistCandidates()
+    if #out > 0 then return out end
+
+    -- Emergency/offline fallback: retain only identities the user explicitly
+    -- associated before.  This does not resurrect Community Builds or Sync;
+    -- it keeps the core wishlist usable while the server slot mirror is empty.
+    local state = Store and Store.State and Store.State()
+    if not state then return out end
+    local seen = {}
+    local function Add(saved)
+        local candidate = CandidateFromStoredRecord(saved)
+        if not candidate or not candidate.slot then return end
+        local identity = candidate.key ~= "" and ("key:" .. candidate.key)
+            or ("slot:" .. tostring(candidate.slot) .. ":" .. candidate.name)
+        if seen[identity] then return end
+        seen[identity] = true
+        out[#out + 1] = candidate
+    end
+    Add(state.firstRunWishlist)
+    for _, saved in pairs(state.loadoutWishlists or {}) do Add(saved) end
+    table.sort(out, function(a, b) return (tonumber(a.slot) or 0) < (tonumber(b.slot) or 0) end)
+    return out
+end
+
 local function ResolveAssociation(loadoutSlot)
     loadoutSlot = tonumber(loadoutSlot)
     if not loadoutSlot then return nil end
@@ -654,11 +947,9 @@ local function ResolveAssociation(loadoutSlot)
                 return c
             end
         end
-        links[loadoutSlot] = nil
         return nil
     end
     if type(saved) ~= "table" then
-        links[loadoutSlot] = nil
         return nil
     end
 
@@ -711,7 +1002,11 @@ local function ResolveAssociation(loadoutSlot)
             end
         end
     end
-    links[loadoutSlot] = nil
+    -- A missing candidate is not proof that the user deleted a wishlist.
+    -- GetServerBuildSlots is eventually consistent and can be nil/empty
+    -- during login and run transitions.  Keep the association so a later
+    -- authoritative snapshot can resolve it instead of deleting user state
+    -- from a read path.
     return nil
 end
 
@@ -722,7 +1017,19 @@ end
 local function ResolveFirstRunWishlist()
     local state = Store and Store.State and Store.State()
     local saved = state and state.firstRunWishlist
-    if type(saved) ~= "table" then return nil end
+    if type(saved) ~= "table" then
+        -- activeSlot=0 also occurs during run/login transitions.  If exactly
+        -- one numbered loadout association exists, it is the only safe target
+        -- to carry through that temporary no-active-slot window.
+        local only, count = nil, 0
+        for _, linked in pairs((state and state.loadoutWishlists) or {}) do
+            if CandidateFromStoredRecord(linked) then
+                only, count = linked, count + 1
+            end
+        end
+        if count ~= 1 then return nil end
+        saved = only
+    end
     local candidates = A.GetWishlistCandidates()
     local wantedKey, wantedName = tostring(saved.key or ""), tostring(saved.name or "")
     if wantedKey ~= "" then
@@ -750,16 +1057,19 @@ function A.GetFirstRunWishlist()
     return ResolveFirstRunWishlist()
 end
 
-function A.SetFirstRunWishlist(wishlistSlot)
+function A.SetFirstRunWishlist(wishlistSlot, candidate)
     wishlistSlot = tonumber(wishlistSlot)
-    local selected
-    for _, c in ipairs(A.GetWishlistCandidates()) do
-        if tonumber(c.slot) == wishlistSlot then selected = c; break end
+    local selected = type(candidate) == "table"
+        and tonumber(candidate.slot) == wishlistSlot and candidate or nil
+    if not selected then
+        for _, c in ipairs(A.GetWishlistCandidates()) do
+            if tonumber(c.slot) == wishlistSlot then selected = c; break end
+        end
     end
     if not selected then return false, "invalid wishlist" end
     local state = Store and Store.State and Store.State()
     if not state then return false, "store unavailable" end
-    state.firstRunWishlist = { slot = selected.slot, key = selected.key, name = selected.name }
+    state.firstRunWishlist = StoredWishlistRecord(selected)
     dataDirty = true
     return true
 end
@@ -767,7 +1077,7 @@ end
 function A.SetFirstRunWishlistIdentity(name, echoes)
     local state = Store and Store.State and Store.State()
     if not state then return false end
-    state.firstRunWishlist = { name = tostring(name or ""), key = WishlistIdentity(echoes) }
+    state.firstRunWishlist = StoredWishlistRecord({ name=name, echoes=echoes })
     dataDirty = true
     return true
 end
@@ -812,10 +1122,7 @@ function A.SetLoadoutWishlistIdentity(loadoutSlot, name, echoes)
     local state = Store and Store.State and Store.State()
     if not state then return false, "store unavailable" end
     state.loadoutWishlists = state.loadoutWishlists or {}
-    state.loadoutWishlists[loadoutSlot] = {
-        name = tostring(name or ""),
-        key = WishlistIdentity(echoes),
-    }
+    state.loadoutWishlists[loadoutSlot] = StoredWishlistRecord({ name=name, echoes=echoes })
     dataDirty = true
     return true
 end
@@ -843,15 +1150,14 @@ end
 function A.SetFirstLoadoutWishlistIdentity(name, echoes)
     local state = Store and Store.State and Store.State()
     if not state then return false, "store unavailable" end
-    local key = WishlistIdentity(echoes)
     state.loadoutWishlists = state.loadoutWishlists or {}
-    state.loadoutWishlists[1] = { name = tostring(name or ""), key = key }
-    state.firstRunWishlist = { name = tostring(name or ""), key = key }
+    state.loadoutWishlists[1] = StoredWishlistRecord({ name=name, echoes=echoes })
+    state.firstRunWishlist = StoredWishlistRecord({ name=name, echoes=echoes })
     dataDirty = true
     return true
 end
 
-function A.SetLoadoutWishlist(loadoutSlot, wishlistSlot)
+function A.SetLoadoutWishlist(loadoutSlot, wishlistSlot, candidate)
     if A.DIAGNOSTIC_PASSIVE then return false, "internal.6 passive diagnostic: write blocked" end
     loadoutSlot, wishlistSlot = tonumber(loadoutSlot), tonumber(wishlistSlot)
     local slots = A.Slots()
@@ -865,17 +1171,18 @@ function A.SetLoadoutWishlist(loadoutSlot, wishlistSlot)
     if not IsPopulatedLoadout(loadoutSlot, slots) then
         return false, "that loadout slot is empty or unavailable"
     end
-    local selected
-    for _, c in ipairs(A.GetWishlistCandidates()) do
-        if tonumber(c.slot) == wishlistSlot then selected = c; break end
+    local selected = type(candidate) == "table"
+        and tonumber(candidate.slot) == wishlistSlot and candidate or nil
+    if not selected then
+        for _, c in ipairs(A.GetWishlistCandidates()) do
+            if tonumber(c.slot) == wishlistSlot then selected = c; break end
+        end
     end
     if not selected then return false, "invalid wishlist" end
     local state = Store and Store.State and Store.State()
     if not state then return false, "store unavailable" end
     state.loadoutWishlists = state.loadoutWishlists or {}
-    state.loadoutWishlists[loadoutSlot] = {
-        slot = selected.slot, key = selected.key, name = selected.name,
-    }
+    state.loadoutWishlists[loadoutSlot] = StoredWishlistRecord(selected)
     dataDirty = true
     return true
 end
@@ -887,10 +1194,9 @@ function A.UpdateWishlistAssociationAfterSave(loadoutSlot, wishlistSlot, name, e
     local state = Store and Store.State and Store.State()
     if not state then return false end
     state.loadoutWishlists = state.loadoutWishlists or {}
-    state.loadoutWishlists[loadoutSlot] = {
-        slot = wishlistSlot, name = tostring(name or ""),
-        key = WishlistIdentity(echoes),
-    }
+    state.loadoutWishlists[loadoutSlot] = StoredWishlistRecord({
+        slot=wishlistSlot, name=name, echoes=echoes,
+    })
     dataDirty = true
     return true
 end
@@ -911,6 +1217,19 @@ function A.Wishlist()
     local slots = A.Slots()
     local activeSlot = slots and tonumber(slots.activeSlot) or 0
     local maxSlots = slots and (tonumber(slots.maxSlots) or 5) or 5
+    -- Project Ebonhold can make a designed wishlist (slot > maxSlots) the
+    -- active server selection. That slot is already an exact, authoritative
+    -- target; resolving it must not go through the activeSlot=0 first-run
+    -- fallback or depend on a numbered Saved Build association.
+    if activeSlot > maxSlots then
+        for _, candidate in ipairs(A.GetWishlistCandidates()) do
+            if tonumber(candidate.slot) == activeSlot then
+                A._wishlistNote = "Active designed wishlist target"
+                return EchoesToWishlist(candidate.echoes, candidate.name,
+                    "designed", false, candidate.slot)
+            end
+        end
+    end
     if activeSlot < 1 or activeSlot > maxSlots then
         local starter = ResolveFirstRunWishlist()
         if starter then
@@ -1221,6 +1540,7 @@ local function WatchLatches()
                 end
             end
         else
+            if latchSince[kind] ~= nil then boardDirty = true end
             latchSince[kind] = nil
             if deadLatch[kind] then deadLatch[kind] = nil end  -- late reply: recover
         end
@@ -1247,11 +1567,16 @@ local function ResolveInFlight()
             if ch == nil or resolvedSig ~= inFlightSig then
                 -- success: board consumed (auto-chain requests the next one)
                 if pendingOwnPick then
-                    recordedPicks[pendingOwnPick] = (recordedPicks[pendingOwnPick] or 0) + 1
+                    local svc = PS()
+                    local live = GrantedCounts(svc and SafeCall(svc.GetGrantedPerks))
+                    local current = tonumber(live[pendingOwnPick]) or 0
+                    local expected = tonumber(recordedPicks[pendingOwnPick]) or current
+                    recordedPicks[pendingOwnPick] = math.max(current, expected) + 1
                 end
             end
             -- failure (SS-1000 "0"): latch cleared, same board -> just release
             inFlightKind, inFlightSig, pendingOwnPick = nil, nil, nil
+            boardDirty = true
         end
     elseif inFlightKind == "banish" then
         if not (p and p.pendingBanishIndex) then
@@ -1261,9 +1586,11 @@ local function ResolveInFlight()
     elseif inFlightKind == "reroll" then
         if not (p and p.pendingReroll) then
             inFlightKind, inFlightSig = nil, nil
+            boardDirty = true
         end
     else
         inFlightKind, inFlightSig = nil, nil
+        boardDirty = true
     end
 end
 
@@ -1272,7 +1599,7 @@ end
 ------------------------------------------------------------------------
 
 local function CardBlocked(card)
-    return card.isGuaranteed or card.isFrozen or card.isCarried or card.justFrozen
+    return card.isFrozen or card.isCarried or card.justFrozen
 end
 
 function A.Take(spellId)
@@ -1577,6 +1904,33 @@ end
 
 function A.Level() return UnitLevel("player") or 0 end
 
+function A.PlayerIdentity()
+    local name = UnitName and UnitName("player") or nil
+    local class
+    if UnitClass then
+        local _
+        _, class = UnitClass("player")
+    end
+    local realm = GetNormalizedRealmName and GetNormalizedRealmName()
+    if not realm or realm == "" then realm = GetRealmName and GetRealmName() end
+    realm = tostring(realm or "unknown"):lower():gsub("%s+", "")
+    local normalizedName = tostring(name or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    return {
+        name=name,
+        class=class,
+        realm=realm,
+        ownerKey=normalizedName ~= "" and (normalizedName .. "@" .. realm) or nil,
+    }
+end
+
+function A.Now()
+    return GetTime and GetTime() or 0
+end
+
+function A.Timestamp()
+    return time and time() or 0
+end
+
 function A.Horizon()
     -- GetPendingRollsCount has PERSISTENT SIDE EFFECTS at level<=1 /
     -- loading screens (pick-counter reset, char-key latch): call guarded.
@@ -1687,10 +2041,16 @@ local function InstallHooks()
         hooksecurefunc(pe.EchoJournal, "OnDataChanged", function()
             pcall(function()
                 slotsDirty = true; dataDirty = true
+                progressCheckRequested = true
                 if Nexus.JournalTab and Nexus.JournalTab.RefreshAssociations then
                     Nexus.JournalTab.RefreshAssociations()
                 end
             end)
+        end)
+    end
+    if pe.EchoJournal and type(pe.EchoJournal.NotifyNewEcho) == "function" then
+        hooksecurefunc(pe.EchoJournal, "NotifyNewEcho", function()
+            progressCheckRequested = true
         end)
     end
     local svc = PS()
@@ -1735,23 +2095,47 @@ function A.Init(cb, store)
     callbacks = cb or {}
     Store = store
     InstallHooks()
+    lastAutoAcceptState = A.AutoAcceptOn()
+    lastRivalState = A.RivalDetected()
+    local scheduler = Nexus and Nexus.Scheduler
+    if scheduler and scheduler.IsInitialized and scheduler.IsInitialized()
+        and type(scheduler.Every) == "function" then
+        local scheduled = scheduler.Every("catalog.source-check",
+            CATALOG_CHECK_INTERVAL, function() A.CheckCatalogSource() end)
+        catalogStatus.scheduled = scheduled == true
+    end
 end
 
 function A.OnEvent(event)
     if event == "PLAYER_ENTERING_WORLD" then
         pewDone = true
         boundaryAt = GetTime()
+        lastProgressSignature = nil
+        progressCheckAt = 0
         InstallHooks()
         A.RequestGranted()
         boardDirty, slotsDirty = true, true
     elseif event == "PLAYER_LEVEL_UP" then
         boardDirty = true
+    elseif event == "SPELLS_CHANGED" or event == "LEARNED_SPELL_IN_TAB"
+        or event == "SKILL_LINES_CHANGED" then
+        progressCheckRequested = true
     end
 end
 
 -- Main drives this from its OnUpdate (~0.2s cadence)
 function A.Poll()
     InstallHooks()
+    PollProgressChanges()
+    local autoAcceptState = A.AutoAcceptOn()
+    local rivalState = A.RivalDetected()
+    if lastAutoAcceptState ~= nil and autoAcceptState ~= lastAutoAcceptState then
+        boardDirty = true
+    end
+    if lastRivalState ~= nil and rivalState ~= lastRivalState then
+        boardDirty = true
+    end
+    lastAutoAcceptState, lastRivalState = autoAcceptState, rivalState
     ResolveInFlight()
     WatchLatches()
     ReconcileTomePending()
@@ -1768,7 +2152,11 @@ function A.Poll()
     -- wishlist. Refresh periodically; RequestSlots() itself is rate-limited.
     if pewDone and GetTime() >= (slotsRefreshAt or 0) then
         if A.RequestSlots() then
-            slotsRefreshAt = GetTime() + 5
+            -- EchoJournal's data-change hook invalidates immediately after a
+            -- real slot edit.  This request is only a slow recovery path for a
+            -- missed server event; a five-second request/reply loop forced the
+            -- complete automation pipeline to run while the player was idle.
+            slotsRefreshAt = GetTime() + SLOT_REFRESH_SECONDS
         else
             slotsRefreshAt = GetTime() + 1
         end

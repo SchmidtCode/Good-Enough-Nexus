@@ -1,21 +1,46 @@
 ## Interface: 30300
 ## Title: Nexus
-## Notes: Nexus — Echo build automation, community builds, DPS leaderboards, and auto-snapshot convergence.
+## Notes: Nexus — Echo build automation, bounded community builds, DPS leaderboards, and auto-snapshot convergence.
 ## Author: Boganic
-## Version: 1.19.5
+## Version: 1.96.3
 ## OptionalDeps: ProjectEbonhold
 ## SavedVariables: NexusDB WishlistRealizerDB
 
+data\Release.lua
 data\DefaultProfile.lua
+data\BundledBuilds.lua
+logic\Version.lua
+core\DpsRanking.lua
+core\Performance.lua
+core\EchoCatalogSource.lua
 logic\Model.lua
 logic\Strategy.lua
 logic\Ratchet.lua
 logic\Policy.lua
+core\Revisions.lua
+core\LoadoutEvidence.lua
+core\DataCompaction.lua
+core\BuildCatalog.lua
+core\DataRetention.lua
+core\BuildHashCache.lua
 core\Store.lua
+core\Errors.lua
+core\Scheduler.lua
+core\DiagnosticHistory.lua
+core\DiagnosticLogs.lua
+core\ViewRefresh.lua
+core\Updates.lua
 core\Codec.lua
+core\SyncPolicy.lua
+core\DpsWireValidator.lua
+core\SyncResponder.lua
 core\Sync.lua
 core\DpsCapture.lua
+core\ViewProjections.lua
 core\GameAdapter.lua
+core\AccountBuildWorkspace.lua
+ui\VirtualList.lua
+ui\BrowserSession.lua
 ui\Theme.lua
 ui\Readout.lua
 ui\ServerStatus.lua
@@ -29,4 +54,5 @@ ui\CommunityBuilds.lua
 ui\Leaderboard.lua
 ui\Nameplate.lua
 ui\Changelog.lua
+core\CommandRouter.lua
 core\Main.lua

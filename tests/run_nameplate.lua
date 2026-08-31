@@ -84,10 +84,16 @@ assert(#lines==0, "unknown player should add nothing")
 print("Unknown player produces no output -- OK")
 
 -- 6. Community author with no DPS gets author badge
-NexusDB.communityBuilds["b1"]={
+assert(Nexus.BuildCatalog.Put({
     id="b1",title="Fire Mage",author="AuthorGuy",class="MAGE",
     echoes=echoes,postedAt=50000,lastModified=50000,isMine=false
-}
+}))
+local catalogAllCalls = 0
+local realCatalogAll = Nexus.BuildCatalog.All
+Nexus.BuildCatalog.All = function(...)
+    catalogAllCalls = catalogAllCalls + 1
+    return realCatalogAll(...)
+end
 lines={}
 UnitName=function(u)
     if u=="player" then return "Solkr" end
@@ -98,7 +104,10 @@ NP._AugmentUnitTooltip(fakeTooltip)
 assert(#lines>=1 and lines[1]:find("Nexus"), "author should get Nexus badge")
 assert(#lines==2 and lines[2]:find("Community build author",1,true),
     "non-ranked author tooltip lost its compact author label")
-print("Community author gets compact Nexus and author labels -- OK")
+assert(catalogAllCalls == 0,
+    "community-author tooltip copied the complete build catalog")
+Nexus.BuildCatalog.All = realCatalogAll
+print("Bundled community author gets compact Nexus and author labels -- OK")
 
 -- 7. NPC: no lines added
 lines={}

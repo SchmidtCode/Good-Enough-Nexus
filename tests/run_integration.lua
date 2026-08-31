@@ -164,7 +164,7 @@ H.Advance(1)
 check(CountWire("300200|0") == 1, "S3 no re-send after 530 confirmation")
 
 ------------------------------------------------------------------------
--- S4: RUN -- guaranteed identified by FLAG at arbitrary index
+-- S4: RUN -- stale guaranteed flags do not change random wishlist choices
 ------------------------------------------------------------------------
 H.playerLevel = 5
 H.granted = { ["Alpha Strike"] = { { spellId = 200100, stack = 1, maxStack = 1, quality = 3 } } }
@@ -176,7 +176,7 @@ H.DeliverBoard({
 })
 H.Advance(1.2)
 check(H.selectCalls[#H.selectCalls] == 200104,
-    "S4 took the guaranteed wanted card found by flag at index 1")
+    "S4 took the wanted random card at index 1")
 H.ResolveSelect(true)
 H.Advance(0.5)
 local owned = A.Owned()
@@ -184,7 +184,7 @@ check((owned.bySpell[200104] or 0) >= 1,
     "S4 recorded pick unions into owned before granted refresh")
 
 ------------------------------------------------------------------------
--- S5: wanted FREE card beats guaranteed filler; disable self-check demotes
+-- S5: a stale flag on filler has no guarantee or flag-demotion semantics
 ------------------------------------------------------------------------
 H.DeliverBoard({
     { spellId = 200200, quality = 1, isGuaranteed = true },   -- disabled-lever filler, flag-3!
@@ -193,14 +193,14 @@ H.DeliverBoard({
 })
 H.Advance(1.2)
 check(H.selectCalls[#H.selectCalls] == 200102,
-    "S5 took the wanted free card over guaranteed filler")
-check(Nexus.Store.State().flagDemotions.DISABLE_SUPPRESSES_GUARANTEE ~= nil,
-    "S5 disabled-lever guarantee demoted DISABLE_SUPPRESSES_GUARANTEE")
+    "S5 took the wanted random card over filler")
+check(Nexus.Store.State().flagDemotions.DISABLE_SUPPRESSES_GUARANTEE == nil,
+    "S5 stale guaranteed flag changed random-board feature state")
 H.ResolveSelect(true)
 H.Advance(0.5)
 
 ------------------------------------------------------------------------
--- S6: zero-guaranteed board (4-card trim case) falls through gracefully
+-- S6: an ordinary random board falls through gracefully
 ------------------------------------------------------------------------
 local selectsBefore = #H.selectCalls
 H.DeliverBoard({
@@ -209,24 +209,30 @@ H.DeliverBoard({
 })
 H.Advance(1.2)
 check(#H.selectCalls == selectsBefore + 1,
-    "S6 zero-flag-3 board still resolved to a least-harmful take")
+    "S6 random board still resolved to a least-harmful take")
 H.ResolveSelect(true)
 H.Advance(0.5)
 
 ------------------------------------------------------------------------
--- S7: stall regression -- blocked cards refuse locally, sender untouched
+-- S7: only frozen/in-flight cards are blocked. Legacy guaranteed flags are not.
 ------------------------------------------------------------------------
 H.DeliverBoard({
     { spellId = 200400, quality = 3, isGuaranteed = true },
     { spellId = 200202, quality = 1, justFrozen = true },
     { spellId = 200500, quality = 1 },
 })
+H.PushRunData({ remainingBanishes = 2, totalFreezes = 2, usedFreezes = 0,
+    totalRerolls = 2, usedRerolls = 0 })
 local banishesBefore = #H.banishCalls
 local ok1 = A.Banish(0)
-check(ok1 == false and #H.banishCalls == banishesBefore,
-    "S7 banish on guaranteed card dropped BEFORE the client sender")
+check(ok1 == true and #H.banishCalls == banishesBefore + 1,
+    "S7 stale guaranteed flag blocked a valid random-card Banish")
+H.ResolveBanish(200202, 1)
+H.Advance(0.5)
+H.PushRunData({ remainingBanishes = 1, totalFreezes = 2, usedFreezes = 0,
+    totalRerolls = 2, usedRerolls = 0 })
 local ok2 = A.Banish(1)
-check(ok2 == false and #H.banishCalls == banishesBefore,
+check(ok2 == false and #H.banishCalls == banishesBefore + 1,
     "S7 banish on justFrozen card dropped (post-SS-104 window covered)")
 
 ------------------------------------------------------------------------
@@ -444,7 +450,7 @@ H.Perks.currentChoice = nil
 H.Advance(0.3)
 
 ------------------------------------------------------------------------
--- S19: an unusable filler guarantee does not suppress search. Nexus safely
+-- S19: an unusable wished-family quality does not suppress search. Nexus safely
 -- Banishes an off-wishlist side while preserving wished families.
 ------------------------------------------------------------------------
 H.PushRunData({ remainingBanishes = 2, totalFreezes = 2, usedFreezes = 0,
@@ -462,9 +468,9 @@ H.DeliverBoard({
 })
 H.Advance(1.5)
 check(#H.banishCalls == banishesB4 + 1,
-    "S19 unusable guaranteed filler permits a safe search Banish")
+    "S19 unusable random quality permits a safe search Banish")
 check(#H.selectCalls == selectsB4,
-    "S19 did not drain the unusable guarantee before search")
+    "S19 did not search past the unusable random quality")
 H.ResolveBanish(200102, 2)
 H.Perks.currentChoice = nil
 H.Advance(0.3)

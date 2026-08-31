@@ -35,7 +35,7 @@ AI output is treated as draft input and must receive the same review and validat
 
 The following are not allowed:
 
-- using AI to copy or transform proprietary/incompatible third-party code and present it as original Better-Nexus work;
+- using AI to copy or transform proprietary/incompatible third-party code and present it as original Good Enough Nexus work;
 - laundering upstream, third-party, or confidential code through translation/refactoring to evade notices or legal constraints;
 - removing or obscuring provenance, copyright notices, or license requirements;
 - using AI output to bypass security, release, or branch controls;

@@ -1,0 +1,109 @@
+name: Draft Nexus community release
+
+on:
+  push:
+    tags:
+      - "v1.96.3"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Require the good-enough-nexus branch tip
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/good-enough-nexus:refs/remotes/origin/good-enough-nexus"
+          tagged_commit="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+          branch_commit="$(git rev-parse refs/remotes/origin/good-enough-nexus)"
+          if [[ "$tagged_commit" != "$branch_commit" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} points to ${tagged_commit}, not good-enough-nexus tip ${branch_commit}." >&2
+            exit 1
+          fi
+          echo "RELEASE_COMMIT=${tagged_commit}" >> "$GITHUB_ENV"
+
+      - name: Install LuaJIT
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y luajit
+
+      - name: Install development dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Parse all runtime Lua
+        run: node tools/crap-report.js --static --json > /dev/null
+
+      - name: Run Lua functional tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r test_file; do
+            luajit "$test_file"
+          done < <(find tests -maxdepth 1 -type f -name 'run_*.lua' -print | sort)
+
+      - name: Run development-tool tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r test_file; do
+            node "$test_file"
+          done < <(find tests -maxdepth 1 -type f -name 'run-*.js' -print | sort)
+
+      - name: Confirm tests did not modify tracked source
+        run: |
+          git diff --check
+          git diff --exit-code
+
+      - name: Build tagged player package
+        run: >-
+          node tools/package-release.js
+          --tag "$GITHUB_REF_NAME"
+          --commit "$RELEASE_COMMIT"
+          --repository "$GITHUB_REPOSITORY"
+          --output-dir dist
+
+      - name: Attest ZIP provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/Nexus-${{ github.ref_name }}.zip
+
+      - name: Retain workflow artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Nexus-${{ github.ref_name }}
+          path: |
+            dist/Nexus-${{ github.ref_name }}.zip
+            dist/Nexus-${{ github.ref_name }}.zip.sha256
+            dist/Nexus-${{ github.ref_name }}-build.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Create unpublished GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes=".github/release-notes/${GITHUB_REF_NAME}.md"
+          test -f "$notes"
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --draft \
+            --title "Nexus ${GITHUB_REF_NAME} community release" \
+            --notes-file "$notes" \
+            "dist/Nexus-${GITHUB_REF_NAME}.zip#Nexus player addon" \
+            "dist/Nexus-${GITHUB_REF_NAME}.zip.sha256#SHA-256 checksum" \
+            "dist/Nexus-${GITHUB_REF_NAME}-build.json#Tagged build manifest"

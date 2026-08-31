@@ -1,6 +1,6 @@
 -- Nexus offline harness: stubs the WoW 3.3.5 API + ProjectEbonhold
 -- with the AUDITED client semantics (latches with no timeout, silent banish
--- refusal on guaranteed cards, latch-less ToggleTomeEcho with 530-delayed
+-- random boards, latch-less ToggleTomeEcho with 530-delayed
 -- mirror, in-place SS-103 board mutation via UpdateSinglePerk, live tables
 -- returned by reference, nil-until-540 slots, run-data table identity
 -- replacement) and boots the REAL addon files under LuaJIT.
@@ -39,7 +39,12 @@ H.eventHandlers = {}
 H.frames = {}
 
 local function NewRegion()
-    local r = { shown = false, text = "", scripts = {}, events = {}, points = {} }
+    local r = { shown = false, text = "", scripts = {}, hooks = {}, events = {}, points = {} }
+    local function FireScript(self, which, ...)
+        local callback = self.scripts[which]
+        if callback then callback(self, ...) end
+        for _, hook in ipairs(self.hooks[which] or {}) do hook(self, ...) end
+    end
     local meta
     meta = {
         __index = function(t, k)
@@ -102,9 +107,17 @@ local function NewRegion()
             elseif k == "GetScript" then
                 return function(self, which) return self.scripts[which] end
             elseif k == "Show" then
-                return function(self) self.shown = true end
+                return function(self)
+                    if self.shown then return end
+                    self.shown = true
+                    FireScript(self, "OnShow")
+                end
             elseif k == "Hide" then
-                return function(self) self.shown = false end
+                return function(self)
+                    if not self.shown then return end
+                    self.shown = false
+                    FireScript(self, "OnHide")
+                end
             elseif k == "IsShown" then
                 return function(self) return self.shown end
             elseif k == "GetEffectiveScale" then
@@ -121,6 +134,11 @@ local function NewRegion()
                     elseif which == "OnEvent" and fn then
                         H.eventHandlers[#H.eventHandlers + 1] = fn
                     end
+                end
+            elseif k == "HookScript" then
+                return function(self, which, fn)
+                    self.hooks[which] = self.hooks[which] or {}
+                    self.hooks[which][#self.hooks[which] + 1] = fn
                 end
             elseif k == "RegisterEvent" then
                 return function(self, ev) self.events[ev] = true end
@@ -172,6 +190,7 @@ _G.ChatFrame1 = NewRegion()
 H.joinedChannels = {}
 function JoinTemporaryChannel(name) H.joinedChannels[name:lower()] = (H.nextChannelIndex or 1) end
 function JoinChannelByName(name) H.joinedChannels[name:lower()] = (H.nextChannelIndex or 1) end
+function LeaveChannelByName(name) H.joinedChannels[name:lower()] = nil end
 function GetChannelList()
     local out = {}
     for name, idx in pairs(H.joinedChannels) do
@@ -219,6 +238,21 @@ function UnitLevel() return H.playerLevel end
 function UnitClass() return "Boganic", "MAGE" end
 function UnitName() return "Boganic" end
 function GetNormalizedRealmName() return "Ebonhold" end
+H.resting = true
+H.inCombat = false
+H.inInstance = false
+H.instanceType = "none"
+function IsResting() return H.resting end
+function InCombatLockdown() return H.inCombat end
+function UnitAffectingCombat() return H.inCombat end
+function IsInInstance() return H.inInstance, H.instanceType end
+H.projectVersion = nil
+function GetAddOnMetadata(addon, field)
+    if addon == "ProjectEbonhold" and field == "Version" then
+        return H.projectVersion
+    end
+    return nil
+end
 
 -- Catalog fixture ----------------------------------------------------------
 -- comment carries "Name - Rarity"; GetSpellInfo serves echo + tome names.
@@ -387,8 +421,6 @@ function Service.BanishPerk(idx)
     end
     if Perks.pendingBanishIndex then return false end
     if not idx or idx < 0 or idx > 2 then return false end
-    local c = Perks.currentChoice and Perks.currentChoice[idx + 1]
-    if c and c.isGuaranteed then return false end     -- silent refusal
     local rd = H.runDataTable or {}
     if (rd.remainingBanishes or 0) <= 0 then return false end
     Perks.pendingBanishIndex = idx
@@ -408,8 +440,6 @@ end
 
 function Service.FreezePerk(idx)
     if Perks.pendingFreezeIndex then return false end
-    local c = Perks.currentChoice and Perks.currentChoice[idx + 1]
-    if c and c.isGuaranteed then return false end
     Perks.pendingFreezeIndex = idx
     H.freezeCalls[#H.freezeCalls + 1] = idx
     return true
@@ -541,5 +571,40 @@ ProjectEbonholdOptionsService = {
     SetSetting = function(self, k, v) optSettings[k] = v end,
 }
 H.optSettings = optSettings
+
+-- Runtime modules now consume the merged build catalog. Most focused suites do
+-- not need to parse the multi-megabyte release baseline, so give them the same
+-- schema with an empty test baseline; export/runtime-catalog suites load or
+-- replace the real bundle explicitly. Each module Init call rebinds the facade
+-- after a fixture replaces NexusDB.
+Nexus = Nexus or {}
+Nexus.BundledBuilds = {
+    schemaVersion=1, catalogVersion="test-empty", sourceVersion="test",
+    generatedAt=0, builds={},
+}
+dofile("core/DpsRanking.lua")
+dofile("core/Revisions.lua")
+dofile("core/ViewProjections.lua")
+dofile("ui/VirtualList.lua")
+dofile("ui/BrowserSession.lua")
+dofile("core/LoadoutEvidence.lua")
+dofile("core/DataCompaction.lua")
+dofile("core/BuildCatalog.lua")
+dofile("core/DataRetention.lua")
+dofile("core/GameAdapter.lua")
+dofile("core/AccountBuildWorkspace.lua")
+dofile("data/Release.lua")
+dofile("logic/Version.lua")
+dofile("core/Performance.lua")
+dofile("core/EchoCatalogSource.lua")
+dofile("core/Errors.lua")
+dofile("core/Scheduler.lua")
+dofile("core/DiagnosticHistory.lua")
+dofile("core/DiagnosticLogs.lua")
+dofile("core/ViewRefresh.lua")
+dofile("core/Updates.lua")
+dofile("core/DpsWireValidator.lua")
+dofile("core/SyncResponder.lua")
+dofile("core/CommandRouter.lua")
 
 return H

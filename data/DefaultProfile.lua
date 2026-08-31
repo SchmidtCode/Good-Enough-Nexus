@@ -18,15 +18,6 @@ DefaultProfile.params = {
     qualityMiss = -20,        -- below-wished-quality copy of a single-stack
                               -- multi-quality family: locks the family at
                               -- the wrong quality, worse than plain filler
-    deferFactor = 0.35,       -- discount on a free-slot wished card whose
-                              -- guarantee is still pending (it comes back;
-                              -- a one-shot pick shouldn't lose to it)
-    rerollCost = 8,           -- charge price inside the reroll EV test
-    rerollHoldThreshold = 25, -- guaranteed delta below this frees a reroll
-    rerollPacingBase = 6,     -- cost scales up once remaining rerolls drop
-                              -- below this (the last few are precious)
-    deferRerollFloor = 4,     -- min remaining rerolls before one may be
-                              -- spent dodging a merely-deferred pick
 }
 
 DefaultProfile.defaultSettings = {
@@ -42,6 +33,29 @@ DefaultProfile.defaultSettings = {
     -- fully on. Existing saves simply lack this key (nil), which is
     -- exactly as falsy as `false` -- no SETTINGS_VERSION bump needed.
     autoLockEchoes = false,
+    updateNotifications = true, -- chat + persistent panel notice; manual install only
+    -- Community transport defaults to background convergence only while the
+    -- character is resting (cities/inns), out of combat, and outside gameplay
+    -- instances. Manual and Off remain persistent user choices.
+    syncMode = "automatic", -- "off", "manual", or "automatic"
+    syncOnlyWhileResting = true,
+    syncSuspendInCombat = true,
+    syncSuspendedInstanceTypes = {
+        party=true, raid=true, pvp=true, arena=true, scenario=true,
+    },
+    -- Ranked retention is opt-in. Off uses relaxed 1,000-record hard safety
+    -- ceilings rather than allowing hostile/unbounded SavedVariables growth.
+    -- When enabled, categories keep their overall leaders plus a class floor;
+    -- account-owned builds remain protected and never consume these caps.
+    communityRetentionEnabled = false,
+    communityRetentionTopPerCategory = 100,
+    communityRetentionMinPerClassPerCategory = 15,
+    communityRetentionTopAverage = 50,
+    communityRetentionMinAveragePerClass = 10,
+    communityRetentionOtherRemoteBuilds = 75,
+    communityRetentionMaxPerAuthor = 12,
+    communityRetentionPersonalFingerprints = 128,
+    communityRetentionBuildFingerprints = 128,
     anchorSpellId = nil, -- explicit override; honored only when on the wishlist
     -- Diversity-anchor auto-detection: if no explicit anchorSpellId, the
     -- anchor is the wishlist echo whose name matches one of these. Adaptive
@@ -51,11 +65,8 @@ DefaultProfile.defaultSettings = {
     leverOptOut = {},    -- [leverId (requiredSpell)] = true
 }
 
-DefaultProfile.defaultFlags = {
-    -- true: user-confirmed from live play 2026-07-23. Runtime-demotable:
-    -- a disabled-lever member observed with isGuaranteed demotes it for
-    -- the session (recorded in Store state.flagDemotions).
-    DISABLE_SUPPRESSES_GUARANTEE = true,
-    -- nil = conservative (reroll-to-hold suppressed) until M3 measures.
-    REROLL_HOLDS_GUARANTEED = nil,
-}
+-- Kept as a table for profile compatibility. Current Ebonhold has no
+-- guaranteed-slot behavior to feature-detect or demote. Existing persisted
+-- keys remain harmless compatibility data; current defaults intentionally
+-- declare no board guarantees.
+DefaultProfile.defaultFlags = {}

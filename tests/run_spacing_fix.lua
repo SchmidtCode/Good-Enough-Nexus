@@ -98,9 +98,15 @@ assert(CB.IsLockInPending(), "a spacing collision should have queued a retry, no
 assert(uploaded == nil, "should not have uploaded yet -- still spacing-blocked")
 print("a genuine spacing collision queues a retry instead of failing -- OK")
 
--- let time pass and pump the retry
+-- Scheduler callbacks are noncritical-only and must never perform the queued
+-- gameplay write. The visible frame's direct OnUpdate path owns that retry.
 clock = clock + 5
-CB._PumpPendingLockIn()
+Nexus.Scheduler.Tick(clock)
+clock = clock + 0.3
+Nexus.Scheduler.Tick(clock)
+assert(uploaded == nil,
+    "scheduler callback performed the queued gameplay write")
+H.Advance(0.6)
 assert(uploaded, "the queued retry never completed the upload")
 assert(uploaded.name == "Retry Test", "retry uploaded the wrong build")
 assert(not CB.IsLockInPending(), "pending state should clear after a successful retry")

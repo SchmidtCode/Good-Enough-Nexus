@@ -1,13 +1,12 @@
 -- Nexus: core/Main.lua
 -- Bootstrap + the decision loop. Wires adapter reads -> pure logic ->
 -- adapter actions. Owns the OnUpdate cadence, the lifecycle FSM
--- (LOAD / ARM@L1 / RUN / SAVE@L80), auto-pick pacing, the runtime
--- self-checks (flag demotions), and the slash commands.
+-- (LOAD / PREPARE@L1 / RUN / SAVE@L80), auto-pick pacing, and slash commands.
 -- SCOPING RULE: every closure-captured local is declared here, before
 -- any closure that reads it.
 
 Nexus = Nexus or {}
-Nexus.VERSION = "1.19.4"
+Nexus.VERSION = (Nexus.Release and Nexus.Release.version) or "1.96.3"
 
 local Model, Policy, Ratchet, Strategy, Store, Adapter
 local Readout, Panel, JournalTab, DefaultProfile
@@ -16,6 +15,20 @@ local autoEnabled = false          -- session-level master switch (panel button 
 local quickStartChecked = false   -- one-time-per-session guard for the quick-start check
 local pollAccum = 0
 local POLL = 0.2
+-- GameAdapter's dirty flags and explicit action deadlines are the primary
+-- invalidation path. The short heartbeat is retained while a run is active to
+-- recover a private-server event the client failed to deliver. At level 80 it
+-- is only a last-resort recovery path: running the complete automation and HUD
+-- pipeline every five seconds caused a visible 0.4-0.9s hitch while idle.
+local FALLBACK_RECOMPUTE = 5
+local IDLE_FALLBACK_RECOMPUTE = 300
+local nextStepAt = nil
+local lastFullStepAt = -math.huge
+local forceStep = true
+local recomputeStats = {
+    polls=0, fullSteps=0, skipped=0, dirty=0,
+    deadlines=0, fallbacks=0, forced=0, explicit=0,
+}
 
 -- Lag / addon interference detection
 -- If the OnUpdate frame time jumps significantly above the poll cadence,
@@ -25,30 +38,18 @@ local lagWarnedAt    = -math.huge
 local LAG_THRESHOLD  = 1.5    -- seconds; a single frame stall this long is suspicious
 local LAG_WARN_COOLDOWN = 60  -- seconds between chat warnings
 
--- ARM state
-local armAttempts, armedConfirmed, armPendingSince = 0, false, nil
-local armTargetSlot = nil
-local boardsSinceArm = 0
+-- Level-1 preparation state
 local leversDoneThisVisit = {}
 local lastLeverSendAt = 0
 
 -- RUN state
 local lastDecidedSig, lastDecision, decidedAt = nil, nil, nil
 local lastLoggedSig = nil        -- decision-log dedupe per board
-local lastBoardForRerollWatch = nil
--- Test 13 bracket-fishing budget. These counters are session/run-local and
--- deliberately reset as the guaranteed spell or eligibility bracket changes.
-local fillerFishState = {
-    guaranteedId = nil,
-    consecutive = 0,
-    bracket = nil,
-    bracketSpent = 0,
-}
 -- Test 15: per-spell count of FORCED takes this run (Policy.lua's
 -- mandatory-select branch, `forced = true` -- zero legal alternatives that
 -- board). Fed into Ratchet.Dominates so the save gate weighs an unavoidable
 -- duplicate/wrong-quality pick far more lightly than a voluntary one.
--- Reset at the same run boundary as fillerFishState (level == 1, below).
+-- Reset at the run boundary (level == 1, below).
 local forcedTakesBySpell = {}
 local frozeThisBoard = nil       -- board signature we already spent a freeze on
 local refusedBanishSig = nil
@@ -71,17 +72,82 @@ local demotionsClearedThisSession = false
 
 local statusLine = "loading"
 local EH  -- event frame
+local lastPanelInput = nil
+local hudSnapshotStats = { builds=0, refreshes=0 }
 
 local function Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff7fd5ffNexus:|r " .. tostring(msg))
 end
 
+local function ErrorText(value)
+    local errors = Nexus and Nexus.Errors
+    if errors and type(errors.SafeText) == "function" then
+        local ok, text = pcall(errors.SafeText, value)
+        if ok and type(text) == "string" then return text end
+    end
+    local ok, text = pcall(tostring, value)
+    return ok and text or "<unprintable error>"
+end
+
+local function RecordError(source, value)
+    local errors = Nexus and Nexus.Errors
+    if errors and type(errors.Record) == "function" then
+        local ok = pcall(errors.Record, source, value)
+        if ok then return end
+    end
+    Nexus.lastError = ErrorText(value)
+end
+
 local function SetStatus(s)
-    if s ~= statusLine then statusLine = s end
+    if s ~= statusLine then
+        statusLine = s
+        if Panel and type(Panel.SetStatus) == "function" then
+            pcall(Panel.SetStatus, s)
+        end
+    end
+end
+
+local function RequestStepAt(when)
+    when = tonumber(when)
+    if not when or when ~= when or when >= math.huge or when <= -math.huge then
+        return false
+    end
+    if not nextStepAt or when < nextStepAt then nextStepAt = when end
+    return true
+end
+
+local function RequestRecompute()
+    forceStep = true
+    return true
+end
+
+local function FallbackSeconds()
+    local level = Adapter and type(Adapter.Level) == "function"
+        and tonumber(Adapter.Level()) or 0
+    return level >= 80 and IDLE_FALLBACK_RECOMPUTE or FALLBACK_RECOMPUTE
+end
+
+local function Measure(name, callback, ...)
+    local performance = Nexus and Nexus.Performance
+    if performance and type(performance.Measure) == "function" then
+        return performance.Measure(name, callback, ...)
+    end
+    return callback(...)
+end
+
+Nexus.RequestRecompute = RequestRecompute
+
+function Nexus.RecomputeStats()
+    local out = {}
+    for key, value in pairs(recomputeStats) do out[key] = value end
+    out.nextStepAt = nextStepAt
+    out.lastFullStepAt = lastFullStepAt
+    out.fallbackSeconds = FallbackSeconds()
+    return out
 end
 
 -- Diagnostic-only retained history. These records never participate in
--- decisions; they exist solely to explain guarantee behavior and save gates.
+-- decisions; they exist solely to explain board behavior and save gates.
 local function CopyCounts(src)
     local out = {}
     if type(src) == "table" then
@@ -94,15 +160,16 @@ local function CopyCounts(src)
 end
 
 local function AppendAudit(kind, fields)
-    if type(NexusDB) ~= "table" then return end
-    NexusDB.runAudit = NexusDB.runAudit or {}
-    local e = fields or {}
+    local logs = Nexus.DiagnosticLogs
+    if not (logs and type(logs.Append) == "function") then return false end
+    local e = {}
+    if type(fields) == "table" then
+        for key, value in pairs(fields) do e[key] = value end
+    end
     e.kind = kind
     e.t = date and date("%H:%M:%S") or ""
     e.run = auditRunId
-    local a = NexusDB.runAudit
-    a[#a + 1] = e
-    while #a > 240 do table.remove(a, 1) end
+    return logs.Append("runAudit", e)
 end
 Nexus.AppendAudit = AppendAudit
 
@@ -116,13 +183,14 @@ Nexus.AppendAudit = AppendAudit
 -- attempt (not the far more frequent no-op ticks) so a full run's lock/
 -- unlock sequence survives to be reviewed after the fact.
 local function AppendAutoLockEvent(fields)
-    if type(NexusDB) ~= "table" then return end
-    NexusDB.autoLockLog = NexusDB.autoLockLog or {}
-    local e = fields or {}
+    local logs = Nexus.DiagnosticLogs
+    if not (logs and type(logs.Append) == "function") then return false end
+    local e = {}
+    if type(fields) == "table" then
+        for key, value in pairs(fields) do e[key] = value end
+    end
     e.t = date and date("%H:%M:%S") or ""
-    local a = NexusDB.autoLockLog
-    a[#a + 1] = e
-    while #a > 150 do table.remove(a, 1) end
+    return logs.Append("autoLock", e)
 end
 
 local function WishedCounts(counts, plan)
@@ -143,16 +211,6 @@ local function EffectiveFlags()
     local st = Store.State()
     for k in pairs(st.flagDemotions or {}) do flags[k] = false end
     return flags
-end
-
-local function DemoteFlag(name, reason)
-    local st = Store.State()
-    st.flagDemotions = st.flagDemotions or {}
-    if not st.flagDemotions[name] then
-        st.flagDemotions[name] = reason
-        -- Log internally; this is an advisor-mode state change that players
-        -- don't need to see in chat.
-    end
 end
 
 ------------------------------------------------------------------------
@@ -190,8 +248,8 @@ local function QualityName(q) return QUALITY_NAMES[q] or ("q"..q) end
 -- Families present in the compiled plan only because a locked-slot design
 -- target (NexusDB.lockDesignTargets, via WishlistWithLockTargets) added
 -- them -- not because the real, saved wishlist asked for them. These don't
--- belong in the 79-slot run total: the server's guaranteed-loadout cap is
--- real and fixed, while a locked Echo only ever needs to be rolled ONCE,
+-- belong in the 79-slot run total: the server's saved-loadout cap is real and
+-- fixed, while a locked Echo only ever needs to be rolled ONCE,
 -- ever, and then never again. Keeping them out of stackTotal/stackCount
 -- keeps the panel's "N / 79" honest; WishlistProgress instead reports them
 -- separately as "toLock" so the player still sees what's left to acquire.
@@ -661,6 +719,9 @@ end
 -- wishlist, and the loadout's specific missing echoes (what "close to
 -- ideal" actually means, not just a percentage).
 local function BuildProgress(plan, owned, slots, catalog, wishlistOverride, previewBuildId)
+    if tonumber(Adapter.Level()) == 80 and Adapter.CurrentOwned then
+        owned = Adapter.CurrentOwned()
+    end
     local wl = wishlistOverride or Adapter.Wishlist()
     local lockOnlyFamilies = LockOnlyFamilies(plan, wl)
     local runStacks, wishTotal, wishlistMissing, toLock =
@@ -671,28 +732,42 @@ local function BuildProgress(plan, owned, slots, catalog, wishlistOverride, prev
     -- Build a set of families that are LOCKED in the active slot -- the
     -- player intentionally placed these and they should never appear as
     -- "to shed" even if they aren't on the wishlist.
-    local lockedByFamily = {}
+    local lockedByFamily, lockedBySpell = {}, {}
     if Adapter.LockedOwned then
         local lockedOwned = Adapter.LockedOwned()
         if lockedOwned and type(lockedOwned.byFamily) == "table" then
             lockedByFamily = lockedOwned.byFamily
         end
+        if lockedOwned and type(lockedOwned.bySpell) == "table" then
+            lockedBySpell = lockedOwned.bySpell
+        end
     end
     local activeRow = ActiveSlotRow(slots)
+    local activeLockedByFamily, activeLockedBySpell = {}, {}
     if type(activeRow) == "table" and type(activeRow.echoes) == "table" then
         for _, e in ipairs(activeRow.echoes) do
             if e.locked and e.family then
-                lockedByFamily[e.family] = (lockedByFamily[e.family] or 0)
+                activeLockedByFamily[e.family] = (activeLockedByFamily[e.family] or 0)
                     + (tonumber(e.stacks) or 1)
+                local id = tonumber(e.spellId)
+                if id then
+                    activeLockedBySpell[id] = (activeLockedBySpell[id] or 0)
+                        + (tonumber(e.stacks) or 1)
+                end
             end
         end
     end
+    -- GetLockedPerks and the active saved slot describe the same permanent
+    -- copies. Treat them as two observations of one set, not additive counts.
+    for family, count in pairs(activeLockedByFamily) do
+        lockedByFamily[family] = math.max(tonumber(lockedByFamily[family]) or 0, count)
+    end
+    for id, count in pairs(activeLockedBySpell) do
+        lockedBySpell[id] = math.max(tonumber(lockedBySpell[id]) or 0, count)
+    end
 
-    -- Shed echoes at EXACT spell/quality granularity. The server persists and
-    -- guarantees exact spell IDs, so a Common Agility Boost cannot be hidden
-    -- behind the family's requested Rare copy. Wrong-quality siblings and
-    -- exact over-stacks are listed independently. Locked exact copies remain
-    -- protected even when they are outside the current wishlist.
+    -- Shed echoes at exact spell/quality granularity. A sibling quality does
+    -- not satisfy the selected wishlist's requested spell ID.
     local shed = {}
     if type(plan) == "table" and type(owned) == "table"
         and type(owned.bySpell) == "table" then
@@ -707,19 +782,20 @@ local function BuildProgress(plan, owned, slots, catalog, wishlistOverride, prev
             end
         end
         local qualityNames = { [0] = "Common", [1] = "Uncommon", [2] = "Rare", [3] = "Epic" }
+        local function AddShed(id, shedCount)
+            if shedCount <= 0 then return end
+            local row = catalog and catalog.rows and catalog.rows[id]
+            local nm = row and row.name or ("spell " .. tostring(id))
+            local q = row and tonumber(row.quality)
+            local label = q ~= nil and qualityNames[q] or nil
+            shed[#shed + 1] = tostring(nm)
+                .. (label and (" (" .. label .. ")") or "")
+                .. (shedCount > 1 and (" ×" .. shedCount) or "")
+        end
         for id, count in pairs(owned.bySpell) do
             local keepCount = math.max(tonumber(wantedExact[id]) or 0,
                 tonumber(lockedExact[id]) or 0)
-            local shedCount = math.max(0, (tonumber(count) or 0) - keepCount)
-            if shedCount > 0 then
-                local row = catalog and catalog.rows and catalog.rows[id]
-                local nm = row and row.name or ("spell " .. tostring(id))
-                local q = row and tonumber(row.quality)
-                local label = q ~= nil and qualityNames[q] or nil
-                shed[#shed + 1] = tostring(nm)
-                    .. (label and (" (" .. label .. ")") or "")
-                    .. (shedCount > 1 and (" ×" .. shedCount) or "")
-            end
+            AddShed(id, math.max(0, (tonumber(count) or 0) - keepCount))
         end
         table.sort(shed)
     end
@@ -767,7 +843,7 @@ local function BuildProgress(plan, owned, slots, catalog, wishlistOverride, prev
 end
 
 
-local function BuildPanelProgress(activePlan, owned, slots, catalog)
+local function BuildPanelProgressUnmeasured(activePlan, owned, slots, catalog)
     local C = Nexus.CommunityBuilds
     local build = C and C.GetSelectedBuildForPanel and C.GetSelectedBuildForPanel()
     if build and type(build.echoes) == "table" and #build.echoes > 0 then
@@ -776,6 +852,97 @@ local function BuildPanelProgress(activePlan, owned, slots, catalog)
         return BuildProgress(previewPlan, owned, slots, catalog, wl, build.id)
     end
     return BuildProgress(activePlan, owned, slots, catalog)
+end
+
+local function CopyDisplay(value, seen)
+    if type(value) ~= "table" then return value end
+    seen = seen or {}
+    if seen[value] then return seen[value] end
+    local out = {}
+    seen[value] = out
+    for key, child in pairs(value) do
+        out[CopyDisplay(key, seen)] = CopyDisplay(child, seen)
+    end
+    return out
+end
+
+local function DisplayCall(callback, ...)
+    if type(callback) ~= "function" then return nil end
+    local ok, value = pcall(callback, ...)
+    return ok and value or nil
+end
+
+-- Main owns every service read used by the adaptive HUD. Panel receives only
+-- this defensive display snapshot and never reaches back into data services
+-- while rendering it.
+local function BuildHudDisplayModel(base)
+    local out = CopyDisplay(type(base) == "table" and base or {})
+    out.status = statusLine
+    if out.level == nil then out.level = DisplayCall(Adapter and Adapter.Level) or 0 end
+
+    local updates = Nexus.Updates
+    local notice = updates and DisplayCall(updates.GetVisibleNotice)
+    out.updateNotice = CopyDisplay(notice)
+    if out.updateNotice and updates then
+        out.updateNotice.releaseUrl = DisplayCall(updates.ReleaseUrl)
+    end
+
+    local server = Nexus.ServerStatus
+    local useServer = server and DisplayCall(server.IsUsingNexusHud)
+    out.serverStatus = useServer and CopyDisplay(DisplayCall(server.GetSummary)) or nil
+
+    local capture = Nexus.DpsCapture
+    local player = UnitName and UnitName("player") or nil
+    out.bestDps = {
+        dummy = CopyDisplay(capture and DisplayCall(capture.GetCharacterBest, "dummy", player)),
+        lk = CopyDisplay(capture and DisplayCall(capture.GetCharacterBest, "lk", player)),
+        info = CopyDisplay(capture and DisplayCall(capture.GetPlayerInfo, player)),
+    }
+    local progress = type(out.progress) == "table" and out.progress or {}
+    out.progress = progress
+    local echoes = type(progress.dpsEchoes) == "table" and progress.dpsEchoes or nil
+    local performance = { dummy={}, lk={} }
+    if capture and echoes then
+        performance.dummy.personal = CopyDisplay(DisplayCall(
+            capture.GetPersonalBestForEchoes, echoes, "dummy"))
+        performance.lk.personal = CopyDisplay(DisplayCall(
+            capture.GetPersonalBestForEchoes, echoes, "lk"))
+        local dummyRows = DisplayCall(capture.GetLeaderboardForEchoes, echoes, "dummy")
+        local lkRows = DisplayCall(capture.GetLeaderboardForEchoes, echoes, "lk")
+        performance.dummy.global = CopyDisplay(type(dummyRows) == "table" and dummyRows[1] or nil)
+        performance.lk.global = CopyDisplay(type(lkRows) == "table" and lkRows[1] or nil)
+    end
+    progress.performance = performance
+    hudSnapshotStats.builds = hudSnapshotStats.builds + 1
+    return out
+end
+
+local function RenderPanel(base)
+    lastPanelInput = CopyDisplay(base)
+    return Panel.Render(Measure("automation.hud", BuildHudDisplayModel,
+        lastPanelInput))
+end
+
+local function BuildPanelProgress(...)
+    return Measure("automation.progress", BuildPanelProgressUnmeasured, ...)
+end
+
+function Nexus.RefreshHudView()
+    if not Panel or type(Panel.Render) ~= "function" or not lastPanelInput then
+        return false
+    end
+    hudSnapshotStats.refreshes = hudSnapshotStats.refreshes + 1
+    local ok, result = pcall(Panel.Render,
+        Measure("automation.hud", BuildHudDisplayModel, lastPanelInput))
+    if not ok then
+        RecordError("Main.RefreshHudView", result)
+        return false
+    end
+    return result ~= false
+end
+
+function Nexus.HudSnapshotStats()
+    return CopyDisplay(hudSnapshotStats)
 end
 
 -- Renders the panel with just status + progress, no board cards. Used at
@@ -788,7 +955,7 @@ end
 local function RenderIdlePanel(plan, owned, slots, catalog)
     local settings = Store.Settings()
     local okAuto = AutoAllowed()
-    Panel.Render({
+    RenderPanel({
         status = statusLine,
         cards = {},
         recommendation = "",
@@ -816,8 +983,12 @@ local function StepArm(level, plan, owned, slots, disabledLevers)
     if settings.autoDisable and plan and not plan.advisorOnly
         and Adapter.DiscoverySynced()
         and not (Adapter.TomeMutationPaused
-            and Adapter.TomeMutationPaused())
-        and (GetTime() - lastLeverSendAt) > 0.5 then
+            and Adapter.TomeMutationPaused()) then
+        if (GetTime() - lastLeverSendAt) <= 0.5 then
+            RequestStepAt(lastLeverSendAt + 0.5)
+            RenderIdlePanel(plan, owned, slots, Adapter.Catalog())
+            return
+        end
         local optOut = settings.leverOptOut or {}
         for _, lever in ipairs(plan.leverPlan.disable) do
             if not optOut[lever] and not disabledLevers[lever]
@@ -832,8 +1003,11 @@ local function StepArm(level, plan, owned, slots, disabledLevers)
                     if ok then
                         leversDoneThisVisit[lever] = true
                         lastLeverSendAt = GetTime()
+                        RequestStepAt(lastLeverSendAt + 0.5)
                         SetStatus("disabling off-wishlist tome lever " .. lever)
                         break
+                    else
+                        RequestStepAt(GetTime() + 0.5)
                     end
                 end
             end
@@ -847,61 +1021,17 @@ local function StepArm(level, plan, owned, slots, disabledLevers)
                     local ok = Adapter.ToggleLever(lever, false)
                     if ok then
                         lastLeverSendAt = GetTime()
+                        RequestStepAt(lastLeverSendAt + 0.5)
                         SetStatus("re-enabling wishlist tome lever " .. lever)
                         break
+                    else
+                        RequestStepAt(GetTime() + 0.5)
                     end
                 end
             end
         end
     end
     RenderIdlePanel(plan, owned, slots, Adapter.Catalog())
-end
-
-local function WatchRerollHold(board)
-    -- reroll-hold observation: if our last action was a reroll and the
-    -- previous board carried a guaranteed card, a changed flag-3 identity
-    -- kills the tactic permanently (conservative).
-    if lastDecision and lastDecision.type == "reroll" and lastBoardForRerollWatch then
-        local prevG, curG = nil, nil
-        local pb = lastBoardForRerollWatch
-        if pb.guaranteedIndex then prevG = pb.cards[pb.guaranteedIndex].spellId end
-        if board.guaranteedIndex then curG = board.cards[board.guaranteedIndex].spellId end
-        if prevG and prevG ~= curG then
-            local st = Store.State()
-            st.rerollHoldViolations = (st.rerollHoldViolations or 0) + 1
-            DemoteFlag("REROLL_HOLDS_GUARANTEED", "guaranteed head changed across a reroll")
-        end
-        lastBoardForRerollWatch = nil
-    end
-end
-
-local function SelfCheckDisable(board, disabledLevers, catalog)
-    -- user-confirmed DISABLE_SUPPRESSES_GUARANTEE=true: if a disabled
-    -- lever's echo ever shows up flag-3 anyway, demote for the session.
-    if not board.guaranteedIndex then return end
-    local g = board.cards[board.guaranteedIndex]
-    local row = catalog and catalog.rows[g.spellId]
-    if not (row and row.requiredSpell ~= 0) then return end
-    -- only a server-CONFIRMED disable proves anything; a pending one may
-    -- simply not have been processed before this board was rolled
-    if disabledLevers[row.requiredSpell] ~= "confirmed" then return end
-    -- and only a CONFORMANT lever we actually disabled: the garbage
-    -- requiredSpell=9 cohort (38 unrelated echoes) is never disabled by us,
-    -- so a member appearing guaranteed after the user hand-disables one
-    -- cohort sibling in the journal is NOT evidence against suppression.
-    local lever = catalog.levers and catalog.levers[row.requiredSpell]
-    if not (lever and lever.conformant) then return end
-    DemoteFlag("DISABLE_SUPPRESSES_GUARANTEE",
-        "disabled tome echo " .. tostring(g.spellId) .. " appeared guaranteed")
-end
-
-local function RerollBracket(level)
-    level = tonumber(level) or 0
-    if level <= 34 then return 1 end
-    if level <= 63 then return 2 end
-    if level <= 69 then return 3 end
-    if level <= 77 then return 4 end
-    return 5
 end
 
 -- Locked-slot design targets (NexusDB.lockDesignTargets, written by the
@@ -913,8 +1043,8 @@ end
 -- since the whole point of a locked slot is a standing, permanent pick
 -- that never needs re-acquiring once secured. Folding these into the
 -- compiled plan's wishedFamilies/targets is the only change needed --
--- every downstream rule in Policy.lua (guaranteed-take, defer, BANK/
--- freeze, held-echo preference, least-harmful-select) already keys off
+-- every downstream rule in Policy.lua (wishlist selection, Freeze,
+-- held-echo preference, least-harmful selection) already keys off
 -- plan.wishedFamilies, so a lock-designated family is automatically
 -- treated exactly like any other wished family with zero changes to that
 -- carefully-tuned decision logic itself. A family already covered by the
@@ -1074,6 +1204,9 @@ local function TryAutoLock(owned, catalog, slots, wishlist)
         autoUnlockContextSince = now
     end
     local canUnlock = unlockContextKey ~= nil and (now - autoUnlockContextSince) >= 2
+    if unlockContextKey ~= nil and not canUnlock then
+        RequestStepAt(autoUnlockContextSince + 2)
+    end
     trace[#trace + 1] = string.format("destructive unlock context: %s%s",
         tostring(canUnlock), unlockContextKey and (" (" .. unlockContextKey .. ")")
             or " (no confirmed active Saved Build association)")
@@ -1251,7 +1384,8 @@ local function LogText_AutoLock()
     -- whatever the last tick looked like. This is the durable history: every
     -- actual LockPerk/UnlockPerk attempt this session, oldest first.
     out[#out + 1] = "LOCK/UNLOCK EVENT HISTORY (actual write attempts only, oldest first):"
-    local hist = NexusDB and NexusDB.autoLockLog or {}
+    local hist = Nexus.DiagnosticLogs and Nexus.DiagnosticLogs.Snapshot
+        and Nexus.DiagnosticLogs.Snapshot("autoLock") or {}
     if #hist == 0 then
         out[#out + 1] = "  (empty -- no LockPerk/UnlockPerk attempts recorded yet this session)"
     else
@@ -1276,7 +1410,7 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
     local board = Adapter.Board()
     if not board then
         SetStatus("waiting for board")
-        Panel.Render({ status = statusLine, cards = {}, recommendation = "",
+        RenderPanel({ status = statusLine, cards = {}, recommendation = "",
             progress = BuildProgress(plan, owned, slots, catalog),
             auto = AutoAllowed() and settings.autoPick,
             version = Nexus.VERSION })
@@ -1288,34 +1422,6 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
     end
     if refusedRerollSig and refusedRerollSig ~= board.signature then
         refusedRerollSig = nil
-    end
-
-    if armTargetSlot and not armedConfirmed then
-        boardsSinceArm = boardsSinceArm + 1
-        if board.guaranteedIndex then
-            armedConfirmed = true
-            SetStatus("armed (guaranteed queue live)")
-        elseif boardsSinceArm >= 3 then
-            SetStatus("Activate did not guarantee -- treating as unarmed")
-        end
-    end
-
-    WatchRerollHold(board)
-    SelfCheckDisable(board, disabledLevers, catalog)
-
-    local currentGuaranteedId = nil
-    if board.guaranteedIndex and board.cards[board.guaranteedIndex] then
-        currentGuaranteedId = tonumber(board.cards[board.guaranteedIndex].spellId)
-    end
-    local currentBracket = RerollBracket(level)
-    if currentBracket ~= fillerFishState.bracket then
-        fillerFishState.bracket = currentBracket
-        fillerFishState.bracketSpent = 0
-        fillerFishState.consecutive = 0
-        fillerFishState.guaranteedId = currentGuaranteedId
-    elseif currentGuaranteedId ~= fillerFishState.guaranteedId then
-        fillerFishState.guaranteedId = currentGuaranteedId
-        fillerFishState.consecutive = 0
     end
 
     local activeRow = ActiveSlotRow(slots)
@@ -1339,26 +1445,6 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
             banish = refusedBanishSig == board.signature,
             reroll = refusedRerollSig == board.signature,
         },
-        rerollBudget = {
-            consecutive = fillerFishState.consecutive,
-            -- Bracket 1 (RerollBracket above) spans levels 1-34 and the
-            -- 4-reroll budget below is meant to be rationed across that
-            -- whole span for ONE continuous attempt. fillerFishState is
-            -- deliberately reset on every run boundary (see its
-            -- declaration above), so repeated early deaths/restarts each
-            -- grant a full fresh allowance -- fine deep into a run, but
-            -- confirmed live 2026-08-01 to compound badly when death
-            -- keeps happening at level 1-10: the same thin, mostly
-            -- level-ineligible pool gets fished again and again on a full
-            -- budget every time. Shrink the allowance itself for that
-            -- narrow band rather than touch the reset semantics.
-            consecutiveLimit = (level <= 10) and 2 or 3,
-            bracketSpent = fillerFishState.bracketSpent,
-            bracketLimit = (level <= 10) and 2 or 4,
-            -- Preserve a late-run reserve while several brackets remain.
-            -- At 78-80 unused charges have no future value.
-            reserve = (level >= 78) and 0 or 5,
-        },
     }
     local action = Policy.Decide(state)
 
@@ -1369,15 +1455,15 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
     -- (NexusDB.decisionLog) -- persists on /reload or logout.
     -- ------------------------------------------------------------------
     do
-        NexusDB.decisionLog = NexusDB.decisionLog or {}
-        local log = NexusDB.decisionLog
+        local logs = Nexus.DiagnosticLogs
         -- Attach any pending user action to the PREVIOUS entry BEFORE
         -- creating this tick's new one. See file header note above.
         local ua = Adapter.ConsumeUserAction and Adapter.ConsumeUserAction()
-        if ua and #log > 0 then
-            local e = log[#log]
-            e.user = e.user or {}
-            e.user[#e.user + 1] = { kind = ua.kind, arg = ua.arg }
+        if ua and logs and type(logs.UpdateLast) == "function" then
+            logs.UpdateLast("decision", function(e)
+                e.user = type(e.user) == "table" and e.user or {}
+                e.user[#e.user + 1] = { kind = ua.kind, arg = ua.arg }
+            end)
         end
         if lastLoggedSig ~= board.signature then
             lastLoggedSig = board.signature
@@ -1448,8 +1534,9 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
                     ann = action.annotations and action.annotations[i],
                 }
             end
-            log[#log + 1] = entry
-            while #log > 200 do table.remove(log, 1) end
+            if logs and type(logs.Append) == "function" then
+                logs.Append("decision", entry)
+            end
 
             if auditRunStarted ~= auditRunId then
                 auditRunStarted = auditRunId
@@ -1502,7 +1589,7 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
         end
         recommendation = table.concat(lines, "\n")
     end
-    Panel.Render({
+    RenderPanel({
         status = statusLine,
         cards = cardLines,
         progress = BuildPanelProgress(plan, owned, slots, catalog),
@@ -1525,13 +1612,16 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
     end
     if lastDecidedSig ~= board.signature then
         lastDecidedSig, lastDecision, decidedAt = board.signature, action, GetTime()
+        RequestStepAt(decidedAt + 0.4)
         return -- show the intent one beat before acting
     end
-    if (GetTime() - (decidedAt or 0)) < 0.4 then return end
+    if (GetTime() - (decidedAt or 0)) < 0.4 then
+        RequestStepAt((decidedAt or GetTime()) + 0.4)
+        return
+    end
     if Adapter.InFlight() then return end
 
     if action.type == "take" then
-        fillerFishState.consecutive = 0
         if action.forced then
             local fid = tonumber(action.spellId)
             if fid then
@@ -1540,7 +1630,6 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
         end
         Adapter.Take(action.spellId)
     elseif action.type == "banish" and settings.autoBanish then
-        fillerFishState.consecutive = 0
         -- Policy indexes cards 1-based; the client (and adapter) are 0-based
         local ok, err = Adapter.Banish(action.index - 1)
         if ok then
@@ -1553,7 +1642,6 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
                 or "Banish refused -- trying another action")
         end
     elseif action.type == "freeze" then
-        fillerFishState.consecutive = 0
         -- one freeze per board; the follow-up banish/reroll happens on a
         -- later tick once this resolves
         local ok = Adapter.Freeze(action.index - 1)
@@ -1566,15 +1654,7 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
         end
     elseif action.type == "reroll" then
         local ok = Adapter.Reroll()
-        if ok then
-            lastBoardForRerollWatch = board
-            if action.reason == "bracket fishing: reroll filler guarantee" then
-                fillerFishState.consecutive = fillerFishState.consecutive + 1
-                fillerFishState.bracketSpent = fillerFishState.bracketSpent + 1
-            else
-                fillerFishState.consecutive = 0
-            end
-        else
+        if not ok then
             refusedRerollSig = board.signature
             lastDecidedSig = nil
             SetStatus(action.endgame
@@ -1810,21 +1890,14 @@ local function Step()
             auditRunId = NexusDB.auditRunCounter
             auditRunStarted = nil
             leversDoneThisVisit = {}
-            armAttempts, armTargetSlot = 0, nil
-            armedConfirmed, boardsSinceArm = false, 0
             saveVerifySlot, seedVerify, saveVerifySnap = nil, nil, nil
             saveVerifyExpectedActive, saveVerifySummary = nil, nil
             saveObserveIndex, saveObserveReadyAt = 1, nil
             noChangeReportedVisit = false
             saveGateAuditedVisit = false
-            fillerFishState.guaranteedId = nil
-            fillerFishState.consecutive = 0
-            fillerFishState.bracket = nil
-            fillerFishState.bracketSpent = 0
             forcedTakesBySpell = {}
             lastDecidedSig, lastDecision, decidedAt = nil, nil, nil
             lastLoggedSig = nil
-            lastBoardForRerollWatch = nil
             frozeThisBoard = nil
             refusedBanishSig, refusedRerollSig = nil, nil
             Adapter.RunBoundaryReset()   -- void the dead run's picks/trust
@@ -1836,27 +1909,47 @@ local function Step()
         externalPauseUntil = GetTime() + 3
     end
 
-    local catalog = Adapter.Catalog()
+    local catalog = Measure("automation.catalog", Adapter.Catalog)
     if not catalog then
         SetStatus("waiting for ProjectEbonhold")
         RenderIdlePanel(nil, nil, nil, nil)
         return
     end
-    local wishlist = Adapter.Wishlist()
+    local wishlist = Measure("automation.wishlist", Adapter.Wishlist)
     if not quickStartChecked then
         quickStartChecked = true
         if Nexus.QuickStart then
             Nexus.QuickStart.ShowIfFirstTime(wishlist ~= nil)
         end
     end
-    local plan = Strategy.Compile(catalog, WishlistWithLockTargets(wishlist, catalog), Store.Settings())
-    local slots = Adapter.Slots()
-    local owned = Adapter.Owned()
-    local flags = EffectiveFlags()
-    local disabledLevers = Adapter.DisabledLevers()
+    local plan = Measure("automation.compile", Strategy.Compile,
+        catalog, WishlistWithLockTargets(wishlist, catalog), Store.Settings())
+    local slots = Measure("automation.slots", Adapter.Slots)
+    local owned = Measure("automation.owned", Adapter.Owned)
+    local flags, disabledLevers = {}, {}
+    local activeBoard = nil
+    local rolledTotal = tonumber(owned and owned.total) or 0
+    -- Tome state is consulted by level-1 arming and by a live roll board. It
+    -- cannot affect a completed, boardless level-80 character, yet querying
+    -- every member through the server API was part of the idle hot path.
+    if level < 80 then
+        flags = EffectiveFlags()
+        disabledLevers = Measure("automation.levers", Adapter.DisabledLevers)
+    elseif rolledTotal < 79 then
+        activeBoard = Adapter.Board()
+        if activeBoard then
+            flags = EffectiveFlags()
+            disabledLevers = Measure("automation.levers", Adapter.DisabledLevers)
+        end
+    end
     do
-        local okAutoLock, errAutoLock = pcall(TryAutoLock, owned, catalog, slots, wishlist)
-        if not okAutoLock then Nexus.lastError = errAutoLock end
+        local okAutoLock, errAutoLock = pcall(Measure,
+            "automation.autolock", TryAutoLock, owned, catalog, slots, wishlist)
+        if not okAutoLock then
+            SetStatus("error (see /nexus err)")
+            RecordError("TryAutoLock", errAutoLock)
+            return
+        end
     end
 
     -- once per session, clear stale flag demotions (they are session-
@@ -1876,6 +1969,9 @@ local function Step()
         if due and elapsed >= due and not saveObserveReadyAt then
             if Adapter.RequestSlots() then
                 saveObserveReadyAt = GetTime() + 0.4
+                RequestStepAt(saveObserveReadyAt)
+            else
+                RequestStepAt(GetTime() + POLL)
             end
         elseif saveObserveReadyAt and GetTime() >= saveObserveReadyAt then
             local freshSlots = Adapter.Slots()
@@ -1962,17 +2058,18 @@ local function Step()
         -- server's 79-Echo capacity. Do not use an arbitrary no-board delay:
         -- board frames can disappear briefly between chained selections.
         -- Locked Echoes are not included in owned.total.
-        local rolledTotal = tonumber(owned and owned.total) or 0
         if owned and owned.synced and rolledTotal >= 79 then
             StepSave(level, plan, slots, owned)
         else
-            local board = Adapter.Board()
+            local board = activeBoard or Adapter.Board()
             if board then
                 StepRun(level, plan, slots, owned, flags, disabledLevers)
             elseif Adapter.InFlight() then
                 SetStatus("finishing final Echo selections")
+                RenderIdlePanel(plan, owned, slots, catalog)
             else
                 SetStatus(string.format("finishing run — %d/79 Echoes", rolledTotal))
+                RenderIdlePanel(plan, owned, slots, catalog)
             end
         end
     end
@@ -2027,8 +2124,7 @@ local function JournalData()
         sections[#sections + 1] = { title = "Pending (" .. #pending .. ")", lines = pending }
         local fillerLines = {}
         for _, f in ipairs(filler) do
-            fillerLines[#fillerLines + 1] = f .. (flags.DISABLE_SUPPRESSES_GUARANTEE
-                and "  (shed via disable or skip)" or "  (will shed next run)")
+            fillerLines[#fillerLines + 1] = f .. "  (shed when a better random offer appears)"
         end
         sections[#sections + 1] = { title = "Lingering filler", lines = fillerLines }
     end
@@ -2072,8 +2168,22 @@ local function FamLabel(catalog, fam)
     return nm and (tostring(fam) .. " '" .. tostring(nm) .. "'") or tostring(fam)
 end
 
+local function DiagnosticTable(value)
+    return type(value) == "table" and value or {}
+end
+
+local function DiagnosticScalar(value)
+    local kind = type(value)
+    if kind == "nil" then return "" end
+    if kind == "string" or kind == "number" or kind == "boolean" then
+        return tostring(value)
+    end
+    return "<" .. kind .. ">"
+end
+
 local function LogText_Boards()
-    local log = NexusDB and NexusDB.decisionLog or {}
+    local log = Nexus.DiagnosticLogs and Nexus.DiagnosticLogs.Snapshot
+        and Nexus.DiagnosticLogs.Snapshot("decision") or {}
     local out = { string.format("DECISION LOG -- %d boards (v%s)",
         #log, Nexus.VERSION), "" }
     local first = math.max(1, #log - 39)
@@ -2082,38 +2192,43 @@ local function LogText_Boards()
         out[#out + 1] = ""
     end
     for i = first, #log do
-        local e = log[i]
+        local e = DiagnosticTable(log[i])
+        local proposal = DiagnosticTable(e.proposal)
+        local charges = DiagnosticTable(e.charges)
+        local cards = DiagnosticTable(e.cards)
+        local users = DiagnosticTable(e.user)
         out[#out + 1] = string.format("== #%d [%s] L%s H:%s%s  charges B:%s R:%s F:%s%s",
-            i, tostring(e.t), tostring(e.level),
-            tostring(e.horizon),
-            (e.proposal and e.proposal.endgame) and " [FINAL]" or "",
-            tostring(e.charges and e.charges.b),
-            tostring(e.charges and e.charges.r),
-            tostring(e.charges and e.charges.f),
-            (e.charges and e.charges.ok == false) and " (untrusted)" or "")
-        for ci = 1, #(e.cards or {}) do
-            local c = e.cards[ci]
+            i, DiagnosticScalar(e.t), DiagnosticScalar(e.level),
+            DiagnosticScalar(e.horizon),
+            proposal.endgame and " [FINAL]" or "",
+            DiagnosticScalar(charges.b),
+            DiagnosticScalar(charges.r),
+            DiagnosticScalar(charges.f),
+            charges.ok == false and " (untrusted)" or "")
+        for ci = 1, #cards do
+            local c = DiagnosticTable(cards[ci])
             out[#out + 1] = string.format(
                 "  %d%s %s id=%s fam=%s q=%s/cat:%s wishQ=%s max=%s own=%s d=%s %s%s",
-                ci, c.g and "[G]" or "", tostring(c.name), tostring(c.id),
-                tostring(c.fam), tostring(c.cardQ), tostring(c.catQ),
-                tostring(c.wishQ), tostring(c.maxStack), tostring(c.owned),
-                tostring(c.delta), tostring(c.ann),
+                ci, c.g and "[G]" or "", DiagnosticScalar(c.name), DiagnosticScalar(c.id),
+                DiagnosticScalar(c.fam), DiagnosticScalar(c.cardQ), DiagnosticScalar(c.catQ),
+                DiagnosticScalar(c.wishQ), DiagnosticScalar(c.maxStack), DiagnosticScalar(c.owned),
+                DiagnosticScalar(c.delta), DiagnosticScalar(c.ann),
                 (c.wished and "" or " OFF-WISHLIST"))
             if c.frozen then out[#out] = out[#out] .. " FROZEN" end
         end
         out[#out + 1] = string.format("  proposal: %s %s (%s)",
-            tostring(e.proposal and e.proposal.type),
-            tostring(e.proposal and (e.proposal.spellId or e.proposal.index or "")),
-            tostring(e.proposal and e.proposal.reason))
-        if e.user then
-            for _, u in ipairs(e.user) do
+            DiagnosticScalar(proposal.type),
+            DiagnosticScalar(proposal.spellId or proposal.index or ""),
+            DiagnosticScalar(proposal.reason))
+        if #users > 0 then
+            for _, rawUser in ipairs(users) do
+                local u = DiagnosticTable(rawUser)
                 out[#out + 1] = string.format("  USER: %s(%s)",
-                    tostring(u.kind), tostring(u.arg))
+                    DiagnosticScalar(u.kind), DiagnosticScalar(u.arg))
             end
         end
         if e.pending and e.pending ~= "" then
-            out[#out + 1] = "  pending guarantee: " .. e.pending
+            out[#out + 1] = "  legacy pending data: " .. DiagnosticScalar(e.pending)
         end
         out[#out + 1] = ""
     end
@@ -2123,7 +2238,7 @@ end
 -- A user action "matches" the proposal when it is the same verb aimed at
 -- the same thing; anything else is a training mismatch worth reading.
 local function UserMatchesProposal(u, p)
-    if not (u and p) then return false end
+    if type(u) ~= "table" or type(p) ~= "table" then return false end
     local k, a = tostring(u.kind), tonumber(u.arg)
     if k == "SelectPerk" then
         return p.type == "take" and a ~= nil and a == tonumber(p.spellId)
@@ -2144,28 +2259,40 @@ end
 -- the client-freeze range without dropping any decision or mismatch fields.
 local function NewAIExportCoroutine()
     return coroutine.create(function()
-        local log = NexusDB and NexusDB.decisionLog or {}
-        local audits = NexusDB and NexusDB.runAudit or {}
-        local probes = NexusDB and NexusDB.uiProbeLog or {}
+        local logs = Nexus.DiagnosticLogs
+        local log = logs and logs.Snapshot and logs.Snapshot("decision") or {}
+        local audits = logs and logs.Snapshot and logs.Snapshot("runAudit") or {}
+        local probes = logs and logs.Snapshot and logs.Snapshot("uiProbe") or {}
+        local errors = {}
+        if Nexus.Errors and type(Nexus.Errors.History) == "function" then
+            local okErrors, retained = pcall(Nexus.Errors.History)
+            if okErrors and type(retained) == "table" then errors = retained end
+        end
+        local performance = {rows={}}
+        if Nexus.Performance and type(Nexus.Performance.Snapshot) == "function" then
+            local okPerformance, retained = pcall(Nexus.Performance.Snapshot)
+            if okPerformance and type(retained) == "table" then performance = retained end
+        end
         local dict, dictIndex = {}, {}
         local function Esc(v)
-            local s = tostring(v or "")
+            local s = v and DiagnosticScalar(v) or ""
             s = s:gsub("%%", "%%25"):gsub("|", "%%7C"):gsub("\n", "%%0A"):gsub("\r", "")
             return s
         end
         local function Ref(v)
             if v == nil or v == "" then return 0 end
-            local s = tostring(v)
+            local s = DiagnosticScalar(v)
             local idx = dictIndex[s]
             if not idx then idx = #dict + 1; dict[idx] = s; dictIndex[s] = idx end
             return idx
         end
         local function B(v) if v == nil then return 0 elseif v then return 1 else return -1 end end
         local function N(v) return tonumber(v) or 0 end
-        local function V(v) if v == nil then return "" else return tostring(v) end end
+        local function V(v) return DiagnosticScalar(v) end
         local function Mismatch(e)
-            local p = e and e.proposal or {}
-            for _, u in ipairs((e and e.user) or {}) do
+            e = DiagnosticTable(e)
+            local p = DiagnosticTable(e.proposal)
+            for _, u in ipairs(DiagnosticTable(e.user)) do
                 if not UserMatchesProposal(u, p) then return 1 end
             end
             return 0
@@ -2173,57 +2300,76 @@ local function NewAIExportCoroutine()
         local function Counts(map)
             local a = {}
             for fam, n in pairs(type(map) == "table" and map or {}) do
-                a[#a + 1] = { Ref(fam), N(n) }
+                local kind = type(fam)
+                if kind == "string" or kind == "number" or kind == "boolean" then
+                    a[#a + 1] = { Ref(fam), N(n) }
+                end
             end
-            table.sort(a, function(x,y) return x[1] < y[1] end)
+            table.sort(a, function(x,y)
+                if x[1] == y[1] then return x[2] < y[2] end
+                return x[1] < y[1]
+            end)
             local rows = {}
             for _, x in ipairs(a) do rows[#rows + 1] = x[1] .. ":" .. x[2] end
             return table.concat(rows, ",")
         end
 
         local out = {
-            "NEXUS_DIAGNOSTIC_LOG_4",
-            "version=" .. Esc(Nexus.VERSION) .. "|boards=" .. #log .. "|audits=" .. #audits .. "|probes=" .. #probes,
-            "B=board|C=card|U=user action|Q=predicted guarantee queue head|A=run/save audit|D=dictionary",
+            "NEXUS_DIAGNOSTIC_LOG_5",
+            "version=" .. Esc(Nexus.VERSION) .. "|boards=" .. #log .. "|audits=" .. #audits .. "|probes=" .. #probes .. "|errors=" .. #errors,
+            "B=board|C=card|U=user action|Q=legacy queue record|A=run/save audit|D=dictionary",
             "B|i|time|level|horizon|endgame|guaranteedIndex|banish|reroll|freeze|trusted|actionRef|spellId|cardIndex|reasonRef|pendingRef|mismatch|activeSlot|run|queueN",
             "C|board|card|spellId|familyRef|cardQ|catalogQ|wishQ|maxStack|owned|delta|annotationRef|flags(G,F,W)",
             "Q|board|position|spellId|familyRef|wished",
             "A|kindRef|time|run|level|activeSlot|targetSlot|resultRef|reasonRef|incumbentCounts|candidateCounts|summaryRef|exactRef|exactGained|exactLost|excessForced|excessAvoidable|excessShed|wrongQForced|wrongQAvoidable|wrongQShed|wrongQDetailRef|pollutionScoreRef",
             "P|time|eventRef|detailRef",
+            "E|index|time|sourceRef|messageRef",
             "L|pageRef|line|textRef",
+            "F|pathRef|count|totalMs|maximumMs|lastMs",
             "String refs use D lines. Counts are familyRef:stacks. This is observational logging only.",
         }
-        for i, e in ipairs(log) do
-            local p = e.proposal or {}; local ch = e.charges or {}
+        for i, rawEntry in ipairs(log) do
+            local e = DiagnosticTable(rawEntry)
+            local p = DiagnosticTable(e.proposal); local ch = DiagnosticTable(e.charges)
             out[#out + 1] = table.concat({"B",i,Esc(e.t),V(e.level),V(e.horizon),B(p.endgame),V(e.gIndex),V(ch.b),V(ch.r),V(ch.f),B(ch.ok),Ref(p.type),V(p.spellId),V(p.index),Ref(p.reason),Ref(e.pending),Mismatch(e),N(e.activeSlot),N(e.run),N(e.queueN)}, "|")
-            for ci, c in ipairs(e.cards or {}) do
+            for ci, rawCard in ipairs(DiagnosticTable(e.cards)) do
+                local c = DiagnosticTable(rawCard)
                 local flags = (c.g and "G" or "-") .. (c.frozen and "F" or "-") .. (c.wished and "W" or "-")
                 out[#out + 1] = table.concat({"C",i,ci,V(c.id),Ref(c.fam),V(c.cardQ),V(c.catQ),V(c.wishQ),V(c.maxStack),V(c.owned),V(c.delta),Ref(c.ann),flags}, "|")
             end
-            for ui, u in ipairs(e.user or {}) do
+            for ui, rawUser in ipairs(DiagnosticTable(e.user)) do
+                local u = DiagnosticTable(rawUser)
                 out[#out + 1] = table.concat({"U",i,ui,Ref(u.kind),Esc(u.arg)}, "|")
             end
-            for qi, q in ipairs(e.queueHead or {}) do
+            for qi, rawQueue in ipairs(DiagnosticTable(e.queueHead)) do
+                local q = DiagnosticTable(rawQueue)
                 out[#out + 1] = table.concat({"Q",i,qi,V(q.id),Ref(q.fam),q.wished and 1 or 0}, "|")
             end
             if i % 5 == 0 then coroutine.yield("Encoding decisions " .. i .. "/" .. #log) end
         end
-        for i, a in ipairs(audits) do
+        for i, rawAudit in ipairs(audits) do
+            local a = DiagnosticTable(rawAudit)
             local exact = {}
-            for _, x in ipairs(a.exact or {}) do
+            for _, rawExact in ipairs(DiagnosticTable(a.exact)) do
+                local x = DiagnosticTable(rawExact)
                 exact[#exact + 1] = table.concat({N(x.id),Ref(x.fam),N(x.q),N(x.n)}, ":")
             end
             out[#out + 1] = table.concat({"A",Ref(a.kind),Esc(a.t),N(a.run),N(a.level),N(a.activeSlot),N(a.targetSlot),Ref(a.result),Ref(a.reason),Counts(a.incumbent),Counts(a.candidate),Ref(a.summary),Ref(table.concat(exact, ",")),N(a.exactGained),N(a.exactLost),N(a.excessForced),N(a.excessAvoidable),N(a.excessShed),N(a.wrongQForced),N(a.wrongQAvoidable),N(a.wrongQShed),Ref(a.wrongQDetail),Ref(a.pollutionScore)}, "|")
             if i % 8 == 0 then coroutine.yield("Encoding run audits " .. i .. "/" .. #audits) end
         end
-        for i, p in ipairs(probes) do
+        for i, rawProbe in ipairs(probes) do
+            local p = DiagnosticTable(rawProbe)
             out[#out + 1] = table.concat({"P",Esc(p.t),Ref(p.event),Ref(p.detail)}, "|")
             if i % 10 == 0 then coroutine.yield("Encoding UI probes " .. i .. "/" .. #probes) end
+        end
+        for i, rawError in ipairs(errors) do
+            local e = DiagnosticTable(rawError)
+            out[#out + 1] = table.concat({"E",i,Esc(e.timestamp),Ref(e.source),Ref(e.message)}, "|")
         end
         -- Include every human-readable /nexus log page in the same export.
         -- This makes the export self-contained: compact event rows plus the exact
         -- State/Wishlist/Sync/DPS pages the player can see in the log window.
-        local pageKeys = {"state", "wishlist", "boards", "mismatch", "sync", "dps", "autolock"}
+        local pageKeys = {"state", "wishlist", "boards", "mismatch", "sync", "dps", "autolock", "errors", "perf"}
         local pageProvider = Nexus and Nexus.GetDiagnosticPageText
         if type(pageProvider) == "function" then
             for _, pageKey in ipairs(pageKeys) do
@@ -2237,12 +2383,25 @@ local function NewAIExportCoroutine()
                 end
             end
         end
+        for index, rawRow in ipairs(DiagnosticTable(performance.rows)) do
+            local row = DiagnosticTable(rawRow)
+            out[#out + 1] = table.concat({
+                "F", Ref(row.name), N(row.count),
+                string.format("%.3f", N(row.total)),
+                string.format("%.3f", N(row.maximum)),
+                string.format("%.3f", N(row.last)),
+            }, "|")
+            if index % 4 == 0 then
+                coroutine.yield("Encoding performance aggregates " .. index
+                    .. "/" .. #DiagnosticTable(performance.rows))
+            end
+        end
         out[#out + 1] = "DICTIONARY"
         for i, v in ipairs(dict) do
             out[#out + 1] = "D|" .. i .. "|" .. Esc(v)
             if i % 40 == 0 then coroutine.yield("Encoding dictionary " .. i .. "/" .. #dict) end
         end
-        out[#out + 1] = "END|boards=" .. #log .. "|audits=" .. #audits .. "|probes=" .. #probes .. "|dict=" .. #dict
+        out[#out + 1] = "END|boards=" .. #log .. "|audits=" .. #audits .. "|probes=" .. #probes .. "|errors=" .. #errors .. "|dict=" .. #dict
         coroutine.yield("Finalizing copy text")
         return table.concat(out, "\n")
     end)
@@ -2259,38 +2418,43 @@ local function LogText_AIExport()
 end
 
 local function LogText_Mismatch()
-    local log = NexusDB and NexusDB.decisionLog or {}
+    local log = Nexus.DiagnosticLogs and Nexus.DiagnosticLogs.Snapshot
+        and Nexus.DiagnosticLogs.Snapshot("decision") or {}
     local out = { "MISMATCHES -- boards where your manual play differed", "" }
     local nMis = 0
     local first = math.max(1, #log - 99)
     if first > 1 then out[#out + 1] = "(scanning newest 100 boards)"; out[#out + 1] = "" end
     for i = first, #log do
-        local e = log[i]
-        if e.user then
+        local e = DiagnosticTable(log[i])
+        local users = DiagnosticTable(e.user)
+        local proposal = DiagnosticTable(e.proposal)
+        if #users > 0 then
             local anyMismatch = false
-            for _, u in ipairs(e.user) do
-                if not UserMatchesProposal(u, e.proposal) then anyMismatch = true end
+            for _, u in ipairs(users) do
+                if not UserMatchesProposal(u, proposal) then anyMismatch = true end
             end
             if anyMismatch then
                 nMis = nMis + 1
                 out[#out + 1] = string.format("== board #%d [%s] L%s",
-                    i, tostring(e.t), tostring(e.level))
-                for ci = 1, #(e.cards or {}) do
-                    local c = e.cards[ci]
+                    i, DiagnosticScalar(e.t), DiagnosticScalar(e.level))
+                local cards = DiagnosticTable(e.cards)
+                for ci = 1, #cards do
+                    local c = DiagnosticTable(cards[ci])
                     out[#out + 1] = string.format(
                         "  %d%s %s id=%s fam=%s q=%s wishQ=%s own=%s d=%s %s%s",
-                        ci, c.g and "[G]" or "", tostring(c.name), tostring(c.id),
-                        tostring(c.fam), tostring(c.cardQ), tostring(c.wishQ),
-                        tostring(c.owned), tostring(c.delta), tostring(c.ann),
+                        ci, c.g and "[G]" or "", DiagnosticScalar(c.name), DiagnosticScalar(c.id),
+                        DiagnosticScalar(c.fam), DiagnosticScalar(c.cardQ), DiagnosticScalar(c.wishQ),
+                        DiagnosticScalar(c.owned), DiagnosticScalar(c.delta), DiagnosticScalar(c.ann),
                         (c.wished and "" or " OFF-WISHLIST"))
                 end
                 out[#out + 1] = string.format("  addon: %s %s (%s)",
-                    tostring(e.proposal and e.proposal.type),
-                    tostring(e.proposal and (e.proposal.spellId or e.proposal.index or "")),
-                    tostring(e.proposal and e.proposal.reason))
-                for _, u in ipairs(e.user) do
+                    DiagnosticScalar(proposal.type),
+                    DiagnosticScalar(proposal.spellId or proposal.index or ""),
+                    DiagnosticScalar(proposal.reason))
+                for _, rawUser in ipairs(users) do
+                    local u = DiagnosticTable(rawUser)
                     out[#out + 1] = string.format("  you:   %s(%s)",
-                        tostring(u.kind), tostring(u.arg))
+                        DiagnosticScalar(u.kind), DiagnosticScalar(u.arg))
                 end
                 out[#out + 1] = ""
             end
@@ -2548,7 +2712,9 @@ local function LogText_Sync()
 
     Add("-- builds in my library --")
     local mine, theirs, listed = 0, 0, 0
-    for _, b in pairs((NexusDB and NexusDB.communityBuilds) or {}) do
+    local catalog = Nexus and Nexus.BuildCatalog
+    local builds = catalog and catalog.All and catalog.All() or {}
+    for _, b in pairs(builds) do
         if listed < 100 and b.isMine then
             listed = listed + 1
             mine = mine + 1
@@ -2585,12 +2751,65 @@ local function LogText_Sync()
     return table.concat(out, "\n")
 end
 
-local function ClearDiagnosticLogs()
+local function LogText_Errors()
+    local errors = Nexus.Errors
+    if not errors or type(errors.Format) ~= "function" then
+        return "error history unavailable"
+    end
+    local ok, text = pcall(errors.Format)
+    return ok and tostring(text or "")
+        or ("error history render failed: " .. ErrorText(text))
+end
+
+local function LogText_Performance()
+    local performance = Nexus.Performance
+    if not performance or type(performance.Snapshot) ~= "function" then
+        return "performance diagnostics unavailable"
+    end
+    local ok, snapshot = pcall(performance.Snapshot)
+    if not ok or type(snapshot) ~= "table" then
+        return "performance diagnostics unavailable"
+    end
+    local out = {
+        "PERFORMANCE AGGREGATES -- this session only",
+        "Observational milliseconds; no per-call samples or SavedVariables history.",
+        "Nested leaderboard phase rows overlap; compare them, do not add them.",
+        string.format("enabled=%s clockAvailable=%s clockFailures=%d",
+            tostring(snapshot.enabled == true),
+            tostring(snapshot.clockAvailable == true),
+            tonumber(snapshot.clockFailures) or 0),
+        "",
+        "path                         count    total ms      max ms     last ms",
+    }
+    for _, rawRow in ipairs(DiagnosticTable(snapshot.rows)) do
+        local row = DiagnosticTable(rawRow)
+        out[#out + 1] = string.format("%-28s %7d %11.3f %11.3f %11.3f",
+            DiagnosticScalar(row.name), tonumber(row.count) or 0,
+            tonumber(row.total) or 0, tonumber(row.maximum) or 0,
+            tonumber(row.last) or 0)
+    end
+    return table.concat(out, "\n")
+end
+
+local function ClearDiagnosticLogs(tabKey)
+    if tabKey == "perf" then
+        if Nexus.Performance and type(Nexus.Performance.Reset) == "function" then
+            local ok, cleared = pcall(Nexus.Performance.Reset)
+            return ok and cleared ~= false
+        end
+        return false
+    end
+    if tabKey == "errors" then
+        if Nexus.Errors and type(Nexus.Errors.Clear) == "function" then
+            local ok, cleared = pcall(Nexus.Errors.Clear)
+            return ok and cleared ~= false
+        end
+        return false
+    end
     NexusDB = NexusDB or {}
-    NexusDB.decisionLog = {}
-    NexusDB.runAudit = {}
-    NexusDB.uiProbeLog = {}
-    NexusDB.autoLockLog = {}
+    local clearedDurable = Nexus.DiagnosticLogs
+        and type(Nexus.DiagnosticLogs.ClearAll) == "function"
+        and Nexus.DiagnosticLogs.ClearAll()
     NexusDB.lastSaveRefusal = nil
     NexusDB.lastSaveStatus = nil
     NexusDB.auditRunCounter = 0
@@ -2603,7 +2822,10 @@ local function ClearDiagnosticLogs()
     if Nexus.DpsCapture and type(Nexus.DpsCapture.ClearDebugLog) == "function" then
         pcall(Nexus.DpsCapture.ClearDebugLog)
     end
-    return true
+    if Nexus.Errors and type(Nexus.Errors.Clear) == "function" then
+        pcall(Nexus.Errors.Clear)
+    end
+    return clearedDurable and true or false
 end
 
 local function LogViewerProvider(tabKey)
@@ -2619,6 +2841,8 @@ local function LogViewerProvider(tabKey)
         return D and D.GetDebugLog and D.GetDebugLog() or "DPS module unavailable"
     end
     if tabKey == "autolock" then return LogText_AutoLock() end
+    if tabKey == "errors" then return LogText_Errors() end
+    if tabKey == "perf" then return LogText_Performance() end
     return "unknown tab: " .. tostring(tabKey)
 end
 
@@ -2628,14 +2852,57 @@ function Nexus.GetDiagnosticPageText(tabKey)
     return LogViewerProvider(tabKey)
 end
 
+local function ScheduleKnownDeadlines()
+    local now = GetTime()
+    if externalPauseUntil and externalPauseUntil > now then
+        RequestStepAt(externalPauseUntil)
+    end
+    if lastDecidedSig and decidedAt and (decidedAt + 0.4) > now then
+        RequestStepAt(decidedAt + 0.4)
+    end
+    if saveVerifySlot then
+        if saveObserveReadyAt and saveObserveReadyAt > now then
+            RequestStepAt(saveObserveReadyAt)
+        else
+            local due = saveObserveSchedule[saveObserveIndex]
+            local when = due and ((saveVerifyAt or now) + due) or nil
+            if when then
+                RequestStepAt(when > now and when or (now + POLL))
+            end
+        end
+    end
+    if autoUnlockContextKey and autoUnlockContextSince
+        and (autoUnlockContextSince + 2) > now then
+        RequestStepAt(autoUnlockContextSince + 2)
+    end
+end
+
+local function RunFullStep(trigger, errorSource)
+    forceStep = false
+    lastFullStepAt = GetTime()
+    recomputeStats.fullSteps = recomputeStats.fullSteps + 1
+    recomputeStats[trigger] = (recomputeStats[trigger] or 0) + 1
+    local ok, err
+    if Nexus.Performance and type(Nexus.Performance.Measure) == "function" then
+        ok, err = pcall(Nexus.Performance.Measure, "automation.step", Step)
+    else
+        ok, err = pcall(Step)
+    end
+    if not ok then
+        SetStatus("error (see /nexus err)")
+        RecordError(errorSource or "Main.Step", err)
+        return false
+    end
+    ScheduleKnownDeadlines()
+    return true
+end
+
 -- Immediate repaint hook used when a DPS result is committed. This avoids
 -- waiting for the normal poll interval and guarantees the panel reads the
 -- newly saved exact-set best from SavedVariables.
 function Nexus.RefreshPanel()
     if not initialized or not Adapter.Ready() then return false end
-    local ok, err = pcall(Step)
-    if not ok then Nexus.lastError = err; return false end
-    return true
+    return RunFullStep("explicit", "RefreshPanel.Step")
 end
 
 local function Init()
@@ -2651,10 +2918,42 @@ local function Init()
     JournalTab = Nexus.JournalTab
     DefaultProfile = Nexus.DefaultProfile
     if not (Model and Policy and Ratchet and Strategy and Store
-        and Adapter and Readout and Panel and DefaultProfile) then
+        and Adapter and Readout and Panel and DefaultProfile
+        and Nexus.DiagnosticLogs) then
         return -- missing module: stay uninitialized, retry next event
     end
-    Store.Init()
+    local okStore, errStore = pcall(Store.Init)
+    if not okStore then
+        RecordError("Store.Init", errStore)
+        return
+    end
+    local okLogs, initializedLogs, errLogs = pcall(Nexus.DiagnosticLogs.Init, NexusDB)
+    if not okLogs or initializedLogs == false then
+        RecordError("DiagnosticLogs.Init", okLogs and errLogs or initializedLogs)
+    end
+    if Nexus.Errors and Nexus.Errors.Init then
+        local okErrors, initializedErrors, errErrors = pcall(Nexus.Errors.Init)
+        if not okErrors or initializedErrors == false then
+            RecordError("Errors.Init", okErrors and errErrors or initializedErrors)
+        end
+    end
+    if Nexus.Scheduler and Nexus.Scheduler.Init then
+        local okScheduler, schedulerFrame = pcall(Nexus.Scheduler.Init)
+        if not okScheduler or not schedulerFrame then
+            RecordError("Scheduler.Init", okScheduler and "frame unavailable" or schedulerFrame)
+        end
+    end
+    if Nexus.Updates and Nexus.Updates.Init then
+        Nexus.Updates.Init({
+            notify = function(version)
+                Print("Update " .. tostring(version)
+                    .. " is available. Installation is manual; open the Nexus update notice to copy the releases page.")
+            end,
+            refresh = function()
+                if Nexus.Panel and Nexus.Panel.Refresh then Nexus.Panel.Refresh() end
+            end,
+        })
+    end
     auditRunId = tonumber(NexusDB and NexusDB.auditRunCounter) or 0
     Adapter.Init({ OnStatus = Print }, Store)
     if Nexus.LogViewer and Nexus.LogViewer.Init then
@@ -2675,6 +2974,18 @@ local function Init()
     if Nexus.Leaderboard and Nexus.Leaderboard.Init then
         Nexus.Leaderboard.Init(Adapter, Model)
     end
+    if Nexus.Performance and type(Nexus.Performance.InstallDefaults) == "function" then
+        local okPerformance, performanceError = pcall(Nexus.Performance.InstallDefaults)
+        if not okPerformance then
+            RecordError("Performance.InstallDefaults", performanceError)
+        end
+    end
+    if Nexus.ViewRefresh and Nexus.ViewRefresh.Init then
+        local okRefresh, refreshReady = pcall(Nexus.ViewRefresh.Init)
+        if not okRefresh or refreshReady == false then
+            RecordError("ViewRefresh.Init", okRefresh and "initialization failed" or refreshReady)
+        end
+    end
     if Nexus.Nameplate and Nexus.Nameplate.Init then
         Nexus.Nameplate.Init()
     end
@@ -2683,10 +2994,14 @@ local function Init()
     end
     Panel.Init({ ToggleAuto = function()
         autoEnabled = not autoEnabled
+        RequestRecompute()
         Print("auto " .. (autoEnabled and "ON" or "OFF"))
         return autoEnabled   -- Panel uses this to repaint the button NOW
+    end, RefreshDisplay = function()
+        return Nexus.RefreshHudView()
     end })
     initialized = true
+    RequestRecompute()
     Print("v" .. Nexus.VERSION .. " -- type /nexus for commands.")
     if Adapter.RivalDetected() then
         Print("|cffff6060EchoOptimizer detected -- it conflicts with Nexus's board hook. Disable EchoOptimizer; Nexus replaces its functionality.|r")
@@ -2697,16 +3012,31 @@ EH = CreateFrame("Frame")
 EH:RegisterEvent("ADDON_LOADED")
 EH:RegisterEvent("PLAYER_ENTERING_WORLD")
 EH:RegisterEvent("PLAYER_LEVEL_UP")
+EH:RegisterEvent("SPELLS_CHANGED")
+EH:RegisterEvent("LEARNED_SPELL_IN_TAB")
+EH:RegisterEvent("SKILL_LINES_CHANGED")
 EH:RegisterEvent("CHAT_MSG_CHANNEL")
 EH:RegisterEvent("PLAYER_REGEN_DISABLED")
 EH:RegisterEvent("PLAYER_REGEN_ENABLED")
+EH:RegisterEvent("PLAYER_UPDATE_RESTING")
+EH:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 EH:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4,
                                  arg5, arg6, arg7, arg8, arg9)
     if event == "ADDON_LOADED" and arg1 == "Nexus" then
         -- SavedVariables are ready here, but the player and Project Ebonhold UI
         -- may not be. Only run the cheap data migration now; defer all frames,
         -- hooks, scanners and catalog work until PLAYER_ENTERING_WORLD.
-        if Nexus.Store and Nexus.Store.Init then pcall(Nexus.Store.Init) end
+        if Nexus.Store and Nexus.Store.Init then
+            local okStore, errStore = pcall(Nexus.Store.Init)
+            if not okStore then RecordError("Store.Init", errStore) end
+        end
+        if Nexus.DiagnosticLogs and Nexus.DiagnosticLogs.Init then
+            local okLogs, initializedLogs, errLogs =
+                pcall(Nexus.DiagnosticLogs.Init, NexusDB)
+            if not okLogs or initializedLogs == false then
+                RecordError("DiagnosticLogs.Init", okLogs and errLogs or initializedLogs)
+            end
+        end
     elseif event == "PLAYER_ENTERING_WORLD" then
         Init()
         if initialized then
@@ -2721,15 +3051,26 @@ EH:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4,
                 Nexus.DpsCapture.Init(Adapter, Nexus.Sync)
             end
         end
-    elseif event == "PLAYER_LEVEL_UP" then
+    elseif event == "PLAYER_LEVEL_UP" or event == "SPELLS_CHANGED"
+        or event == "LEARNED_SPELL_IN_TAB" or event == "SKILL_LINES_CHANGED" then
         if initialized then Adapter.OnEvent(event) end
+    elseif event == "PLAYER_UPDATE_RESTING" or event == "ZONE_CHANGED_NEW_AREA" then
+        if initialized and Nexus.Sync and Nexus.Sync.ContextChanged then
+            pcall(Nexus.Sync.ContextChanged, event)
+        end
     elseif event == "PLAYER_REGEN_DISABLED" then
+        if initialized and Nexus.Sync and Nexus.Sync.ContextChanged then
+            pcall(Nexus.Sync.ContextChanged, event)
+        end
         if initialized and Nexus.DpsCapture then
             pcall(Nexus.DpsCapture.OnCombatStart)
         end
     elseif event == "PLAYER_REGEN_ENABLED" then
         if initialized and Nexus.DpsCapture then
             pcall(Nexus.DpsCapture.OnCombatEnd)
+        end
+        if initialized and Nexus.Sync and Nexus.Sync.ContextChanged then
+            pcall(Nexus.Sync.ContextChanged, event)
         end
     elseif event == "CHAT_MSG_WHISPER" then
         -- Dev diagnostic: a WLRQ whisper with token "dev" is a status
@@ -2760,8 +3101,8 @@ EH:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4,
             if bare == want or numbered == want then
                 local ok, err = pcall(Nexus.Sync.HandleIncoming, arg1, arg2)
                 if not ok then
-                    Nexus.lastError = err
-                    Nexus.Sync.LogEvent("RX", "handler ERROR: %s", tostring(err))
+                    RecordError("Sync.HandleIncoming", err)
+                    Nexus.Sync.LogEvent("RX", "handler ERROR: %s", ErrorText(err))
                 end
             elseif type(arg1) == "string" and arg1:find("^WLR") then
                 -- Our protocol seen on a channel we didn't match -- the
@@ -2801,238 +3142,454 @@ EH:SetScript("OnUpdate", function(_, elapsed)
     pollAccum = pollAccum + (elapsed or 0)
     if pollAccum < POLL then return end
     pollAccum = 0
+    recomputeStats.polls = recomputeStats.polls + 1
     local okPoll, errPoll = pcall(Adapter.Poll)
-    if not okPoll then Nexus.lastError = errPoll end
-    local ok, err = pcall(Step)
-    if not ok then
+    if not okPoll then
         SetStatus("error (see /nexus err)")
-        Nexus.lastError = err
+        RecordError("GameAdapter.Poll", errPoll)
+        return
     end
+
+    local boardDirty, slotsDirty, dataDirty = false, false, false
+    if Adapter.ConsumeDirty then
+        local okDirty, b, s, d = pcall(Adapter.ConsumeDirty)
+        if okDirty then
+            boardDirty, slotsDirty, dataDirty = b and true or false,
+                s and true or false, d and true or false
+        else
+            -- Unknown invalidation state is handled conservatively: retain
+            -- the direct safe tick and record the failed optimization.
+            forceStep = true
+            RecordError("GameAdapter.ConsumeDirty", b)
+        end
+    end
+    local now = GetTime()
+    local isDirty = boardDirty or slotsDirty or dataDirty
+    local deadlineDue = nextStepAt ~= nil and now >= nextStepAt
+    local fallbackDue = (now - lastFullStepAt) >= FallbackSeconds()
+    if not (forceStep or isDirty or deadlineDue or fallbackDue) then
+        recomputeStats.skipped = recomputeStats.skipped + 1
+        return
+    end
+    if deadlineDue then nextStepAt = nil end
+    local trigger = forceStep and "forced"
+        or isDirty and "dirty"
+        or deadlineDue and "deadlines"
+        or "fallbacks"
+    RunFullStep(trigger, "Main.Step")
 end)
 
 SLASH_NEXUS1 = "/nexus"
 SLASH_NEXUS2 = "/nx"
 SLASH_NEXUS3 = "/wr"   -- legacy alias kept for muscle memory
-SlashCmdList["NEXUS"] = function(msg)
-    if not initialized then Print("not initialized yet") return end
-    msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
-    local settings = Store.Settings()
-    if msg == "auto" then
-        autoEnabled = not autoEnabled
-        Print("auto " .. (autoEnabled and "ON" or "OFF"))
-        if Panel.SetAuto then Panel.SetAuto(autoEnabled) end
-    elseif msg == "panel" then
-        Panel.Toggle()
-    elseif msg == "restore" then
-        Print(Adapter.RestoreAutoAccept() and "client auto-accept restored"
-            or "nothing to restore")
-    elseif msg == "flags" then
-        for k, v in pairs(EffectiveFlags()) do
-            Print(k .. " = " .. tostring(v))
-        end
-        local st = Store.State()
-        for k, why in pairs(st.flagDemotions or {}) do
-            Print("demoted " .. k .. ": " .. tostring(why))
-        end
-    elseif msg == "status" then
-        local catalog = Adapter.Catalog()
-        local wl = Adapter.Wishlist()
-        local slots = Adapter.Slots()
-        local owned = Adapter.Owned()
-        Print("v" .. Nexus.VERSION .. " -- level " .. Adapter.Level()
-            .. ", auto " .. (autoEnabled and "ON" or "OFF"))
-        -- Target (wishlist)
-        if wl then
-            local src = (wl.source == "designed" and "Echo Wishlist build")
-                or (wl.source == "active" and "active loadout") or "wishlist"
-            Print(string.format("TARGET: |cff7fff7f'%s'|r (your %s) -- %d echoes",
-                (wl.name ~= "" and wl.name) or "(unnamed)", src, #wl.entries))
-        else
-            local note = Adapter.WishlistNote and Adapter.WishlistNote()
-            Print("TARGET: none -- advisor only" .. (note and ("  (" .. note .. ")") or ""))
-        end
-        -- Loadout / snapshot data (the guarantee source)
-        if not slots then
-            Print("LOADOUTS: slot data not loaded yet (waiting on the server).")
-        else
-            local nsnap, ndesign = 0, 0
-            for _, s in pairs(slots.bySlot) do
-                if type(s.echoes) == "table" and #s.echoes > 0 then
-                    if s.verified then nsnap = nsnap + 1 else ndesign = ndesign + 1 end
-                end
-            end
-            local act = slots.activeSlot
-            if act ~= 0 and slots.bySlot[act] then
-                local s = slots.bySlot[act]
-                Print(string.format("ACTIVE slot %d '%s': %s, %d echoes", act,
-                    (s.name ~= "" and s.name) or "?",
-                    s.verified and "snapshot (arms the guarantee)"
-                        or "designed build (highlight only -- not a guarantee)",
-                    #s.echoes))
-            else
-                Print("ACTIVE: no build activated right now.")
-            end
-            Print(string.format("READABLE: %d loadout snapshot(s), %d designed wishlist build(s)",
-                nsnap, ndesign))
-            if wl and Ratchet and Ratchet.BestSlot then
-                local plan = Strategy.Compile(catalog, wl, Store.Settings())
-                local best = Ratchet.BestSlot(slots, plan, catalog)
-                Print(best and ("Would arm snapshot slot " .. best .. " at level 1.")
-                    or "No verified snapshot to arm -- first run seeds one.")
-            end
-        end
-        Print(string.format("OWNED this run: %d echoes (%s).", owned.distinct or 0,
-            owned.synced and "synced" or "not synced yet"))
-    elseif msg == "wishlist" or msg == "check" then
-        local wl = Adapter.Wishlist()
-        if not wl then
-            local note = Adapter.WishlistNote and Adapter.WishlistNote()
-            if note then
-                Print(note)
-            else
-                Print("no wishlist detected -- running as advisor only.")
-                Print("Design one in the Echo Journal: 'New Wishlist' (the 'Echo Wishlist'")
-                Print("section), pick its echoes, and save it. The addon reads that build.")
-            end
-        else
-            local cat = Adapter.Catalog()
-            local src = (wl.source == "designed" and "your Echo Wishlist build")
-                or (wl.source == "active" and "your active loadout")
-                or "your wishlist"
-            local famset = {}
-            for _, e in ipairs(wl.entries) do famset[e.family] = true end
-            local nfam = 0
-            for _ in pairs(famset) do nfam = nfam + 1 end
-            Print(string.format("reading |cff7fff7f'%s'|r (from %s) -- %d echoes, %d families",
-                (wl.name ~= "" and wl.name) or "(unnamed)", src, #wl.entries, nfam))
-            local names = {}
-            for _, e in ipairs(wl.entries) do
-                local row = cat and cat.rows[e.spellId]
-                names[#names + 1] = (row and row.name or ("spell " .. e.spellId))
-                    .. (e.stacks > 1 and (" x" .. e.stacks) or "")
-            end
-            table.sort(names)
-            Print("  " .. table.concat(names, ", "))
-        end
-    elseif msg == "progress" or msg == "missing" then
-        local catalog = Adapter.Catalog()
-        local wl = Adapter.Wishlist()
-        local owned = Adapter.Owned()
-        if not wl then
-            Print("no wishlist set -- advisor only, nothing to track.")
-        else
-            local plan = Strategy.Compile(catalog, WishlistWithLockTargets(wl, catalog), Store.Settings())
-            local haveN, totalN, missing = WishlistProgress(plan, owned, catalog)
-            local pct = (totalN > 0) and math.floor(haveN / totalN * 100 + 0.5) or 0
-            Print(string.format("this run: |cff7fff7f%d/%d|r echoes (%d%%) -- %d still short",
-                haveN, totalN, pct, #missing))
-            if msg == "missing" and #missing > 0 then
-                Print("  " .. table.concat(missing, ", "))
-            end
-        end
-    elseif msg == "editor" then
-        if Nexus.WishlistEditor then
-            Nexus.WishlistEditor.Toggle()
-        else
-            Print("wishlist editor unavailable")
-        end
-    elseif msg == "syncdebug" then
-        if Nexus.LogViewer then
-            Nexus.LogViewer.Show("sync")
-        else
-            Print("log viewer unavailable")
-        end
-    elseif msg:sub(1, 6) == "probe " then
-        local target = msg:sub(7):match("^%s*(.-)%s*$")
-        if target ~= "" and Nexus.Sync and Nexus.Sync.SendStatusTo then
-            pcall(Nexus.Sync.SendStatusTo, target)
-        end
-    elseif msg == "nameplate" then
-        local NP = Nexus.Nameplate
-        if NP then
-            Print("Mouseover tooltip: active.")
-            Print("Nexus users seen on the sync mesh are tagged, with leaderboard data when available.")
-        else
-            Print("Nameplate module not loaded.")
-        end
-    elseif msg == "dps" then
-        -- Always-on: this just shows the current capture status
-        local D = Nexus.DpsCapture
-        if not D then Print("DPS capture module not loaded"); return end
-        if D.IsDetailsAvailable() then
-            Print("|cff4dff80DPS capture is active.|r")
-            Print("Fight the Lich King or hit a training dummy to record your best.")
-        else
-            Print("|cffff9040Details! damage meter is not installed.|r")
-            Print("Install Details! to enable DPS tracking on your builds.")
-        end
-        if Nexus.lastDpsNote then
-            Print("Last session: " .. Nexus.lastDpsNote)
-        end
-        local wl = Adapter.Wishlist()
-        if wl and D.GetEchoKey then
-            Print("Selected wishlist key: " .. tostring(D.GetEchoKey(wl.entries)))
-        end
-        if D.GetCurrentEchoKey then
-            Print("Current tracked Echo key: " .. tostring(D.GetCurrentEchoKey()))
-        end
-        Print("Open /nexus log and select DPS for the full capture trace.")
-    elseif msg == "sync" then
-        if Nexus.Sync then
-            local ok, err = Nexus.Sync.RequestSync()
-            if ok then
-                Print("asking other players for their builds -- results appear in /nexus builds")
-            else
-                Print(tostring(err))
-            end
-        else
-            Print("sync unavailable")
-        end
-    elseif msg == "builds" then
-        if Nexus.CommunityBuilds then
-            Nexus.CommunityBuilds.Toggle()
-        else
-            Print("Nexus Builds unavailable")
-        end
-    elseif msg == "leaderboard" or msg == "ranks" then
-        if Nexus.Leaderboard then
-            Nexus.Leaderboard.Toggle()
-        else
-            Print("Nexus Leaderboard unavailable")
-        end
-    elseif msg == "log" or msg == "logs" then
-        if Nexus.LogViewer then
-            Nexus.LogViewer.Toggle()
-        else
-            Print("log viewer unavailable")
-        end
-    elseif msg == "err" then
-        Print(tostring(Nexus.lastError))
-    elseif msg == "undemote" then
-        local st = Store.State()
-        st.flagDemotions = {}
-        Print("flag demotions cleared (they re-arm on fresh evidence)")
-    elseif msg == "overlay" then
-        if Nexus.WishlistOverlay then
-            Nexus.WishlistOverlay.Toggle()
-        else
-            Print("overlay unavailable")
-        end
-    elseif msg:match("^anchor") then
-        local arg = msg:match("^anchor%s+(%S+)")
-        if arg == "off" or arg == nil then
-            settings.anchorSpellId = nil
-            Print("anchor cleared")
-        else
-            settings.anchorSpellId = tonumber(arg)
-            Print("anchor set to " .. tostring(settings.anchorSpellId))
-        end
-    else
-        Print("v" .. Nexus.VERSION .. " -- " .. statusLine)
-        Print("|cffffd200Nexus v" .. Nexus.VERSION .. "|r  --  /nexus (or /nx, /wr)")
-        Print("|cffffd200Setup:|r  builds  |  leaderboard  |  editor  |  sync  |  overlay")
-        Print("|cffffd200Run:|r    auto  |  panel  |  status  |  wishlist  |  progress")
-        Print("|cffffd200Data:|r   log  |  dps  |  nameplate  |  logclear")
-        Print("|cffffd200Fixes:|r  flags  |  undemote  |  anchor <id|off>  |  restore  |  err")
+
+local function CommandAuto()
+    autoEnabled = not autoEnabled
+    RequestRecompute()
+    Print("auto " .. (autoEnabled and "ON" or "OFF"))
+    if Panel.SetAuto then Panel.SetAuto(autoEnabled) end
+end
+
+local function CommandRestore()
+    Print(Adapter.RestoreAutoAccept() and "client auto-accept restored"
+        or "nothing to restore")
+    RequestRecompute()
+end
+
+local function SortedKeys(source)
+    local keys = {}
+    for key in pairs(type(source) == "table" and source or {}) do
+        keys[#keys + 1] = key
     end
+    table.sort(keys, function(left, right)
+        return tostring(left) < tostring(right)
+    end)
+    return keys
+end
+
+local function CommandFlags()
+    local flags = EffectiveFlags()
+    for _, key in ipairs(SortedKeys(flags)) do
+        Print(key .. " = " .. tostring(flags[key]))
+    end
+    local demotions = Store.State().flagDemotions or {}
+    for _, key in ipairs(SortedKeys(demotions)) do
+        Print("demoted " .. key .. ": " .. tostring(demotions[key]))
+    end
+end
+
+local function PrintTargetStatus(wishlist)
+    if wishlist then
+        local source = wishlist.source == "designed" and "Echo Wishlist build"
+            or wishlist.source == "active" and "active loadout" or "wishlist"
+        Print(string.format("TARGET: |cff7fff7f'%s'|r (your %s) -- %d echoes",
+            wishlist.name ~= "" and wishlist.name or "(unnamed)",
+            source, #wishlist.entries))
+        return
+    end
+    local note = Adapter.WishlistNote and Adapter.WishlistNote()
+    Print("TARGET: none -- advisor only" .. (note and ("  (" .. note .. ")") or ""))
+end
+
+local function CountLoadoutKinds(slots)
+    local snapshots, designs = 0, 0
+    for _, slot in pairs(slots.bySlot) do
+        if type(slot.echoes) == "table" and #slot.echoes > 0 then
+            if slot.verified then snapshots = snapshots + 1 else designs = designs + 1 end
+        end
+    end
+    return snapshots, designs
+end
+
+local function PrintActiveLoadout(slots)
+    local active = slots.activeSlot
+    local slot = active ~= 0 and slots.bySlot[active] or nil
+    if not slot then Print("ACTIVE: no build activated right now."); return end
+    Print(string.format("ACTIVE slot %d '%s': %s, %d echoes", active,
+        slot.name ~= "" and slot.name or "?",
+        slot.verified and "saved snapshot (comparison baseline)"
+            or "designed build (wishlist target)", #slot.echoes))
+end
+
+local function PrintBestLoadout(slots, wishlist, catalog)
+    if not (wishlist and Ratchet and Ratchet.BestSlot) then return end
+    local plan = Strategy.Compile(catalog, wishlist, Store.Settings())
+    local best = Ratchet.BestSlot(slots, plan, catalog)
+    Print(best and ("Closest saved snapshot is slot " .. best .. ".")
+        or "No verified snapshot yet -- the first completed run can seed one.")
+end
+
+local function PrintLoadoutStatus(slots, wishlist, catalog)
+    if not slots then
+        Print("LOADOUTS: slot data not loaded yet (waiting on the server).")
+        return
+    end
+    local snapshots, designs = CountLoadoutKinds(slots)
+    PrintActiveLoadout(slots)
+    Print(string.format("READABLE: %d loadout snapshot(s), %d designed wishlist build(s)",
+        snapshots, designs))
+    PrintBestLoadout(slots, wishlist, catalog)
+end
+
+local function CommandStatus()
+    local catalog, wishlist = Adapter.Catalog(), Adapter.Wishlist()
+    local slots, owned = Adapter.Slots(), Adapter.Owned()
+    Print("v" .. Nexus.VERSION .. " -- level " .. Adapter.Level()
+        .. ", auto " .. (autoEnabled and "ON" or "OFF"))
+    PrintTargetStatus(wishlist)
+    PrintLoadoutStatus(slots, wishlist, catalog)
+    Print(string.format("OWNED this run: %d echoes (%s).", owned.distinct or 0,
+        owned.synced and "synced" or "not synced yet"))
+end
+
+local function PrintMissingWishlistHelp()
+    local note = Adapter.WishlistNote and Adapter.WishlistNote()
+    if note then Print(note); return end
+    Print("no wishlist detected -- running as advisor only.")
+    Print("Design one in the Echo Journal: 'New Wishlist' (the 'Echo Wishlist'")
+    Print("section), pick its echoes, and save it. The addon reads that build.")
+end
+
+local function WishlistSource(wishlist)
+    if wishlist.source == "designed" then return "your Echo Wishlist build" end
+    if wishlist.source == "active" then return "your active loadout" end
+    return "your wishlist"
+end
+
+local function WishlistNames(wishlist, catalog)
+    local names = {}
+    for _, echo in ipairs(wishlist.entries) do
+        local row = catalog and catalog.rows[echo.spellId]
+        local count = echo.stacks > 1 and (" x" .. echo.stacks) or ""
+        names[#names + 1] = (row and row.name or ("spell " .. echo.spellId)) .. count
+    end
+    table.sort(names)
+    return names
+end
+
+local function WishlistFamilyCount(wishlist)
+    local families = {}
+    for _, echo in ipairs(wishlist.entries) do families[echo.family] = true end
+    local count = 0
+    for _ in pairs(families) do count = count + 1 end
+    return count
+end
+
+local function CommandWishlist()
+    local wishlist = Adapter.Wishlist()
+    if not wishlist then PrintMissingWishlistHelp(); return end
+    Print(string.format("reading |cff7fff7f'%s'|r (from %s) -- %d echoes, %d families",
+        wishlist.name ~= "" and wishlist.name or "(unnamed)", WishlistSource(wishlist),
+        #wishlist.entries, WishlistFamilyCount(wishlist)))
+    Print("  " .. table.concat(WishlistNames(wishlist, Adapter.Catalog()), ", "))
+end
+
+local function CommandProgress(message)
+    local catalog, wishlist, owned = Adapter.Catalog(), Adapter.Wishlist(), Adapter.Owned()
+    if not wishlist then Print("no wishlist set -- advisor only, nothing to track."); return end
+    local plan = Strategy.Compile(catalog,
+        WishlistWithLockTargets(wishlist, catalog), Store.Settings())
+    local have, total, missing = WishlistProgress(plan, owned, catalog)
+    local percent = total > 0 and math.floor(have / total * 100 + 0.5) or 0
+    Print(string.format("this run: |cff7fff7f%d/%d|r echoes (%d%%) -- %d still short",
+        have, total, percent, #missing))
+    if message == "missing" and #missing > 0 then Print("  " .. table.concat(missing, ", ")) end
+end
+
+local function ToggleModule(module, unavailable)
+    if module then module.Toggle(); return end
+    Print(unavailable)
+end
+
+local function ShowLog(category, unavailable)
+    if Nexus.LogViewer then Nexus.LogViewer.Show(category); return end
+    Print(unavailable)
+end
+
+local function CommandProbe(message)
+    local target = message:sub(7):match("^%s*(.-)%s*$")
+    if target ~= "" and Nexus.Sync and Nexus.Sync.SendStatusTo then
+        pcall(Nexus.Sync.SendStatusTo, target)
+    end
+end
+
+local function CommandNameplate()
+    if Nexus.Nameplate then
+        Print("Mouseover tooltip: active.")
+        Print("Nexus users seen on the sync mesh are tagged, with leaderboard data when available.")
+        return
+    end
+    Print("Nameplate module not loaded.")
+end
+
+local function PrintDpsAvailability(capture)
+    if capture.IsDetailsAvailable() then
+        Print("|cff4dff80DPS capture is active.|r")
+        Print("Fight the Lich King or hit a training dummy to record your best.")
+        return
+    end
+    Print("|cffff9040Details! damage meter is not installed.|r")
+    Print("Install Details! to enable DPS tracking on your builds.")
+end
+
+local function CommandDps()
+    if Nexus.Emergency and Nexus.Emergency.dpsDisabled then
+        Print(Nexus.Emergency.reason); return
+    end
+    local capture = Nexus.DpsCapture
+    if not capture then Print("DPS capture module not loaded"); return end
+    PrintDpsAvailability(capture)
+    if Nexus.lastDpsNote then Print("Last session: " .. Nexus.lastDpsNote) end
+    local wishlist = Adapter.Wishlist()
+    if wishlist and capture.GetEchoKey then
+        Print("Selected wishlist key: " .. tostring(capture.GetEchoKey(wishlist.entries)))
+    end
+    if capture.GetCurrentEchoKey then
+        Print("Current tracked Echo key: " .. tostring(capture.GetCurrentEchoKey()))
+    end
+    Print("Open /nexus log and select DPS for the full capture trace.")
+end
+
+local function ValidSyncMode(mode)
+    return mode == "off" or mode == "manual" or mode == "automatic" or mode == "auto"
+end
+
+local function PrintSyncState()
+    if not (Nexus.Sync and Nexus.Sync.GetEffectiveState) then
+        Print("sync unavailable"); return
+    end
+    local state = Nexus.Sync.GetEffectiveState()
+    Print("Sync: " .. tostring(state.label)
+        .. (state.reason and (" (" .. tostring(state.reason) .. ")") or ""))
+end
+
+local function CommandSyncMode(message)
+    local requested = message:match("^syncmode%s+(%S+)$")
+    if requested and not ValidSyncMode(requested) then
+        Print("usage: /nexus syncmode <automatic|manual|off>"); return
+    end
+    if not requested then PrintSyncState(); return end
+    if not (Nexus.Sync and Nexus.Sync.SetMode) then Print("sync unavailable"); return end
+    local mode = Nexus.Sync.SetMode(requested)
+    Print("Sync mode set to " .. tostring(mode)
+        .. ". Sync runs only while resting and in a safe context.")
+end
+
+local function RetentionLimits()
+    return Nexus.DataRetention and Nexus.DataRetention.Limits
+        and Nexus.DataRetention.Limits(NexusDB) or nil
+end
+
+local function EnforceRetention(reason)
+    if Nexus.DataRetention and Nexus.DataRetention.Enforce then
+        pcall(Nexus.DataRetention.Enforce, NexusDB, reason)
+    end
+end
+
+local function SetRetentionMode(settings, mode)
+    settings.communityRetentionEnabled = mode == "on"
+    EnforceRetention("retention " .. mode)
+end
+
+local function CopyRetentionLimits(settings, limits)
+    settings.communityRetentionTopPerCategory = limits.topPerCategory
+    settings.communityRetentionMinPerClassPerCategory = limits.minPerClassPerCategory
+    settings.communityRetentionTopAverage = limits.topAverage
+    settings.communityRetentionMinAveragePerClass = limits.minAveragePerClass
+    settings.communityRetentionOtherRemoteBuilds = limits.otherRemoteBuilds
+    settings.communityRetentionMaxPerAuthor = limits.remotePerAuthor
+end
+
+local function SetRetentionNumbers(settings, values)
+    settings.communityRetentionEnabled = true
+    settings.communityRetentionTopPerCategory = tonumber(values[1])
+    settings.communityRetentionMinPerClassPerCategory = tonumber(values[2])
+    settings.communityRetentionTopAverage = tonumber(values[3])
+    settings.communityRetentionMinAveragePerClass = tonumber(values[4])
+    settings.communityRetentionOtherRemoteBuilds = tonumber(values[5])
+    settings.communityRetentionMaxPerAuthor = tonumber(values[6])
+    local limits = RetentionLimits()
+    if not limits then return end
+    CopyRetentionLimits(settings, limits)
+    EnforceRetention("settings changed")
+end
+
+local function RetentionNumbers(message)
+    return {message:match(
+        "^synclimits%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)$")}
+end
+
+local function PrintRetentionLimits(limits)
+    if not limits then Print("retention settings unavailable"); return end
+    Print(limits.enabled and "Ranked retention: ON (custom limits active)."
+        or "Ranked retention: OFF (relaxed hard safety ceilings remain).")
+    Print(string.format("DPS retention: %d overall + %d/class for Dummy and LK; %d overall + %d/class for Average.",
+        limits.topPerCategory, limits.minPerClassPerCategory,
+        limits.topAverage, limits.minAveragePerClass))
+    Print(string.format("Other community builds: %d total, %d per author.",
+        limits.otherRemoteBuilds, limits.remotePerAuthor))
+    Print("Set mode: /nexus synclimits <on|off>")
+    Print("Set custom limits (also enables): /nexus synclimits <raw-top> <raw-per-class> <avg-top> <avg-per-class> <other> <per-author>")
+end
+
+local function CommandSyncLimits(message)
+    local settings = Store.Settings()
+    local mode = message:match("^synclimits%s+(%S+)$")
+    local values = RetentionNumbers(message)
+    if mode == "on" or mode == "off" then
+        SetRetentionMode(settings, mode)
+    elseif values[1] then
+        SetRetentionNumbers(settings, values)
+    elseif message ~= "synclimits" then
+        Print("usage: /nexus synclimits <on|off> or <D/L top> <D/L class> <avg top> <avg class> <other> <author>")
+    end
+    PrintRetentionLimits(RetentionLimits())
+end
+
+local function CommandSync()
+    if not Nexus.Sync then Print("sync unavailable"); return end
+    local ok, err = Nexus.Sync.RequestSync()
+    if ok then
+        Print("asking other players for their builds -- results appear in /nexus builds")
+    else
+        Print(tostring(err))
+    end
+end
+
+local function CommandError()
+    local latest
+    if Nexus.Errors and type(Nexus.Errors.Latest) == "function" then
+        local ok, retained = pcall(Nexus.Errors.Latest)
+        if ok then latest = retained end
+    end
+    Print(latest and latest.message or ErrorText(Nexus.lastError))
+end
+
+local function CommandUndemote()
+    Store.State().flagDemotions = {}
+    RequestRecompute()
+    Print("flag demotions cleared (they re-arm on fresh evidence)")
+end
+
+local function CommandAnchor(message)
+    local settings = Store.Settings()
+    local value = message:match("^anchor%s+(%S+)")
+    if value == "off" or value == nil then
+        settings.anchorSpellId = nil
+        Print("anchor cleared")
+    else
+        settings.anchorSpellId = tonumber(value)
+        Print("anchor set to " .. tostring(settings.anchorSpellId))
+    end
+    RequestRecompute()
+end
+
+local function CommandPerformanceReset()
+    local performance = Nexus and Nexus.Performance
+    if not (performance and type(performance.Reset) == "function") then
+        Print("performance diagnostics unavailable")
+        return false
+    end
+    local ok, cleared = pcall(performance.Reset)
+    if not ok or cleared == false then
+        Print("performance aggregates could not be reset")
+        return false
+    end
+    Print("performance aggregates reset")
+    return true
+end
+
+local function CommandHelp()
+    RequestRecompute()
+    Print("v" .. Nexus.VERSION .. " -- " .. statusLine)
+    Print("|cffffd200Nexus v" .. Nexus.VERSION .. "|r  --  /nexus (or /nx, /wr)")
+    Print("|cffffd200Setup:|r  builds  |  leaderboard  |  editor  |  sync  |  overlay")
+    Print("|cffffd200Sync:|r   syncmode <automatic|manual|off>  |  sync")
+    Print("|cffffd200Limits:|r synclimits <on|off>  |  synclimits <D/L top> <D/L class> <avg top> <avg class> <other> <author>")
+    Print("|cffffd200Run:|r    auto  |  panel  |  status  |  wishlist  |  progress")
+    Print("|cffffd200Data:|r   log  |  perf  |  perf reset  |  dps  |  nameplate  |  logclear")
+    Print("|cffffd200Fixes:|r  flags  |  undemote  |  anchor <id|off>  |  restore  |  err")
+end
+
+local CommandRouter = assert(Nexus.CommandRouter, "CommandRouter required").New({
+    exact={
+        auto=CommandAuto,
+        panel=function() Panel.Toggle() end,
+        restore=CommandRestore,
+        flags=CommandFlags,
+        status=CommandStatus,
+        wishlist=CommandWishlist,
+        progress=CommandProgress,
+        editor=function() ToggleModule(Nexus.WishlistEditor, "wishlist editor unavailable") end,
+        syncdebug=function() ShowLog("sync", "log viewer unavailable") end,
+        nameplate=CommandNameplate,
+        dps=CommandDps,
+        sync=CommandSync,
+        builds=function() ToggleModule(Nexus.CommunityBuilds, "Nexus Builds unavailable") end,
+        leaderboard=function() ToggleModule(Nexus.Leaderboard, "Nexus Leaderboard unavailable") end,
+        errors=function() ShowLog("errors", "log viewer unavailable") end,
+        performance=function() ShowLog("perf", "performance diagnostics unavailable") end,
+        ["performance-reset"]=CommandPerformanceReset,
+        logs=function() ToggleModule(Nexus.LogViewer, "log viewer unavailable") end,
+        err=CommandError,
+        undemote=CommandUndemote,
+        overlay=function() ToggleModule(Nexus.WishlistOverlay, "overlay unavailable") end,
+    },
+    aliases={
+        check="wishlist",missing="progress",ranks="leaderboard",
+        ["log errors"]="errors",perf="performance",log="logs",
+        ["perf reset"]="performance-reset",perfreset="performance-reset",
+    },
+    patterns={
+        {pattern="^probe%s+",handler=CommandProbe},
+        {pattern="^syncmode",handler=CommandSyncMode},
+        {pattern="^synclimits",handler=CommandSyncLimits},
+        {pattern="^anchor",handler=CommandAnchor},
+    },
+    fallback=CommandHelp,
+})
+
+SlashCmdList["NEXUS"] = function(message)
+    if not initialized then Print("not initialized yet"); return end
+    CommandRouter.Dispatch(message)
 end

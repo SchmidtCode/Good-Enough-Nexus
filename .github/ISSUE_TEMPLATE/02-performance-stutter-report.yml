@@ -1,5 +1,5 @@
 name: Performance / Stutter Report
-description: Report Better Nexus public prerelease frame cost, hitches, stuttering, or long-session performance with required diagnostics.
+description: Report Good Enough Nexus frame cost, hitches, stuttering, or long-session performance with required diagnostics.
 title: "[Performance]: "
 labels:
   - performance
@@ -119,7 +119,7 @@ body:
     attributes:
       label: Reporting acknowledgements
       options:
-        - label: I understand that I am testing an unfinished Better Nexus prerelease.
+        - label: I understand that Good Enough Nexus is a community-maintained compatibility release.
           required: true
         - label: I searched existing issues and did not find a duplicate report.
           required: true

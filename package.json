@@ -1,0 +1,10 @@
+{
+  "name": "good-enough-nexus-development",
+  "private": true,
+  "scripts": {
+    "crap": "node tools/crap-report.js"
+  },
+  "devDependencies": {
+    "luaparse": "0.3.1"
+  }
+}

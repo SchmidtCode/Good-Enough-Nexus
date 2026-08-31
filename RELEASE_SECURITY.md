@@ -4,32 +4,33 @@
 
 Release authority remains a human and repository control function; AI assistance does not replace review, merge, or branch protections.
 
-## Required local controls
+## Required controls
 
-Checked-in policy files should be validated together with GitHub branch protections and review controls:
+Checked-in policy files are validated together with GitHub branch protections and review controls:
 
 - `.github/CODEOWNERS` for policy/release-critical ownership;
-- `tools/Test-ReleasePolicy.ps1` for archive and source policy checks;
+- `.github/workflows/validation.yml` for the complete Lua and Node suite;
+- `.github/workflows/community-release.yml` for tag-bound draft packaging;
 - branch and PR review rules configured in GitHub settings.
 
-## Required release archive contents
+## Required release artifacts
 
-Release archives must include, in the top-level `Nexus` folder:
+Each tagged community release must produce:
 
-- `Nexus.toc`
-- `LICENSE.md`
-- `AI_POLICY.md`
-- `UPSTREAM.md`
+- `Nexus-vX.Y.Z.zip`
+- `Nexus-vX.Y.Z.zip.sha256`
+- `Nexus-vX.Y.Z-build.json`
 
-`RELEASE_SECURITY.md`, `SECURITY.md`, and `README.md` are required in source but are not substitutes for the three mandatory archive files.
+The ZIP must contain a top-level `Nexus` folder with `Nexus.toc` and only the runtime files selected by the release packager. Tests, tools, repository metadata, dependency caches, and local data must not be included.
 
 ## Offline checks
 
 Before release:
 
 1. verify the source commit is reviewed and clean;
-2. run `tools/Test-ReleasePolicy.ps1 -Archive <artifact>`;
-3. record commit, artifact SHA-256, and validation outcome in release notes.
+2. run the full Lua and Node suites, static Lua parsing, packaging tests, and `git diff --check`;
+3. verify the packaged archive, checksum, build manifest, attestation, tag target, and runtime version identity;
+4. require explicit human approval before publishing the draft.
 
 ## Incident response
 
