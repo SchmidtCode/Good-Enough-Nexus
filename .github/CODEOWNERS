@@ -1,0 +1,13 @@
+# SchmidtCode is the human authority for policy and release-critical files.
+* @SchmidtCode
+
+# Keep policy and release-controlled surfaces under the same human review.
+/.github/ @SchmidtCode
+/LICENSE.md @SchmidtCode
+/AI_POLICY.md @SchmidtCode
+/RELEASE_SECURITY.md @SchmidtCode
+/SECURITY.md @SchmidtCode
+/UPSTREAM.md @SchmidtCode
+/Nexus.toc @SchmidtCode
+/data/Release.lua @SchmidtCode
+/ui/Changelog.lua @SchmidtCode

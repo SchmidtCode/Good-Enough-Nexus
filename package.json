@@ -1,5 +1,5 @@
 {
-  "name": "better-nexus-development",
+  "name": "good-enough-nexus-development",
   "private": true,
   "scripts": {
     "crap": "node tools/crap-report.js"

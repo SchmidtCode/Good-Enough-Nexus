@@ -1,0 +1,127 @@
+name: Performance / Stutter Report
+description: Report Good Enough Nexus frame cost, hitches, stuttering, or long-session performance with required diagnostics.
+title: "[Performance]: "
+labels:
+  - performance
+  - prerelease
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Performance reports require StutterAlert evidence and `/nexus perf` output. Capture both near the reported event before submitting this form.
+
+  - type: input
+    id: nexus-build
+    attributes:
+      label: Exact Nexus build
+      description: Copy the exact build shown by `/nexus status` or the release filename. Do not enter only "latest."
+      placeholder: "Example: test.18-d9b48c5"
+    validations:
+      required: true
+
+  - type: input
+    id: activity-location
+    attributes:
+      label: Activity and location
+      description: State what you were doing and where the hitch or sustained cost occurred.
+      placeholder: "Example: two-player Sync while standing in Dalaran"
+    validations:
+      required: true
+
+  - type: input
+    id: session-duration
+    attributes:
+      label: Session duration
+      description: How long had the client been running when the problem occurred?
+      placeholder: "Example: 2 hours 35 minutes"
+    validations:
+      required: true
+
+  - type: textarea
+    id: stutteralert-output
+    attributes:
+      label: StutterAlert output
+      description: Paste the relevant StutterAlert trace and `/sa report` output, including the event time and attribution.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: nexus-perf-output
+    attributes:
+      label: /nexus perf output
+      description: Paste the complete `/nexus perf` output captured near the reported event.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: nexus-ms-frame
+    attributes:
+      label: Nexus ms/frame
+      description: Enter the Nexus steady frame cost reported by your diagnostics.
+      placeholder: "Example: 0.80 ms/frame"
+    validations:
+      required: true
+
+  - type: input
+    id: all-addon-ms-frame
+    attributes:
+      label: All-addon ms/frame
+      description: Enter the combined addon steady frame cost reported by your diagnostics.
+      placeholder: "Example: 1.75 ms/frame"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: hitch-attribution
+    attributes:
+      label: Hitch attribution
+      description: Choose the attribution shown by StutterAlert for the reported event.
+      options:
+        - Nexus or addon-attributed
+        - Game-side attributed
+        - Mixed or unclear
+    validations:
+      required: true
+
+  - type: textarea
+    id: other-major-addons
+    attributes:
+      label: Other major addons
+      description: List other enabled addons with meaningful frame cost or overlapping behavior. Enter "None" if there are none.
+      placeholder: "Example: Details!, WeakAuras, or None"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction-details
+    attributes:
+      label: Reproduction details
+      description: Explain the exact action sequence, frequency, and whether `/reload`, relogging, zoning, or disabling Nexus changes the result.
+      placeholder: |
+        1. Start StutterAlert capture ...
+        2. Perform ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed-impact
+    attributes:
+      label: Observed impact
+      description: Describe the visible hitch, stutter pattern, or sustained performance change and its frequency.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Reporting acknowledgements
+      options:
+        - label: I understand that Good Enough Nexus is a community-maintained compatibility release.
+          required: true
+        - label: I searched existing issues and did not find a duplicate report.
+          required: true
+        - label: I captured both StutterAlert evidence and `/nexus perf` output for this report.
+          required: true

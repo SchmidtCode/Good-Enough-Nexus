@@ -1,0 +1,54 @@
+name: Repository validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-suite:
+    name: Full Lua and Node suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install LuaJIT
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes luajit
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Parse production Lua
+        run: node tools/crap-report.js --static --json
+
+      - name: Run Lua tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r test_file; do
+            luajit "$test_file"
+          done < <(find tests -maxdepth 1 -type f -name 'run_*.lua' -print | sort)
+
+      - name: Run Node tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r test_file; do
+            node "$test_file"
+          done < <(find tests -maxdepth 1 -type f -name 'run-*.js' -print | sort)
+
+      - name: Verify patch hygiene and clean tree
+        shell: bash
+        run: |
+          git diff --check
+          test -z "$(git status --porcelain)"

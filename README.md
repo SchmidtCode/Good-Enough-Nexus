@@ -1,6 +1,6 @@
-# Better Nexus
+# Good Enough Nexus
 
-Better Nexus is a community-maintained continuation of the deprecated
+Good Enough Nexus is a public, community-maintained continuation of the deprecated
 Nexus addon for Project Ebonhold.
 
 The repository begins from the installed Nexus 1.19.3 player build. The in-game
@@ -11,8 +11,8 @@ compatibility with existing installations and user data.
 
 - Repository visibility: public.
 - Official stable base: Nexus 1.19.5.
-- Interim community release: Nexus 1.96.2 from `good-enough-nexus`.
-- Intended handoff: the official Better-Nexus 1.20 release from Visceral.
+- Current community compatibility line: Nexus 1.96.x.
+- Intended handoff: the official Better Nexus 1.20 release from Viscerals.
 - Client target: World of Warcraft 3.3.5a / Project Ebonhold.
 - Language target: Lua 5.1.
 - Upstream author attribution is preserved in `Nexus.toc` and
@@ -40,8 +40,19 @@ freezes one before taking the other when Freeze is available.
 3. Confirm `Interface\AddOns\Nexus\Nexus.toc` exists.
 4. Start the game or use `/reload`.
 
-Do not rename the installed addon folder to `Better-Nexus`; the repository name
-is different from the runtime addon identity by design.
+Do not rename the installed addon folder to `Good-Enough-Nexus`; the repository
+name is different from the runtime addon identity by design.
+
+Back up `NexusDB` and `WishlistRealizerDB` before installing a new build. Good
+Enough Nexus preserves compatibility with these SavedVariables so existing user
+data survives upgrades and rollback testing.
+
+## Reporting problems
+
+Use the [structured issue
+forms](https://github.com/SchmidtCode/Good-Enough-Nexus/issues/new/choose) to
+report a bug, performance or stutter problem, or multiplayer Sync problem.
+Include the exact Nexus version and the diagnostics requested by the form.
 
 ## Commands
 
