@@ -9,16 +9,15 @@ the full Nexus 1.20 refactor. This is a temporary, community-maintained bridge,
 not a replacement for the official 1.20 work. Move back to the official release
 when 1.20 is ready.
 
-## Before installing
+## Installation
 
-Disable **Project Ebonhold Enhanced**. It is incompatible with current Nexus
-builds and can interfere with Saved Builds, wishlist creation, and automation.
-
-1. Remove the existing `Interface\AddOns\Nexus` folder.
-2. Download and extract the release ZIP.
-3. Confirm the final path is `Interface\AddOns\Nexus\Nexus.toc`.
-4. Start the game or use `/reload`.
-5. Left-click the Nexus minimap button to show the HUD.
+1. Disable **Project Ebonhold Enhanced**. It conflicts with Nexus Saved Builds,
+   wishlist creation, and automation.
+2. Remove the existing `Interface\AddOns\Nexus` folder.
+3. Download and extract the release ZIP.
+4. Confirm the final path is `Interface\AddOns\Nexus\Nexus.toc`.
+5. Start the game or use `/reload`.
+6. Left-click the Nexus minimap button to show the HUD.
 
 Keep the addon folder named `Nexus`.
 
