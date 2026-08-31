@@ -27,7 +27,7 @@ for _, invalid in ipairs({"", "v", "01.2.3", "1..2", "1.2.3-", "1.2.3+",
     assert(Version.Parse(invalid) == nil, "malformed version accepted: " .. tostring(invalid))
 end
 
-assert(Nexus.Release.version == "1.96.3"
+assert(Nexus.Release.version == "1.96.4"
     and Nexus.Release.baseVersion == "1.19.5"
     and Nexus.Release.published == true
     and Nexus.Release.emergencyCommunityOff == false,
@@ -59,7 +59,7 @@ assert(NexusDB.updateNotice == nil and #notices == 0,
 assert(not Updates.Observe("1.19.4", "Older") and not Updates.Observe("1.19.5", "Equal"),
     "older/equal version created an update")
 assert(not Updates.Observe("1.96.1", "OlderCommunity")
-    and not Updates.Observe("1.96.3", "SameCommunity")
+    and not Updates.Observe("1.96.4", "SameCommunity")
     and not Updates.Observe("1.96.9", "NewerCommunity"),
     "interim community version created an official update notice")
 NexusDB.updateNotice={version="1.20.2",observedAt=123,source="RefactorPeer"}

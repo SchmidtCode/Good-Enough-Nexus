@@ -1673,18 +1673,11 @@ end
 
 -- FreezePerk emits no success signal of its own [mirrors BanishPerk/
 -- RequestReroll]; release comes from the pendingFreezeIndex latch via
--- WatchLatches/ResolveInFlight like every other mutator. Never at level
--- 80 (no next board for a freeze to carry into). Never a blocked card.
+-- WatchLatches/ResolveInFlight like every other mutator. Never a blocked card.
 function A.Freeze(index0)
     if A.DIAGNOSTIC_PASSIVE then return false, "internal.6 passive diagnostic: write blocked" end
     if A.InFlight() then return false, "in flight" end
     if deadLatch.freeze then return false, "freeze dead this session" end
-    if (UnitLevel("player") or 0) >= 80 then
-        local horizon = A.Horizon()
-        if type(horizon) ~= "number" or horizon <= 1 then
-            return false, "no trustworthy next board"
-        end
-    end
     local board = A.Board()
     if not board then return false, "no board" end
     local card = board.cards[index0 + 1]

@@ -4,8 +4,8 @@ Nexus = Nexus or {}
 local M = {}
 Nexus.Changelog = M
 
-local VERSION = "1.96.3"
-local RELEASE_KEY = "1.96.3"
+local VERSION = "1.96.4"
+local RELEASE_KEY = "1.96.4"
 local frame
 local shownThisSession = false
 
@@ -43,27 +43,27 @@ local function Create()
 
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -20)
-    title:SetText("Nexus 1.96.3 Recovery Update")
+    title:SetText("Nexus 1.96.4 Echo Update")
 
     local body = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     body:SetPoint("TOPLEFT", 28, -52)
     body:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 52)
     body:SetJustifyH("LEFT")
     body:SetJustifyV("TOP")
-    body:SetText([[|cffffd200Reload safety|r
+    body:SetText([[|cffffd200Random Echo boards|r
 
-- Keeps synced community data within the old client's SavedVariables limits.
-- Prevents oversized Nexus data from building up again after recovery.
+- Treats every visible Echo slot as random except banished choices.
+- Saved Builds compare progress but no longer predict future offerings.
 
-|cffffd200Update notices|r
+|cffffd200Wishlist Freeze|r
 
-- Ignores peer versions from Valentine's separate Nexus 1.20 refactor line.
-- Keeps Good-Enough-Nexus on the 1.96 compatibility release line.
+- When two usable wishlist Echoes appear, freezes one before taking the other.
+- Keeps both random opportunities when Freeze is available.
 
-|cffffd200Echoes to shed|r
+|cffffd200Level 80 recovery|r
 
-- Removes replaced Common, Uncommon, Rare, and Epic copies after ownership catches up.
-- Keeps only the current loadout's removable Echoes in the list.]])
+- Falls back to the verified active server slot when the live loadout mirror is temporarily empty.
+- Keeps the selected build as a comparison target, not a prior-run guarantee.]])
 
     local close = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     close:SetSize(92, 24)
