@@ -6,7 +6,7 @@
 -- any closure that reads it.
 
 Nexus = Nexus or {}
-Nexus.VERSION = (Nexus.Release and Nexus.Release.version) or "1.96.3"
+Nexus.VERSION = (Nexus.Release and Nexus.Release.version) or "1.96.4"
 
 local Model, Policy, Ratchet, Strategy, Store, Adapter
 local Readout, Panel, JournalTab, DefaultProfile
@@ -1435,9 +1435,7 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
         activeEchoes = activeRow and activeRow.echoes or {},
         queue = queue, flags = flags, level = level, catalog = catalog,
         horizon = horizon,
-        canFreeze = (level < 80
-            or (type(horizon) == "number" and horizon > 1))
-            and (frozeThisBoard ~= board.signature),
+        canFreeze = frozeThisBoard ~= board.signature,
         support = Model.Support(catalog, owned, level, disabledLevers, plan, DefaultProfile.params),
         params = DefaultProfile.params,
         allowBanish = settings.autoBanish ~= false,

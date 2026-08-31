@@ -3,7 +3,7 @@ name: Draft Nexus community release
 on:
   push:
     tags:
-      - "v1.96.3"
+      - "v1.96.4"
 
 permissions:
   contents: write
@@ -21,15 +21,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Require the good-enough-nexus branch tip
+      - name: Require the main branch tip
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --no-tags origin "+refs/heads/good-enough-nexus:refs/remotes/origin/good-enough-nexus"
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
           tagged_commit="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
-          branch_commit="$(git rev-parse refs/remotes/origin/good-enough-nexus)"
+          branch_commit="$(git rev-parse refs/remotes/origin/main)"
           if [[ "$tagged_commit" != "$branch_commit" ]]; then
-            echo "Tag ${GITHUB_REF_NAME} points to ${tagged_commit}, not good-enough-nexus tip ${branch_commit}." >&2
+            echo "Tag ${GITHUB_REF_NAME} points to ${tagged_commit}, not main tip ${branch_commit}." >&2
             exit 1
           fi
           echo "RELEASE_COMMIT=${tagged_commit}" >> "$GITHUB_ENV"

@@ -1,4 +1,4 @@
-# Unreleased
+# Nexus 1.96.4 Echo Update
 
 - Treats every Echo board slot as random; Saved Builds no longer predict future offerings.
 - Freezes one of two simultaneously offered wishlist Echoes so both random opportunities can be kept.

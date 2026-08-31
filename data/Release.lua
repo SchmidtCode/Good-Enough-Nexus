@@ -4,7 +4,7 @@
 Nexus = Nexus or {}
 
 Nexus.Release = {
-    version = "1.96.3",
+    version = "1.96.4",
     baseVersion = "1.19.5",
     published = true,
     emergencyCommunityOff = false,

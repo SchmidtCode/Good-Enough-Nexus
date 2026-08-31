@@ -477,6 +477,11 @@ end
 
 local function FinalSelectionAction(ctx)
     local frozen, visible = FindFinalOptions(ctx)
+    if frozen and visible then
+        return Endgame(TakeAction(
+            ctx.cards, ctx.annotations, ctx.deltas, visible,
+            "Final selection: take visible wishlist Echo while another remains frozen"))
+    end
     if BetterFinalVisible(ctx, visible, frozen) then
         local reason = frozen
             and "Final selection: better remaining wishlist Echo replaces "
@@ -537,6 +542,16 @@ local function FreezeRandomPair(ctx, freezeIndex, takeIndex)
         annotations = ctx.annotations,
         deltas = ctx.deltas,
     }
+end
+
+local function FinalRandomPairAction(ctx)
+    if not ctx.finalSelection then return nil end
+    local frozen, visible, alternate = FindNormalWanted(ctx)
+    if not frozen and visible and alternate
+        and FreezeAvailable(ctx, visible) then
+        return Endgame(FreezeRandomPair(ctx, visible, alternate))
+    end
+    return nil
 end
 
 local function BetterConvergenceCandidate(ctx, candidate, incumbent)
@@ -665,7 +680,7 @@ local function ChooseAction(ctx)
     local action = EarlyBanish(ctx)
     if action then return action end
     if ctx.finalSelection then
-        action = FinalSelectionAction(ctx)
+        action = FinalRandomPairAction(ctx) or FinalSelectionAction(ctx)
         if action then return action end
     end
     return NormalPhase(ctx)

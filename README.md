@@ -111,8 +111,8 @@ verification must still be reported separately.
 
 ## Community release packaging
 
-The `v1.96.3` tag workflow accepts only a tag on the exact remote tip of
-`good-enough-nexus`. It runs the offline release checks, builds a `Nexus` ZIP
+The `v1.96.4` tag workflow accepts only a tag on the exact remote tip of
+`main`. It runs the offline release checks, builds a `Nexus` ZIP
 from the tagged commit, writes a SHA-256 checksum and commit manifest, records a
 GitHub build-provenance attestation, and creates a draft GitHub release. A human
 must inspect and publish the draft.

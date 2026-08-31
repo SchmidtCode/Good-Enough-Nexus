@@ -187,11 +187,25 @@ end
 
 do
     local result = decide({card(200), card(221), card(400)}, {
-        level=80, horizon=1, canFreeze=false,
+        level=80, horizon=1, canFreeze=true,
         charges={freeze=1,banish=0,reroll=0,trustworthy=true},
     })
-    expect(result.type == "take" and result.index == 1 and result.endgame,
-        "the final selection must take the best wishlist Echo without Freeze")
+    expect(result.type == "freeze" and result.index == 1 and result.endgame,
+        "the final selection must Freeze one of two visible wishlist Echoes")
+    expect(result.steps and result.steps[2]
+        and result.steps[2].spellId == 221,
+        "the final Freeze must preserve the second visible wishlist Echo")
+end
+
+do
+    local result = decide({
+        card(200, {isFrozen=true}), card(221), card(400),
+    }, {
+        level=80, horizon=1, canFreeze=false,
+        charges={freeze=0,banish=0,reroll=0,trustworthy=true},
+    })
+    expect(result.type == "take" and result.index == 2 and result.endgame,
+        "the final selection must take the visible target while another remains frozen")
 end
 
 do
