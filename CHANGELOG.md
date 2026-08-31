@@ -1,3 +1,9 @@
+# Unreleased
+
+- Treats every Echo board slot as random; Saved Builds no longer predict future offerings.
+- Freezes one of two simultaneously offered wishlist Echoes so both random opportunities can be kept.
+- Falls back to the verified active server slot when the level-80 live loadout mirror is temporarily empty.
+
 # Nexus 1.96.3 Recovery Update
 
 - Keeps ordinary peer-posted community builds at the 1.96.2 capacity while bounding disposable automatic DPS pages.

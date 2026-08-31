@@ -1,6 +1,6 @@
 -- Nexus offline harness: stubs the WoW 3.3.5 API + ProjectEbonhold
 -- with the AUDITED client semantics (latches with no timeout, silent banish
--- refusal on guaranteed cards, latch-less ToggleTomeEcho with 530-delayed
+-- random boards, latch-less ToggleTomeEcho with 530-delayed
 -- mirror, in-place SS-103 board mutation via UpdateSinglePerk, live tables
 -- returned by reference, nil-until-540 slots, run-data table identity
 -- replacement) and boots the REAL addon files under LuaJIT.
@@ -421,8 +421,6 @@ function Service.BanishPerk(idx)
     end
     if Perks.pendingBanishIndex then return false end
     if not idx or idx < 0 or idx > 2 then return false end
-    local c = Perks.currentChoice and Perks.currentChoice[idx + 1]
-    if c and c.isGuaranteed then return false end     -- silent refusal
     local rd = H.runDataTable or {}
     if (rd.remainingBanishes or 0) <= 0 then return false end
     Perks.pendingBanishIndex = idx
@@ -442,8 +440,6 @@ end
 
 function Service.FreezePerk(idx)
     if Perks.pendingFreezeIndex then return false end
-    local c = Perks.currentChoice and Perks.currentChoice[idx + 1]
-    if c and c.isGuaranteed then return false end
     Perks.pendingFreezeIndex = idx
     H.freezeCalls[#H.freezeCalls + 1] = idx
     return true

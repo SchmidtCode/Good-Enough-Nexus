@@ -18,15 +18,6 @@ DefaultProfile.params = {
     qualityMiss = -20,        -- below-wished-quality copy of a single-stack
                               -- multi-quality family: locks the family at
                               -- the wrong quality, worse than plain filler
-    deferFactor = 0.35,       -- discount on a free-slot wished card whose
-                              -- guarantee is still pending (it comes back;
-                              -- a one-shot pick shouldn't lose to it)
-    rerollCost = 8,           -- charge price inside the reroll EV test
-    rerollHoldThreshold = 25, -- guaranteed delta below this frees a reroll
-    rerollPacingBase = 6,     -- cost scales up once remaining rerolls drop
-                              -- below this (the last few are precious)
-    deferRerollFloor = 4,     -- min remaining rerolls before one may be
-                              -- spent dodging a merely-deferred pick
 }
 
 DefaultProfile.defaultSettings = {
@@ -74,11 +65,8 @@ DefaultProfile.defaultSettings = {
     leverOptOut = {},    -- [leverId (requiredSpell)] = true
 }
 
-DefaultProfile.defaultFlags = {
-    -- true: user-confirmed from live play 2026-07-23. Runtime-demotable:
-    -- a disabled-lever member observed with isGuaranteed demotes it for
-    -- the session (recorded in Store state.flagDemotions).
-    DISABLE_SUPPRESSES_GUARANTEE = true,
-    -- nil = conservative (reroll-to-hold suppressed) until M3 measures.
-    REROLL_HOLDS_GUARANTEED = nil,
-}
+-- Kept as a table for profile compatibility. Current Ebonhold has no
+-- guaranteed-slot behavior to feature-detect or demote. Existing persisted
+-- keys remain harmless compatibility data; current defaults intentionally
+-- declare no board guarantees.
+DefaultProfile.defaultFlags = {}

@@ -60,4 +60,12 @@ assert(progress.owned == 2 and progress.total == 2 and #progress.missing == 0,
 assert(#(progress.shed or {}) == 0,
     "TO SHED used stale GetGrantedPerks instead of current level-80 Echoes")
 
+-- The live mirror can briefly be an empty table while a saved loadout is
+-- activating. That is unavailable data, not proof that the character has no
+-- Echoes; use the verified active server slot during that window.
+H.wishlist = {}
+local fallback = Nexus.GameAdapter.CurrentOwned()
+assert(fallback.source == "active-server-slot" and fallback.total == 2,
+    "empty active-loadout mirror did not fall back to the verified server slot")
+
 print("level-80 HUD compares current active Echoes against the selected build -- OK")

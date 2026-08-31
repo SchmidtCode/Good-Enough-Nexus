@@ -1,15 +1,7 @@
 -- Nexus: logic/Relay.lua
--- Pure two-slot snapshot relay policy.
---
--- Confirmed server contract (Project Ebonhold Player Guide, 2026-07-28):
---   * only an active Snapshot supplies guaranteed Echoes;
---   * an active Snapshot cannot be overwritten;
---   * Designed Builds do not supply guarantees.
---
--- Therefore convergence must alternate between two numbered Snapshot slots:
--- run from active A, save an improvement into inactive B, arm B at level 1,
--- then use inactive A for the next improvement. This module only chooses safe
--- relay actions; core/Main.lua owns server IO and confirmation.
+-- Historical two-slot snapshot relay policy retained for offline compatibility
+-- tests. It is not listed in Nexus.toc and current runtime code does not load it:
+-- current Ebonhold Saved Builds do not guarantee future Echo offerings.
 
 Nexus = Nexus or {}
 local Relay = {}

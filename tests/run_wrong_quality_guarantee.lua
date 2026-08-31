@@ -1,5 +1,5 @@
--- Regression: a guarantee from a wished family is still unusable when the
--- exact offered quality is below the wishlist target.
+-- Regression: a random offering from a wished family is still unusable when
+-- its exact quality is below the wishlist target.
 dofile("logic/Model.lua")
 dofile("logic/Policy.lua")
 
@@ -35,20 +35,18 @@ local plan = {
     },
 }
 
-local function card(spellId, guaranteed)
+local function card(spellId)
     return {
         spellId=spellId,
         family=catalog.familyOf[spellId],
         quality=rows[spellId].quality,
-        isGuaranteed=guaranteed or nil,
     }
 end
 
 local function decide(charges)
     return Nexus.Policy.Decide({
         board={
-            cards={ card(400), card(210, true), card(401) },
-            guaranteedIndex=2,
+            cards={ card(400), card(210), card(401) },
         },
         owned={ synced=true, bySpell={}, byFamily={} },
         charges=charges,
@@ -64,7 +62,7 @@ local forced = decide({
 })
 assert(forced.type == "take" and forced.index ~= 2
         and forced.spellId ~= 210,
-    "below-target-quality guaranteed Echo must be rejected")
+    "below-target-quality random Echo must be rejected")
 
 local searched = decide({
     freeze=0, banish=1, reroll=0, trustworthy=true,
@@ -89,8 +87,7 @@ local tieredPlan = {
 }
 local tiered = Nexus.Policy.Decide({
     board={
-        cards={ card(400), card(210, true), card(401) },
-        guaranteedIndex=2,
+        cards={ card(400), card(210), card(401) },
     },
     owned={ synced=true, bySpell={}, byFamily={} },
     charges={ freeze=0, banish=0, reroll=0, trustworthy=true },
@@ -100,7 +97,7 @@ local tiered = Nexus.Policy.Decide({
     level=20,
 })
 assert(tiered.type == "take" and tiered.index == 2,
-    "an explicitly requested lower quality tier must remain a usable guarantee")
+    "an explicitly requested lower quality tier must remain usable")
 
 local tierOwned = {
     synced=true,
@@ -109,8 +106,7 @@ local tierOwned = {
 }
 local surplusLowTier = Nexus.Policy.Decide({
     board={
-        cards={ card(400), card(210, true), card(401) },
-        guaranteedIndex=2,
+        cards={ card(400), card(210), card(401) },
     },
     owned=tierOwned,
     charges={ freeze=0, banish=0, reroll=0, trustworthy=true },
@@ -124,8 +120,7 @@ assert(surplusLowTier.type == "take" and surplusLowTier.index ~= 2,
 
 local neededHighTier = Nexus.Policy.Decide({
     board={
-        cards={ card(400), card(211, true), card(401) },
-        guaranteedIndex=2,
+        cards={ card(400), card(211), card(401) },
     },
     owned=tierOwned,
     charges={ freeze=0, banish=0, reroll=0, trustworthy=true },
@@ -135,6 +130,6 @@ local neededHighTier = Nexus.Policy.Decide({
     level=20,
 })
 assert(neededHighTier.type == "take" and neededHighTier.index == 2,
-    "the remaining exact quality tier must stay guarantee-eligible")
+    "the remaining exact quality tier must stay eligible")
 
-print("wrong-quality guarantee regression OK")
+print("wrong-quality random-offer regression OK")

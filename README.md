@@ -23,6 +23,11 @@ compatibility with existing installations and user data.
 Nexus provides Echo build automation, saved-build wishlists, community builds,
 DPS records, and Snapshot convergence for Project Ebonhold.
 
+Current Ebonhold Echo boards are fully random except for banished choices. Saved
+Builds are comparison targets only; they do not guarantee prior-run Echoes or a
+particular board slot. When two usable wishlist Echoes appear together, Nexus
+freezes one before taking the other when Freeze is available.
+
 ## Requirements
 
 - Project Ebonhold on World of Warcraft 3.3.5a.

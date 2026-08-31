@@ -1,8 +1,7 @@
 -- Nexus: core/Main.lua
 -- Bootstrap + the decision loop. Wires adapter reads -> pure logic ->
 -- adapter actions. Owns the OnUpdate cadence, the lifecycle FSM
--- (LOAD / ARM@L1 / RUN / SAVE@L80), auto-pick pacing, the runtime
--- self-checks (flag demotions), and the slash commands.
+-- (LOAD / PREPARE@L1 / RUN / SAVE@L80), auto-pick pacing, and slash commands.
 -- SCOPING RULE: every closure-captured local is declared here, before
 -- any closure that reads it.
 
@@ -39,30 +38,18 @@ local lagWarnedAt    = -math.huge
 local LAG_THRESHOLD  = 1.5    -- seconds; a single frame stall this long is suspicious
 local LAG_WARN_COOLDOWN = 60  -- seconds between chat warnings
 
--- ARM state
-local armAttempts, armedConfirmed, armPendingSince = 0, false, nil
-local armTargetSlot = nil
-local boardsSinceArm = 0
+-- Level-1 preparation state
 local leversDoneThisVisit = {}
 local lastLeverSendAt = 0
 
 -- RUN state
 local lastDecidedSig, lastDecision, decidedAt = nil, nil, nil
 local lastLoggedSig = nil        -- decision-log dedupe per board
-local lastBoardForRerollWatch = nil
--- Test 13 bracket-fishing budget. These counters are session/run-local and
--- deliberately reset as the guaranteed spell or eligibility bracket changes.
-local fillerFishState = {
-    guaranteedId = nil,
-    consecutive = 0,
-    bracket = nil,
-    bracketSpent = 0,
-}
 -- Test 15: per-spell count of FORCED takes this run (Policy.lua's
 -- mandatory-select branch, `forced = true` -- zero legal alternatives that
 -- board). Fed into Ratchet.Dominates so the save gate weighs an unavoidable
 -- duplicate/wrong-quality pick far more lightly than a voluntary one.
--- Reset at the same run boundary as fillerFishState (level == 1, below).
+-- Reset at the run boundary (level == 1, below).
 local forcedTakesBySpell = {}
 local frozeThisBoard = nil       -- board signature we already spent a freeze on
 local refusedBanishSig = nil
@@ -160,7 +147,7 @@ function Nexus.RecomputeStats()
 end
 
 -- Diagnostic-only retained history. These records never participate in
--- decisions; they exist solely to explain guarantee behavior and save gates.
+-- decisions; they exist solely to explain board behavior and save gates.
 local function CopyCounts(src)
     local out = {}
     if type(src) == "table" then
@@ -226,16 +213,6 @@ local function EffectiveFlags()
     return flags
 end
 
-local function DemoteFlag(name, reason)
-    local st = Store.State()
-    st.flagDemotions = st.flagDemotions or {}
-    if not st.flagDemotions[name] then
-        st.flagDemotions[name] = reason
-        -- Log internally; this is an advisor-mode state change that players
-        -- don't need to see in chat.
-    end
-end
-
 ------------------------------------------------------------------------
 -- One FSM step (the whole loop; called from OnUpdate at POLL cadence)
 ------------------------------------------------------------------------
@@ -271,8 +248,8 @@ local function QualityName(q) return QUALITY_NAMES[q] or ("q"..q) end
 -- Families present in the compiled plan only because a locked-slot design
 -- target (NexusDB.lockDesignTargets, via WishlistWithLockTargets) added
 -- them -- not because the real, saved wishlist asked for them. These don't
--- belong in the 79-slot run total: the server's guaranteed-loadout cap is
--- real and fixed, while a locked Echo only ever needs to be rolled ONCE,
+-- belong in the 79-slot run total: the server's saved-loadout cap is real and
+-- fixed, while a locked Echo only ever needs to be rolled ONCE,
 -- ever, and then never again. Keeping them out of stackTotal/stackCount
 -- keeps the panel's "N / 79" honest; WishlistProgress instead reports them
 -- separately as "toLock" so the player still sees what's left to acquire.
@@ -1057,53 +1034,6 @@ local function StepArm(level, plan, owned, slots, disabledLevers)
     RenderIdlePanel(plan, owned, slots, Adapter.Catalog())
 end
 
-local function WatchRerollHold(board)
-    -- reroll-hold observation: if our last action was a reroll and the
-    -- previous board carried a guaranteed card, a changed flag-3 identity
-    -- kills the tactic permanently (conservative).
-    if lastDecision and lastDecision.type == "reroll" and lastBoardForRerollWatch then
-        local prevG, curG = nil, nil
-        local pb = lastBoardForRerollWatch
-        if pb.guaranteedIndex then prevG = pb.cards[pb.guaranteedIndex].spellId end
-        if board.guaranteedIndex then curG = board.cards[board.guaranteedIndex].spellId end
-        if prevG and prevG ~= curG then
-            local st = Store.State()
-            st.rerollHoldViolations = (st.rerollHoldViolations or 0) + 1
-            DemoteFlag("REROLL_HOLDS_GUARANTEED", "guaranteed head changed across a reroll")
-        end
-        lastBoardForRerollWatch = nil
-    end
-end
-
-local function SelfCheckDisable(board, disabledLevers, catalog)
-    -- user-confirmed DISABLE_SUPPRESSES_GUARANTEE=true: if a disabled
-    -- lever's echo ever shows up flag-3 anyway, demote for the session.
-    if not board.guaranteedIndex then return end
-    local g = board.cards[board.guaranteedIndex]
-    local row = catalog and catalog.rows[g.spellId]
-    if not (row and row.requiredSpell ~= 0) then return end
-    -- only a server-CONFIRMED disable proves anything; a pending one may
-    -- simply not have been processed before this board was rolled
-    if disabledLevers[row.requiredSpell] ~= "confirmed" then return end
-    -- and only a CONFORMANT lever we actually disabled: the garbage
-    -- requiredSpell=9 cohort (38 unrelated echoes) is never disabled by us,
-    -- so a member appearing guaranteed after the user hand-disables one
-    -- cohort sibling in the journal is NOT evidence against suppression.
-    local lever = catalog.levers and catalog.levers[row.requiredSpell]
-    if not (lever and lever.conformant) then return end
-    DemoteFlag("DISABLE_SUPPRESSES_GUARANTEE",
-        "disabled tome echo " .. tostring(g.spellId) .. " appeared guaranteed")
-end
-
-local function RerollBracket(level)
-    level = tonumber(level) or 0
-    if level <= 34 then return 1 end
-    if level <= 63 then return 2 end
-    if level <= 69 then return 3 end
-    if level <= 77 then return 4 end
-    return 5
-end
-
 -- Locked-slot design targets (NexusDB.lockDesignTargets, written by the
 -- Wishlist Editor's locked-slot picker) are NOT part of the uploaded server
 -- wishlist -- the 79-slot cap is real and a player may have zero room to
@@ -1113,8 +1043,8 @@ end
 -- since the whole point of a locked slot is a standing, permanent pick
 -- that never needs re-acquiring once secured. Folding these into the
 -- compiled plan's wishedFamilies/targets is the only change needed --
--- every downstream rule in Policy.lua (guaranteed-take, defer, BANK/
--- freeze, held-echo preference, least-harmful-select) already keys off
+-- every downstream rule in Policy.lua (wishlist selection, Freeze,
+-- held-echo preference, least-harmful selection) already keys off
 -- plan.wishedFamilies, so a lock-designated family is automatically
 -- treated exactly like any other wished family with zero changes to that
 -- carefully-tuned decision logic itself. A family already covered by the
@@ -1494,34 +1424,6 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
         refusedRerollSig = nil
     end
 
-    if armTargetSlot and not armedConfirmed then
-        boardsSinceArm = boardsSinceArm + 1
-        if board.guaranteedIndex then
-            armedConfirmed = true
-            SetStatus("armed (guaranteed queue live)")
-        elseif boardsSinceArm >= 3 then
-            SetStatus("Activate did not guarantee -- treating as unarmed")
-        end
-    end
-
-    WatchRerollHold(board)
-    SelfCheckDisable(board, disabledLevers, catalog)
-
-    local currentGuaranteedId = nil
-    if board.guaranteedIndex and board.cards[board.guaranteedIndex] then
-        currentGuaranteedId = tonumber(board.cards[board.guaranteedIndex].spellId)
-    end
-    local currentBracket = RerollBracket(level)
-    if currentBracket ~= fillerFishState.bracket then
-        fillerFishState.bracket = currentBracket
-        fillerFishState.bracketSpent = 0
-        fillerFishState.consecutive = 0
-        fillerFishState.guaranteedId = currentGuaranteedId
-    elseif currentGuaranteedId ~= fillerFishState.guaranteedId then
-        fillerFishState.guaranteedId = currentGuaranteedId
-        fillerFishState.consecutive = 0
-    end
-
     local activeRow = ActiveSlotRow(slots)
     local queue = Ratchet.PredictQueue(activeRow and activeRow.echoes or {},
         owned, plan, flags, disabledLevers, catalog)
@@ -1542,26 +1444,6 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
         searchRefused = {
             banish = refusedBanishSig == board.signature,
             reroll = refusedRerollSig == board.signature,
-        },
-        rerollBudget = {
-            consecutive = fillerFishState.consecutive,
-            -- Bracket 1 (RerollBracket above) spans levels 1-34 and the
-            -- 4-reroll budget below is meant to be rationed across that
-            -- whole span for ONE continuous attempt. fillerFishState is
-            -- deliberately reset on every run boundary (see its
-            -- declaration above), so repeated early deaths/restarts each
-            -- grant a full fresh allowance -- fine deep into a run, but
-            -- confirmed live 2026-08-01 to compound badly when death
-            -- keeps happening at level 1-10: the same thin, mostly
-            -- level-ineligible pool gets fished again and again on a full
-            -- budget every time. Shrink the allowance itself for that
-            -- narrow band rather than touch the reset semantics.
-            consecutiveLimit = (level <= 10) and 2 or 3,
-            bracketSpent = fillerFishState.bracketSpent,
-            bracketLimit = (level <= 10) and 2 or 4,
-            -- Preserve a late-run reserve while several brackets remain.
-            -- At 78-80 unused charges have no future value.
-            reserve = (level >= 78) and 0 or 5,
         },
     }
     local action = Policy.Decide(state)
@@ -1740,7 +1622,6 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
     if Adapter.InFlight() then return end
 
     if action.type == "take" then
-        fillerFishState.consecutive = 0
         if action.forced then
             local fid = tonumber(action.spellId)
             if fid then
@@ -1749,7 +1630,6 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
         end
         Adapter.Take(action.spellId)
     elseif action.type == "banish" and settings.autoBanish then
-        fillerFishState.consecutive = 0
         -- Policy indexes cards 1-based; the client (and adapter) are 0-based
         local ok, err = Adapter.Banish(action.index - 1)
         if ok then
@@ -1762,7 +1642,6 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
                 or "Banish refused -- trying another action")
         end
     elseif action.type == "freeze" then
-        fillerFishState.consecutive = 0
         -- one freeze per board; the follow-up banish/reroll happens on a
         -- later tick once this resolves
         local ok = Adapter.Freeze(action.index - 1)
@@ -1775,15 +1654,7 @@ local function StepRun(level, plan, slots, owned, flags, disabledLevers)
         end
     elseif action.type == "reroll" then
         local ok = Adapter.Reroll()
-        if ok then
-            lastBoardForRerollWatch = board
-            if action.reason == "bracket fishing: reroll filler guarantee" then
-                fillerFishState.consecutive = fillerFishState.consecutive + 1
-                fillerFishState.bracketSpent = fillerFishState.bracketSpent + 1
-            else
-                fillerFishState.consecutive = 0
-            end
-        else
+        if not ok then
             refusedRerollSig = board.signature
             lastDecidedSig = nil
             SetStatus(action.endgame
@@ -2019,21 +1890,14 @@ local function Step()
             auditRunId = NexusDB.auditRunCounter
             auditRunStarted = nil
             leversDoneThisVisit = {}
-            armAttempts, armTargetSlot = 0, nil
-            armedConfirmed, boardsSinceArm = false, 0
             saveVerifySlot, seedVerify, saveVerifySnap = nil, nil, nil
             saveVerifyExpectedActive, saveVerifySummary = nil, nil
             saveObserveIndex, saveObserveReadyAt = 1, nil
             noChangeReportedVisit = false
             saveGateAuditedVisit = false
-            fillerFishState.guaranteedId = nil
-            fillerFishState.consecutive = 0
-            fillerFishState.bracket = nil
-            fillerFishState.bracketSpent = 0
             forcedTakesBySpell = {}
             lastDecidedSig, lastDecision, decidedAt = nil, nil, nil
             lastLoggedSig = nil
-            lastBoardForRerollWatch = nil
             frozeThisBoard = nil
             refusedBanishSig, refusedRerollSig = nil, nil
             Adapter.RunBoundaryReset()   -- void the dead run's picks/trust
@@ -2260,8 +2124,7 @@ local function JournalData()
         sections[#sections + 1] = { title = "Pending (" .. #pending .. ")", lines = pending }
         local fillerLines = {}
         for _, f in ipairs(filler) do
-            fillerLines[#fillerLines + 1] = f .. (flags.DISABLE_SUPPRESSES_GUARANTEE
-                and "  (shed via disable or skip)" or "  (will shed next run)")
+            fillerLines[#fillerLines + 1] = f .. "  (shed when a better random offer appears)"
         end
         sections[#sections + 1] = { title = "Lingering filler", lines = fillerLines }
     end
@@ -2365,7 +2228,7 @@ local function LogText_Boards()
             end
         end
         if e.pending and e.pending ~= "" then
-            out[#out + 1] = "  pending guarantee: " .. DiagnosticScalar(e.pending)
+            out[#out + 1] = "  legacy pending data: " .. DiagnosticScalar(e.pending)
         end
         out[#out + 1] = ""
     end
@@ -2454,7 +2317,7 @@ local function NewAIExportCoroutine()
         local out = {
             "NEXUS_DIAGNOSTIC_LOG_5",
             "version=" .. Esc(Nexus.VERSION) .. "|boards=" .. #log .. "|audits=" .. #audits .. "|probes=" .. #probes .. "|errors=" .. #errors,
-            "B=board|C=card|U=user action|Q=predicted guarantee queue head|A=run/save audit|D=dictionary",
+            "B=board|C=card|U=user action|Q=legacy queue record|A=run/save audit|D=dictionary",
             "B|i|time|level|horizon|endgame|guaranteedIndex|banish|reroll|freeze|trusted|actionRef|spellId|cardIndex|reasonRef|pendingRef|mismatch|activeSlot|run|queueN",
             "C|board|card|spellId|familyRef|cardQ|catalogQ|wishQ|maxStack|owned|delta|annotationRef|flags(G,F,W)",
             "Q|board|position|spellId|familyRef|wished",
@@ -3384,16 +3247,16 @@ local function PrintActiveLoadout(slots)
     if not slot then Print("ACTIVE: no build activated right now."); return end
     Print(string.format("ACTIVE slot %d '%s': %s, %d echoes", active,
         slot.name ~= "" and slot.name or "?",
-        slot.verified and "snapshot (arms the guarantee)"
-            or "designed build (highlight only -- not a guarantee)", #slot.echoes))
+        slot.verified and "saved snapshot (comparison baseline)"
+            or "designed build (wishlist target)", #slot.echoes))
 end
 
 local function PrintBestLoadout(slots, wishlist, catalog)
     if not (wishlist and Ratchet and Ratchet.BestSlot) then return end
     local plan = Strategy.Compile(catalog, wishlist, Store.Settings())
     local best = Ratchet.BestSlot(slots, plan, catalog)
-    Print(best and ("Would arm snapshot slot " .. best .. " at level 1.")
-        or "No verified snapshot to arm -- first run seeds one.")
+    Print(best and ("Closest saved snapshot is slot " .. best .. ".")
+        or "No verified snapshot yet -- the first completed run can seed one.")
 end
 
 local function PrintLoadoutStatus(slots, wishlist, catalog)

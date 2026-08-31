@@ -83,9 +83,6 @@ local DEFAULT_PARAMS = {
     duplicate = -5,
     filler = -15,
     qualityMiss = -20,
-    deferFactor = 0.35,
-    rerollPacingBase = 6,
-    deferRerollFloor = 4,
 }
 
 local function Param(params, key)
@@ -95,8 +92,8 @@ local function Param(params, key)
 end
 
 -- Marginal value of taking one copy of spellId given the plan and the owned
--- state. Guarantee subtraction remains family-granular, but wishlist value is
--- quality-qualified: only a requested tier can advance a multi-quality target.
+-- state. Wishlist progress remains family-granular, but value is quality-
+-- qualified: only a requested tier can advance a multi-quality target.
 -- Exhaustion inputs stay per-spellId. Pure; returns a single number, 0 on
 -- malformed input.
 function Model.Delta(plan, owned, spellId, catalog, params)
@@ -194,7 +191,7 @@ function Model.Delta(plan, owned, spellId, catalog, params)
 end
 
 ------------------------------------------------------------------------
--- Scarcity: has this family's guaranteed-slot supply already run dry?
+-- Wishlist quality and stack progress
 ------------------------------------------------------------------------
 
 -- True when the family exists in more than one quality variant (distinct
@@ -236,7 +233,7 @@ end
 -- The quality a multi-quality wished family should be CHASED at: the
 -- family's peak. Compensates for two live-server realities (2026-07-24):
 -- the designed-build wire can lose the clicked variant's quality, and the
--- level-bracket bug can serve a below-peak variant as the guaranteed --
+-- level-bracket data can expose a below-peak variant --
 -- "we want the blue of each stat if possible" means the target is what's
 -- POSSIBLE, not what a lossy wire happened to store. The stored
 -- wishedQuality still acts as a floor for single-variant data.
@@ -378,11 +375,9 @@ function Model.QualityOfferNeeded(plan, catalog, family, quality, owned)
     return true
 end
 
--- A wished STACKING family still short of its wishlist stack target
--- (own 0..target-1 of a want-9 echo). The guarantee only ever serves the
--- FIRST copy of a family; every further stack is free-slot RNG, so a
--- free-slot appearance of one of these is always worth banking with a
--- freeze when it isn't this board's pick. Pure; false on malformed input.
+-- A wished stacking family still short of its wishlist target. Every copy is
+-- random, so a visible copy is worth protecting when another wishlist Echo
+-- must be taken from the same board. Pure; false on malformed input.
 function Model.StackWishBelowTarget(plan, owned, family, catalog)
     if family == nil then return false end
     local wishedFamilies = type(plan) == "table" and plan.wishedFamilies or nil
@@ -400,14 +395,8 @@ function Model.StackWishBelowTarget(plan, owned, family, catalog)
     return ownedFam < targetStacks
 end
 
--- Ratchet.PredictQueue drops a family from the guaranteed queue the
--- instant ANY copy is owned (family-aware subtraction, addendum B2) --
--- regardless of how far short of the wishlist's targetStacks it still
--- sits. So a partially-stacked wished family (own 3, want 9) will NOT
--- come back around on slot 3; every further copy is free-slot RNG only.
--- A family that is wished but still fully unowned is NOT scarce by this
--- definition -- it's still guarantee-eligible and needs no protecting.
--- Pure; false on malformed input.
+-- Historical compatibility helper. A partially completed stack target is
+-- scarce because every future copy is random.
 function Model.Scarce(plan, owned, family)
     if family == nil then return false end
     local wishedFamilies = type(plan) == "table" and plan.wishedFamilies or nil

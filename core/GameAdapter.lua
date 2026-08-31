@@ -265,14 +265,14 @@ local function FamilyOf(spellId)
 end
 
 ------------------------------------------------------------------------
--- Board (deep copy; guaranteed by FLAG, never position)
+-- Board (deep copy; every offered slot is random in current Ebonhold)
 ------------------------------------------------------------------------
 
 function A.Board()
     local svc = PS()
     local ch = svc and SafeCall(svc.GetCurrentChoice)
     if type(ch) ~= "table" or #ch == 0 then return nil end
-    local cards, gi = {}, nil
+    local cards = {}
     local sigParts = {}
     for i = 1, #ch do
         local c = ch[i]
@@ -283,15 +283,16 @@ function A.Board()
                 family = FamilyOf(c.spellId),
                 isFrozen = c.isFrozen and true or false,
                 isCarried = c.isCarried and true or false,
-                isGuaranteed = c.isGuaranteed and true or false,
+                -- Current Ebonhold offerings are fully random. Keep no legacy
+                -- right-slot/flag-3 guarantee semantics in the adapter model.
+                isGuaranteed = false,
                 -- stamped onto the live entry by the SS-104 handler; preserve
                 justFrozen = c.justFrozen and true or false,
             }
             cards[#cards + 1] = card
-            if card.isGuaranteed and not gi then gi = #cards end
             sigParts[#sigParts + 1] = tostring(c.spellId)
                 .. (card.isFrozen and "F" or "") .. (card.isCarried and "C" or "")
-                .. (card.isGuaranteed and "G" or "") .. (card.justFrozen and "J" or "")
+                .. (card.justFrozen and "J" or "")
         end
     end
     if #cards == 0 then return nil end
@@ -306,7 +307,7 @@ function A.Board()
     if selfFreezeSig == sig and selfFreezeIndex and cards[selfFreezeIndex] then
         cards[selfFreezeIndex].justFrozen = true
     end
-    return { cards = cards, guaranteedIndex = gi, signature = sig,
+    return { cards = cards, guaranteedIndex = nil, signature = sig,
              idSignature = idSig }
 end
 
@@ -577,8 +578,8 @@ function A.Owned()
     end
     -- Locked Echoes are a separate, permanent player selection. They are
     -- captured for leaderboard/build metadata through LockedOwned(), but they
-    -- are never part of the current run's rolled ownership, guarantee queue,
-    -- wishlist progress, board decisions, or save candidate.
+    -- are never part of the current run's rolled ownership, wishlist progress,
+    -- board decisions, or save candidate.
     -- Auto-chained boards can be stale by one selection. Overlay the expected
     -- count only until GetGrantedPerks catches up, then retire it. Keeping this
     -- as a run-long pick history made replaced qualities remain in TO SHED.
@@ -629,8 +630,9 @@ function A.CurrentOwned()
     if A.Level() ~= 80 then return A.Owned() end
     local service = PS()
     local active = service and SafeCall(service.GetActiveEchoLoadout)
-    if type(active) == "table" then
-        return OwnedSnapshot(EchoListCounts(active), true, "active-echo-loadout")
+    local activeCounts = EchoListCounts(active)
+    if next(activeCounts) ~= nil then
+        return OwnedSnapshot(activeCounts, true, "active-echo-loadout")
     end
 
     local slots = A.Slots()
@@ -1597,7 +1599,7 @@ end
 ------------------------------------------------------------------------
 
 local function CardBlocked(card)
-    return card.isGuaranteed or card.isFrozen or card.isCarried or card.justFrozen
+    return card.isFrozen or card.isCarried or card.justFrozen
 end
 
 function A.Take(spellId)

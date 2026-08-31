@@ -1,4 +1,4 @@
-# Nexus — internal module contracts (v1.96.2)
+# Nexus — internal module contracts (v1.96.3)
 
 Binding interface spec for all modules. Authored from `WISHLIST_REALIZER_BUILD_PROMPT.md`
 + `WISHLIST_REALIZER_SPEC_ADDENDUM.md` + `WISHLIST_REALIZER_DESIGN.md` (the addendum wins
@@ -7,8 +7,8 @@ SavedVariables, NO `ProjectEbonhold.*` — loadable under bare LuaJIT. All cross
 data is plain tables produced by `core/GameAdapter.lua` (the only IO module).
 
 Global namespace: `Nexus` (each file: `Nexus = Nexus or {};
-local M = {}; Nexus.<Name> = M`). Version: `Nexus.VERSION = "1.96.2"`
-comes from `data/Release.lua`; .toc `## Version: 1.96.2` stays in lockstep.
+local M = {}; Nexus.<Name> = M`). Version: `Nexus.VERSION = "1.96.3"`
+comes from `data/Release.lua`; .toc `## Version: 1.96.3` stays in lockstep.
 
 Lua 5.1 rules: no `goto`, no `#` on non-sequences, `unpack` global, sort pairs for
 deterministic output, forward-declare every closure-captured local BEFORE the closure,
@@ -42,8 +42,7 @@ owned = {                    -- granted ∪ locked ∪ adapter-recorded picks
 
 board = nil | {              -- nil => no board (wait)
   cards = { { spellId=n, quality=n, family=s, isFrozen=b, isCarried=b,
-              isGuaranteed=b, justFrozen=b } , ... },  -- 1..3 entries
-  guaranteedIndex = n|nil,   -- found by scanning isGuaranteed; nil is VALID (4-card trim)
+              justFrozen=b } , ... },  -- 1..3 entries; every slot is random
   signature = s,
 }
 
@@ -56,8 +55,7 @@ slots = nil | {              -- nil => SS 540 not arrived
   activeSlot = n,            -- 0 = none
 }
 
-flags = { DISABLE_SUPPRESSES_GUARANTEE = true|false,  -- true (user-confirmed) unless runtime-demoted
-          REROLL_HOLDS_GUARANTEED = true|false|nil }  -- nil = conservative
+flags = {}  -- compatibility table; current Ebonhold exposes no board guarantees
 
 plan = Strategy.Compile output (below).
 queue = Ratchet.PredictQueue output (below).
@@ -111,10 +109,8 @@ Fork from EchoOptimizer/logic/Model.lua VERBATIM: `NormName`, `StripRaritySuffix
 ## logic/Ratchet.lua — `Nexus.Ratchet`
 
 - `Ratchet.PredictQueue(activeEchoes, owned, plan, flags, disabledLevers, catalog)` →
-  `{ entries = { { spellId, family, wanted=bool }, ... } }` in given order, skipping
-  entries whose FAMILY is owned (family-aware subtraction, addendum §B2), and — iff
-  `flags.DISABLE_SUPPRESSES_GUARANTEE` — skipping members of disabled levers.
-  Prediction is planning/UI-only; never coverage.
+  `{ entries = {}, random = true }`. This compatibility seam is intentionally empty:
+  Saved Builds are comparison baselines and wishlist targets, not future offerings.
 - `Ratchet.Dominates(candidateOwned, incumbentEchoes, plan, catalog)` → `ok, detail` —
   candidate's wished-family coverage ⊇ incumbent's AND candidate's off-wishlist family
   set ⊆ incumbent's AND ≥1 strict improvement. `incumbentEchoes` = slot echoes array.
@@ -130,40 +126,31 @@ Fork from EchoOptimizer/logic/Model.lua VERBATIM: `NormName`, `StripRaritySuffix
 
 - `Policy.Decide(state)` where `state = { board, owned, charges, plan, queue, flags,
   level, horizon, support, params }` → action:
-  `{ type = "take"|"reroll"|"banish"|"wait", spellId=?, index=?, reason = s }`
-  plus `annotations = { [cardIndex] = "wanted"|"guaranteed"|"duplicate"|"filler"|"junk" }`.
-  Rules (§5.5 greedy + addendum):
-  1. Compute `Model.Delta` for each card. Guaranteed card = `board.guaranteedIndex`
-     (may be nil — then branch 2 skipped).
-  2. Tight-regime check: `wantedInQueue >= horizon` → take guaranteed when present &
-     wanted; never divert.
-  3. Take best free card if its Δ > guaranteed's Δ and Δ > 0.
-  4. Else take guaranteed when present.
-  5. Else (junk board): banish proposal — only when `charges.banish > 0`, target the
-     worst NON-guaranteed/frozen/carried/justFrozen card whose removal raises
-     `EmaxK(FreeDist without it, 1)`-style expectation, `type="banish"` (Main fires at
-     most one per fresh run-data push; Policy needn't know) — else reroll proposal when
-     `charges.reroll > 0` AND (no guaranteed present, or guaranteed Δ low
-     (< params.rerollHoldThreshold), or `flags.REROLL_HOLDS_GUARANTEED == true`) AND
-     `EmaxGivenK(dist, bestCurrentΔ, 2) - params.rerollCost > bestCurrentΔ` — else take
-     the least-harmful card (max Δ, break ties toward non-filler, lowest quality).
-  6. Freeze is scoped to ONE case (step 2b): a scarce wished family
-     (guarantee already exhausted, still short of stack target) sharing a
-     board with no other card worth taking outright, and only with a
-     banish/reroll charge in hand to spend on the rest of the board.
-     Everything else in the decision tree still NEVER returns type
-     "freeze". NEVER banish/reroll-target index of a guaranteed/frozen/
-     carried/justFrozen card.
+  `{ type = "take"|"freeze"|"reroll"|"banish"|"wait", spellId=?, index=?, reason=s,
+     displaySteps=? }` plus `annotations = { [cardIndex] =
+  "wanted"|"banked"|"low quality"|"duplicate"|"filler"|"junk" }`.
+  Rules:
+  1. Treat every card as random. Ignore legacy `isGuaranteed` and
+     `guaranteedIndex` input fields.
+  2. Compute exact-quality-aware wishlist value for every card.
+  3. If a wanted card is already frozen, take another visible target while the
+     held one remains protected; otherwise recover the held target.
+  4. If at least two usable wanted cards are visible and Freeze is trustworthy and
+     charged, freeze the best target and direct the player to take the alternate.
+  5. With one wanted card, take it without spending Freeze.
+  6. On a junk board, Banish only a non-wished, non-frozen, non-carried,
+     non-justFrozen card; otherwise Reroll when worthwhile; otherwise take the
+     least-harmful card. A wished family remains Banish-protected even when its
+     offered quality is too low.
   7. `board == nil` or `owned.synced == false` (with level>1) → `{type="wait", reason}`.
   Pure function; same input → same output.
 
 ## data/DefaultProfile.lua — `Nexus.DefaultProfile`
 
 Pure table: `params` (coverage=100, qualityBonus=2, anchorUnlock=150, diversity=5,
-duplicate=-5, filler=-15, rerollCost=8, rerollHoldThreshold=25), `defaultSettings`
+duplicate=-5, filler=-15, qualityMiss=-20), `defaultSettings`
 (autoPick=true, autoActivate=true, autoDisable=true, autoSave=true, autoBanish=true,
-anchorSpellId=nil, leverOptOut={}), `defaultFlags` (DISABLE_SUPPRESSES_GUARANTEE=true
--- user-confirmed 2026-07-23, runtime-demotable; REROLL_HOLDS_GUARANTEED=nil).
+anchorSpellId=nil, leverOptOut={}), `defaultFlags = {}`.
 
 ## core/Store.lua — `Nexus.Store` (SavedVariables: `NexusDB`)
 
@@ -551,8 +538,7 @@ selection. `core/Sync.lua` owns serialization, transport, and protocol policy.
   preferences, unknown fields, safety latches, demotions, and `priorAutoAccept`
   survive version bumps.
 - `GameAdapter.DisabledLevers()` values are `"confirmed"` (server mirror) or
-  `"pending"` (our unconfirmed request) — both truthy for pool math; only
-  `"confirmed"` may drive the DISABLE_SUPPRESSES_GUARANTEE self-check demotion.
+  `"pending"` (our unconfirmed request); both are truthy for random-pool math.
 - Per-latch watchdog: a client `pending*` latch stuck >10s is declared dead for the
   session (per-action, mirroring the client's own failure mode), excluded from the
   whole-loop gate, its charges zeroed, status surfaced; recovers if the latch clears.
