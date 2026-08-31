@@ -3,6 +3,9 @@
 - Treats every Echo board slot as random; Saved Builds no longer predict future offerings.
 - Freezes one of two simultaneously offered wishlist Echoes so both random opportunities can be kept.
 - Falls back to the verified active server slot when the level-80 live loadout mirror is temporarily empty.
+- Labels the Echo Journal selector as the Nexus HUD target and explains that it drives Progress, Still Needed, To Shed, and Auto.
+- Adds in-game and written guidance for the level-80 orb, resave, and loadout-refresh workflow.
+- Warns users to disable the incompatible Project Ebonhold Enhanced addon.
 
 # Nexus 1.96.3 Recovery Update
 

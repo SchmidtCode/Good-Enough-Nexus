@@ -932,7 +932,14 @@ local function EnsureAssociationPanel(journal)
         associationPanel.label:SetPoint("TOPLEFT", 10, -9)
         associationPanel.label:SetWidth(145)
         associationPanel.label:SetJustifyH("LEFT")
-        associationPanel.label:SetTextColor(0.72, 0.72, 0.72)
+        associationPanel.label:SetTextColor(0.5, 0.84, 1)
+        associationPanel.label:SetText("Nexus HUD target")
+
+        associationPanel.help = associationPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        associationPanel.help:SetPoint("BOTTOMLEFT", 10, 8)
+        associationPanel.help:SetWidth(200)
+        associationPanel.help:SetJustifyH("LEFT")
+        associationPanel.help:SetText("Sets Progress / Still Needed / To Shed")
 
         associationPanel.selector = CreateFrame("Button", "NexusActiveWishlistSelector", associationPanel)
         associationPanel.selector:SetSize(169, 21)
@@ -971,7 +978,7 @@ local function EnsureAssociationPanel(journal)
         associationPanel.design.glyph:SetTextColor(1, 0.82, 0.2)
         associationPanel.design:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
         associationPanel.newWishlist = CreateFrame("Button", nil, associationPanel, "UIPanelButtonTemplate")
-        associationPanel.newWishlist:SetSize(150, 19)
+        associationPanel.newWishlist:SetSize(142, 19)
         associationPanel.newWishlist:SetPoint("BOTTOMRIGHT", -7, 5)
         associationPanel.newWishlist:SetText("New Wishlist")
         associationPanel.newWishlist:SetScript("OnEnter", function(self)
@@ -992,8 +999,15 @@ local function EnsureAssociationPanel(journal)
         associationPanel.selector:SetScript("OnEnter", function(self)
             if self.SetBackdropBorderColor then self:SetBackdropBorderColor(0.42, 0.72, 0.95, 1) end
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
-            GameTooltip:AddLine("Automation Wishlist", 0.35, 0.8, 1)
-            GameTooltip:AddLine("Assigns a wishlist reference to the Saved Build currently selected in the server dropdown.", 0.82, 0.82, 0.82, true)
+            GameTooltip:AddLine("Nexus HUD target", 0.35, 0.8, 1)
+            GameTooltip:AddLine("Choose the wishlist Nexus uses for Progress, Still Needed, To Shed, and Auto.", 0.82, 0.82, 0.82, true)
+            if self.loadoutName and self.loadoutName ~= "" then
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("Active Ebonhold loadout: " .. self.loadoutName, 1, 0.82, 0.3, true)
+            end
+            if (UnitLevel("player") or 0) >= 80 then
+                GameTooltip:AddLine("At level 80, save over the active Ebonhold loadout after an orb upgrade so the HUD can compare the updated Echoes.", 0.72, 0.9, 1, true)
+            end
             GameTooltip:Show()
         end)
         associationPanel.selector:SetScript("OnLeave", function(self)
@@ -1046,7 +1060,7 @@ local function ShowWishlistPicker(anchor, wishes, linked, active, loadoutName, A
         wishlistPicker.border:SetFrameLevel(wishlistPicker:GetFrameLevel() + 1)
         wishlistPicker.title = wishlistPicker:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         wishlistPicker.title:SetPoint("TOPLEFT", 10, -8)
-        wishlistPicker.title:SetText("Wishlists")
+        wishlistPicker.title:SetText("Nexus HUD target")
     end
     for i=1,#wishlistPickerRows do wishlistPickerRows[i]:Hide() end
     if wishlistPicker.emptyRow then wishlistPicker.emptyRow:Hide() end
@@ -1104,7 +1118,7 @@ local function ShowWishlistPicker(anchor, wishes, linked, active, loadoutName, A
             end
             row:ClearAllPoints(); row:SetPoint("TOPLEFT", 6, -24 - (i-1)*rowH)
             local selected = linked and linked.key and cKey and linked.key == cKey
-            row.nameButton.text:SetText((selected and "|cff55ff55[Selected] |r" or "") .. ((cName ~= "" and cName) or "Unnamed Wishlist"))
+            row.nameButton.text:SetText((selected and "|cff55ff55[HUD Target] |r" or "") .. ((cName ~= "" and cName) or "Unnamed Wishlist"))
             local cEchoes = c.echoes
             local function AssociateWishlistOnly()
                 local ok, err
@@ -1184,7 +1198,8 @@ local function RefreshAssociationRows()
         or (A.GetLoadoutWishlist and A.GetLoadoutWishlist(active))
     local loadoutName = firstRun and "First Run" or tostring(activeRow.name or "")
     if not firstRun and loadoutName == "" then loadoutName = "Saved Build " .. tostring(active) end
-    host.label:SetText("|cffffffff" .. ShortName(loadoutName, 21) .. ":|r")
+    host.label:SetText("Nexus HUD target")
+    host.selector.loadoutName = loadoutName
 
     local linkedName = linked and tostring(linked.name or "") or ""
     if linkedName ~= "" then

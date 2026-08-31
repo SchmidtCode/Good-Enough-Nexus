@@ -26,7 +26,7 @@ local function EnsureFrame()
     if frame then return frame end
 
     frame = CreateFrame("Frame", "NexusQuickStart", UIParent)
-    frame:SetSize(420, 292)
+    frame:SetSize(420, 310)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 55)
     frame:SetFrameStrata("DIALOG")
     frame:EnableMouse(true)
@@ -57,17 +57,17 @@ local function EnsureFrame()
     local body = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     frame.body = body
     body:SetPoint("TOPLEFT", 24, -62)
-    body:SetSize(372, 58)
+    body:SetSize(372, 76)
     body:SetJustifyH("LEFT")
     body:SetJustifyV("TOP")
     body:SetText(
-        "Already have a finished build? Assign its ideal wishlist, then hit a training dummy to establish your personal record.\n" ..
-        "Starting fresh? Import a wishlist string or copy a proven community build."
+        "Already have a finished build? Open Ebonhold Echoes and choose its wishlist in the blue Nexus HUD target menu.\n" ..
+        "Starting fresh? Import or create a wishlist, then select it there. That target controls Progress, Still Needed, To Shed, and Auto."
     )
 
     local current = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     current:SetSize(174, 26)
-    current:SetPoint("TOPLEFT", 24, -132)
+    current:SetPoint("TOPLEFT", 24, -150)
     current:SetText("Use Current Build")
     current:SetScript("OnClick", function()
         Finish()
@@ -77,7 +77,7 @@ local function EnsureFrame()
 
     local import = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     import:SetSize(174, 26)
-    import:SetPoint("TOPRIGHT", -24, -132)
+    import:SetPoint("TOPRIGHT", -24, -150)
     import:SetText("Import / Create Wishlist")
     import:SetScript("OnClick", function()
         Finish()
