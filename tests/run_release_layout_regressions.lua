@@ -30,12 +30,14 @@ dofile("ui/Changelog.lua")
 Nexus.Changelog.ShowIfNeeded()
 
 local changelog = _G.NexusChangelogPopup
-local changelogBody = FindText("Random Echo boards")
+local changelogBody = FindText("Choose the Nexus HUD target")
 assert(changelog and changelogBody, "release update window was not created")
 Check(changelog:GetHeight() >= 360,
     "release update window is too short for its content")
 Check(not changelogBody:GetText():find("Back up", 1, true),
     "release update window still asks the user to back up databases")
+Check(changelogBody:GetText():find("save over that active build", 1, true),
+    "release update window does not explain the level-80 orb save flow")
 
 local hasBottomBound = false
 for pointIndex = 1, #changelogBody.points do

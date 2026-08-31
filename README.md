@@ -33,6 +33,13 @@ freezes one before taking the other when Freeze is available.
 - Project Ebonhold on World of Warcraft 3.3.5a.
 - Details! for DPS capture and leaderboard records.
 
+## Compatibility warning
+
+Project Ebonhold Enhanced is incompatible with current Nexus builds. It is
+unmaintained for recent Project Ebonhold patches and can interfere with
+server-backed Echo loadouts, wishlist creation, and automation. Disable it
+before testing Nexus.
+
 ## Installation
 
 1. Keep the runtime addon folder named `Nexus`.
@@ -46,6 +53,48 @@ name is different from the runtime addon identity by design.
 Back up `NexusDB` and `WishlistRealizerDB` before installing a new build. Good
 Enough Nexus preserves compatibility with these SavedVariables so existing user
 data survives upgrades and rollback testing.
+
+## Choose what the Nexus HUD tracks
+
+Nexus compares the Echoes you currently have with the wishlist you want to
+reach. During a level 1 to 79 run, it reads the current run. At level 80, it
+reads the active Ebonhold Saved Build. The wishlist is your Nexus HUD target.
+
+1. Open Character Progression, then open Echoes.
+2. At level 80, choose the Ebonhold Saved Build you are using in the normal
+   loadout menu.
+3. Use the blue **Nexus HUD target** control above the Echo list.
+4. Select the wishlist you want Nexus to pursue for that Saved Build.
+
+That one selection controls the Nexus HUD and Auto mode:
+
+- **Progress** counts wanted Echoes in the current run or loadout against the
+  target.
+- **Still Needed** lists wanted Echoes that the current run or loadout lacks.
+- **To Shed** lists removable extra copies and off-wishlist Echoes in the current
+  run or loadout.
+- **Auto** uses the same target when choosing, freezing, banishing, and rerolling.
+
+Saved Builds do not influence which Echoes appear. Current Ebonhold boards are
+random except for banished choices. If two usable target Echoes appear together,
+Nexus freezes one before taking the other when Freeze is available.
+
+## Level 80 and Orb of Lost Memories
+
+Level 80 currently needs a manual save loop because Ebonhold does not always
+refresh the live loadout mirror after an orb or a completed level 1 to 80 run.
+
+1. Activate the Ebonhold Saved Build you want to improve.
+2. If you just completed another level 1 to 80 run, switch to a different Saved
+   Build and back so Ebonhold reloads the intended one.
+3. Confirm the blue **Nexus HUD target** menu points at the wishlist you want.
+4. Use an Orb of Lost Memories to forget one unwanted Echo.
+5. Keep rolling until the wanted replacement appears.
+6. Save over the same active Ebonhold Saved Build.
+
+After the save, Nexus recalculates Progress, Still Needed, and To Shed. A wanted
+replacement should increase Progress. If the HUD still shows the old loadout,
+switch away and back once, then reopen the Echo page or use `/reload`.
 
 ## Reporting problems
 
@@ -121,7 +170,7 @@ The player ZIP contains `Nexus.toc` and only the runtime Lua files it lists.
 Tests, benchmarks, tools, reports, dependency caches, and repository metadata
 do not enter the archive.
 
-In-addon update notices continue to point to Visceral's official releases page.
+In-addon update notices continue to point to Viscerals' official releases page.
 The release ignores peer advertisements from the interim `1.96.x` line, while
 an official `1.20.0` peer can still trigger the handoff notice.
 

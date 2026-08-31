@@ -26,7 +26,7 @@ end
 local function Create()
     if frame then return frame end
     frame = CreateFrame("Frame", "NexusChangelogPopup", UIParent)
-    frame:SetSize(520, 360)
+    frame:SetSize(520, 420)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 90)
     frame:SetFrameStrata("DIALOG")
     frame:SetBackdrop({
@@ -50,20 +50,21 @@ local function Create()
     body:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 52)
     body:SetJustifyH("LEFT")
     body:SetJustifyV("TOP")
-    body:SetText([[|cffffd200Random Echo boards|r
+    body:SetText([[|cffffd200Choose the Nexus HUD target|r
 
-- Treats every visible Echo slot as random except banished choices.
-- Saved Builds compare progress but no longer predict future offerings.
+- Open Ebonhold Echoes and use the blue Nexus HUD target menu above the Echo list.
+- That wishlist controls Progress, Still Needed, To Shed, and Auto.
 
-|cffffd200Wishlist Freeze|r
+|cffffd200Random boards|r
 
-- When two usable wishlist Echoes appear, freezes one before taking the other.
-- Keeps both random opportunities when Freeze is available.
+- Saved Builds no longer predict any offering. Every slot is random except banished choices.
+- When two wanted Echoes appear, Nexus freezes one before taking the other.
 
-|cffffd200Level 80 recovery|r
+|cffffd200Level 80 and orbs|r
 
-- Falls back to the verified active server slot when the live loadout mirror is temporarily empty.
-- Keeps the selected build as a comparison target, not a prior-run guarantee.]])
+- Nexus compares your HUD target with the active Ebonhold Saved Build.
+- After an orb gives you a wanted Echo, save over that active build. If a new 1-80 run looks stale, switch away and back first.
+- Disable Project Ebonhold Enhanced before using Nexus.]])
 
     local close = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     close:SetSize(92, 24)

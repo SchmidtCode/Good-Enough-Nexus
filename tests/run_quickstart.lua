@@ -10,6 +10,9 @@ local frame = _G.NexusQuickStart
 assert(frame and frame:IsShown(), "guide did not show on first launch")
 assert(frame.body.text:find("Starting fresh", 1, true),
     "first-launch path guidance not shown")
+assert(frame.body.text:find("Nexus HUD target", 1, true)
+    and frame.body.text:find("To Shed", 1, true),
+    "first-launch guide does not explain what the HUD target controls")
 print("first-time guide shows the release setup paths -- OK")
 
 -- dismiss it
