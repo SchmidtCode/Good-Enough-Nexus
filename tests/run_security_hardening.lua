@@ -82,7 +82,7 @@ assert(state.buildInflight + state.dpsInflight == state.maxGlobal,
     "global transfer cap admitted an extra transfer")
 
 -- Every incomplete type expires on the same bounded TTL.
-H.now = H.now + 31
+H.now = H.now + (state.inflightGrace or 120) + 1
 Sync.OnUpdate(0)
 state = Sync.WorkState()
 assert(state.buildInflight == 0 and state.dpsInflight == 0,

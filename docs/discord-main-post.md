@@ -1,4 +1,13 @@
-# Good Enough Nexus 1.96.4
+# Good Enough Nexus 1.96.5 Experimental
+
+## Experimental warning
+
+This release changes how stored leaderboard history moves between Nexus users.
+Back up `NexusDB` and `WishlistRealizerDB` before testing it.
+
+If Nexus causes stutter, long syncs, FPS loss, or unusual memory use, report it
+to me with your Sync diagnostics and `/nexus perf` output, then reinstall
+v1.96.4. Your existing SavedVariables remain compatible with the rollback.
 
 ## Download
 
@@ -9,20 +18,19 @@ Better Nexus 1.20 refactor. Use the official 1.20 release when it is ready.
 
 ## Installation
 
-1. Disable **Project Ebonhold Enhanced**.
-2. Remove the existing `Interface\AddOns\Nexus` folder.
-3. Download and extract the release ZIP.
-4. Confirm the final path is `Interface\AddOns\Nexus\Nexus.toc`.
-5. Start the game or use `/reload`.
-6. Left-click the Nexus minimap button to show the HUD.
+1. Remove the existing `Interface\AddOns\Nexus` folder.
+2. Download and extract the release ZIP.
+3. Confirm the final path is `Interface\AddOns\Nexus\Nexus.toc`.
+4. Start the game or use `/reload`.
+5. Left-click the Nexus minimap button to show the HUD.
 
 Keep the addon folder named `Nexus`.
 
 ## Choose your HUD target
 
-Open **Character Progression > Echoes**. Use the blue **Nexus HUD target** menu
-above the Echo list to pick your wishlist. It drives Progress, Still Needed, To
-Shed, and Auto decisions.
+Open **Ebonhold Character Progression > Echoes**. Use the blue **Nexus HUD target**
+menu above the Echo list to pick your wishlist. It drives Progress, Still Needed,
+To Shed, and Auto decisions.
 
 Boards are random except for banished choices. When two wanted Echoes appear,
 Nexus freezes one before taking the other if possible.
@@ -44,6 +52,22 @@ and back, reopen Echoes, or use `/reload`.
 
 Wishlists and Auto, build sharing, DPS records, leaderboards, missing Echo and
 tome tracking, Saved Build automation, and existing databases.
+
+## Experimental leaderboard history sync
+
+Your own addon still records only your highest DPS for each encounter. Each new
+owner record receives a server timestamp. During sync, the newest owner snapshot
+wins, while the owner's local capture continues to reject weaker attempts.
+
+Current clients can relay stored records while the original player is offline.
+This lets leaderboard history spread as more players install v1.96.5. Records
+sent directly by v1.19.5 players remain compatible, but older clients cannot
+relay third-party history and may keep showing an older highest score until they
+update.
+
+Relayed history is marked unverified until that character sends the record
+directly. Sync uses bucket hashes and stops after two quiet unchanged passes, so
+matching users do not resend the complete leaderboard.
 
 ## Support
 

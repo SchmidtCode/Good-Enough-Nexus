@@ -1,3 +1,13 @@
+# Nexus 1.96.5 Experimental Leaderboard Sync
+
+- Lets current Nexus clients carry stored DPS records while the original player is offline.
+- Gives owner records a server timestamp so the newest owner snapshot wins during synchronization.
+- Keeps local DPS capture on highest-DPS-wins, so weaker personal attempts never replace a character's saved best.
+- Accepts direct records from v1.19.5 while limiting full third-party history relay to current clients.
+- Uses compact relay packets, bucket claims, paced queues, and two quiet unchanged passes to bound synchronization work.
+
+This release is experimental. Back up `NexusDB` and `WishlistRealizerDB` before testing. Report stutter, long syncs, FPS loss, or unusual memory use to me with Sync diagnostics and `/nexus perf` output, then reinstall v1.96.4.
+
 # Nexus 1.96.4 Echo Update
 
 - Treats every Echo board slot as random; Saved Builds no longer predict future offerings.

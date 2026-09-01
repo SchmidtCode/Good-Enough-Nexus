@@ -31,8 +31,8 @@ H.sentChatMessages={}
 Sync.HandleIncoming("WLRQ|Current|"..bh.."|"..dh.."|req-current","Current")
 Pump(20)
 assert(#H.sentChatMessages==0,"current requester should receive no duplicate traffic")
--- A matching per-build bucket claim suppresses only that safely relayable
--- build bucket. Legacy whole-state claims cannot suppress owner-only state.
+-- A matching per-build bucket claim suppresses only that build bucket.
+-- Legacy whole-state claims cannot suppress other useful state.
 H.sentChatMessages={}
 Sync.HandleIncoming("WLRQ|NewPeer|"..emptyBuckets.."|"..emptyBuckets.."|req-claim","NewPeer")
 local buildParts={}; for p in bh:gmatch("([^,]+)") do buildParts[#buildParts+1]=p end
@@ -58,5 +58,5 @@ for _,m in ipairs(H.sentChatMessages) do
   dpsMsg=dpsMsg or not not m.text:find("^WLD2|")
 end
 assert(claim and buildMsg,"different-state peer incorrectly suppressed useful build contribution")
-assert(not dpsMsg,"relay redistributed a verified DPS row without origin evidence")
-print("mesh hashes, claims, complete builds, and DPS origin authority -- OK")
+assert(dpsMsg,"relay did not contribute downgraded DPS evidence")
+print("mesh hashes, claims, complete builds, and unverified DPS relay -- OK")

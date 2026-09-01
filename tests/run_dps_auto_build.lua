@@ -10,6 +10,7 @@ local Adapter = Nexus.GameAdapter
 local CB = Nexus.CommunityBuilds
 local clock, wall = 1000, 50000
 GetTime=function() return clock end; time=function() wall=wall+1 return wall end
+GetServerTime=function() return 60000 end
 UnitName=function() return "Recordmage" end
 UnitLevel=function() return 80 end
 UnitClass=function() return "Mage", "MAGE" end
@@ -44,6 +45,8 @@ assert(NexusDB.dpsCapture.personalBest[fp].dummy.evidenceKey
 local lb=DPS.GetLeaderboard(buildId,"dummy")
 assert(#lb==1 and lb[1].dps==24000000 and lb[1].player=="Recordmage", "captured personal best should become the public build record")
 assert(#sent==1 and sent[1].fingerprint==DPS.GetEchoKey(build.echoes), "the exact record should be broadcast once")
+assert(sent[1].generationAt==60000,
+    "immediate owner broadcast lost the server generation")
 
 -- Lower pull: no new build, no public update, no additional broadcast.
 stubDps=20000000; DPS.OnCombatStart(); clock=clock+35; DPS.OnUpdate(10); DPS.OnCombatEnd()
@@ -57,7 +60,7 @@ assert(DPS.GetLeaderboard(buildId,"dummy")[1].dps==26000000 and #sent==2, "highe
 -- Higher remote record replaces; lower stale data is rejected.
 local echoes=build.echoes
 assert(DPS.ReceiveRecord({v=3,f=fp,e=echoes,c="dummy",d=27000000,u=65,t=60000,p="Othermage",k="MAGE",l=80,b=buildId}), "higher remote record should be accepted")
-assert(DPS.ReceiveRecord({v=3,f=fp,e=echoes,c="dummy",d=25000000,u=65,t=60001,p="Oldmage",k="MAGE",l=80,b=buildId}), "a different character should keep its own best entry")
-assert(not DPS.ReceiveRecord({v=3,f=fp,e=echoes,c="dummy",d=24000000,u=65,t=60002,p="Oldmage",k="MAGE",l=80,b=buildId}), "a lower record for the same character should be rejected")
+assert(DPS.ReceiveRecord({v=3,f=fp,e=echoes,c="dummy",d=25000000,u=65,t=60001,g=60001,p="Oldmage",k="MAGE",l=80,b=buildId}), "a different character should keep its own best entry")
+assert(not DPS.ReceiveRecord({v=3,f=fp,e=echoes,c="dummy",d=24000000,u=65,t=60002,g=60001,p="Oldmage",k="MAGE",l=80,b=buildId}), "a lower record in the same owner generation should be rejected")
 assert(DPS.GetLeaderboard(buildId,"dummy")[1].player=="Othermage", "highest exact-loadout holder should remain authoritative")
 print("automatic exact-loadout build and single-record DPS workflow -- OK")

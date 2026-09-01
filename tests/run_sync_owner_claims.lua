@@ -33,10 +33,32 @@ currentName="Owner"; Pump(100)
 local sawDps,sawDpsClaim=false,false
 for _,m in ipairs(H.sentChatMessages) do
   sawDps=sawDps or not not m.text:find("^WLD2|")
-  sawDpsClaim=sawDpsClaim or not not m.text:find("^WLBC|[^|]+|[^|]+|[^|]+|D|")
+  sawDpsClaim=sawDpsClaim or (m.text:find("^WLBC|") ~= nil
+    and m.text:find("||D||"..dpsBucket.."||",1,true) ~= nil)
 end
 assert(sawDps,"non-owner claim suppressed the actual DPS owner")
 assert(not sawDpsClaim,"owner-only DPS bucket emitted a suppressible claim")
+
+-- A bucket containing only relayed history may claim the matching bucket.
+-- This elects one carrier instead of making every relay resend duplicates.
+currentName="Relay"; clock=clock+100
+NexusDB={communityBuilds={},syncTombstones={},dpsCapture={}}
+Sync.Init(Nexus.Codec,{}); DPS.Init({},Sync); Pump(100); H.sentChatMessages={}
+assert(DPS.ReceiveRecord({v=6,f=fp,h=hash,e=echoes,c="dummy",d=25000000,u=65,
+  t=49000,g=49000,p="Owner",k="MAGE",o="owner@ebonhold",r="ebonhold",l=80},
+  nil,"legacy-relay"))
+local _,relayDpsHash=Sync.GetCompatibilityHashes()
+local relayBucket=NonzeroBucket(relayDpsHash)
+assert(DPS.SyncBucketClaimable and DPS.SyncBucketClaimable(relayBucket),
+  "relay-only DPS bucket was not claimable")
+Sync.HandleIncoming("WLRQ|RelayRequester|0|0|dps-relay","RelayRequester")
+Pump(100)
+local sawRelayClaim=false
+for _,m in ipairs(H.sentChatMessages) do
+  sawRelayClaim=sawRelayClaim or (m.text:find("^WLBC|") ~= nil
+    and m.text:find("||D||"..relayBucket.."||",1,true) ~= nil)
+end
+assert(sawRelayClaim,"relay-only DPS bucket did not elect one responder")
 
 -- Tombstone: a relay holds Origin's valid delete. Claims from another relay
 -- cannot suppress Origin's later authoritative WLRD response.
@@ -57,7 +79,8 @@ currentName="Origin"; Pump(100)
 local sawDelete,sawDeleteClaim=false,false
 for _,m in ipairs(H.sentChatMessages) do
   sawDelete=sawDelete or not not m.text:find("^WLRD|")
-  sawDeleteClaim=sawDeleteClaim or not not m.text:find("^WLBC|[^|]+|[^|]+|[^|]+|B|")
+  sawDeleteClaim=sawDeleteClaim or (m.text:find("^WLBC|") ~= nil
+    and m.text:find("||B||"..buildBucket.."||",1,true) ~= nil)
 end
 assert(sawDelete,"non-owner claim suppressed the actual deletion owner")
 assert(not sawDeleteClaim,"tombstone bucket emitted a suppressible claim")

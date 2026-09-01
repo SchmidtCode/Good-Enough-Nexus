@@ -28,10 +28,25 @@ local function ValidShape(payload)
     return payload.h ~= nil
 end
 
-local function ValidMetrics(payload)
+local function MarkedLegacyRelay(payload, dependencies)
+    local version = tonumber(payload and payload.v)
+    return dependencies and dependencies.allowLegacyRelay == true
+        and version and version >= 2 and version <= 6
+        and payload.y == 1
+end
+
+local function ValidMetrics(payload, dependencies)
     if not InRange(payload.d, 0.000001, 500000000) then return false end
-    if not InRange(payload.u, 30, math.huge) then return false end
-    if not InRange(payload.t, 0.000001, math.huge) then return false end
+    local minimumDuration = payload.c == "lk" and 20 or 30
+    local metadataFreeRelay = MarkedLegacyRelay(payload, dependencies)
+        and tonumber(payload.u) == 0 and tonumber(payload.t) == 0
+    if not metadataFreeRelay
+        and not InRange(payload.u, minimumDuration, math.huge) then return false end
+    if not metadataFreeRelay
+        and not InRange(payload.t, 0.000001, math.huge) then return false end
+    if payload.g ~= nil and not InRange(payload.g, 0, math.huge) then
+        return false
+    end
     if not InRange(payload.l, 1, 80) then return false end
     return tonumber(payload.l) == math.floor(tonumber(payload.l))
 end
@@ -47,9 +62,17 @@ end
 local function ValidIdentity(payload, dependencies)
     if type(dependencies.samePeer) ~= "function" then return false end
     if type(dependencies.ownerMatches) ~= "function" then return false end
-    if not dependencies.samePeer(tostring(payload.p or ""),
-        tostring(dependencies.localPlayer or "")) then return false end
-    return dependencies.ownerMatches(payload.o, tostring(payload.p or "")) == true
+    local player = tostring(payload.p or "")
+    if dependencies.samePeer(player,
+        tostring(dependencies.localPlayer or "")) then
+        return dependencies.ownerMatches(payload.o, player) == true
+    end
+    local version = tonumber(payload.v)
+    return dependencies.allowLegacyRelay == true
+        and version ~= nil and version >= 2 and version <= 6
+        and (payload.o == nil
+            or (payload.y == 1
+                and dependencies.ownerMatches(payload.o, player) == true))
 end
 
 local function ValidLoadout(payload, dependencies)
@@ -65,7 +88,7 @@ function Validator.Validate(payload, dependencies)
     dependencies = dependencies or {}
     if not ValidShape(payload) then return false end
     if payload.c ~= "dummy" and payload.c ~= "lk" then return false end
-    if not ValidMetrics(payload) then return false end
+    if not ValidMetrics(payload, dependencies) then return false end
     if not ValidPlayer(payload) then return false end
     if not ValidIdentity(payload, dependencies) then return false end
     return ValidLoadout(payload, dependencies)

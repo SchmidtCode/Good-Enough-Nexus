@@ -3,7 +3,7 @@ name: Draft Nexus community release
 on:
   push:
     tags:
-      - "v1.96.4"
+      - "v1.96.5"
 
 permissions:
   contents: write
@@ -102,8 +102,9 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --draft \
-            --title "Nexus ${GITHUB_REF_NAME} community release" \
+            --title "Nexus ${GITHUB_REF_NAME} Experimental release" \
             --notes-file "$notes" \
+            --prerelease \
             "dist/Nexus-${GITHUB_REF_NAME}.zip#Nexus player addon" \
             "dist/Nexus-${GITHUB_REF_NAME}.zip.sha256#SHA-256 checksum" \
             "dist/Nexus-${GITHUB_REF_NAME}-build.json#Tagged build manifest"

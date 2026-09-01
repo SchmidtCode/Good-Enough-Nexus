@@ -79,7 +79,7 @@ local MAX_PENDING_LOADOUTS = 128
 local MAX_KNOWN_PEERS = 512
 local SEND_INTERVAL   = 1.10   -- conservative channel pacing; avoids server chat spam/mutes
 local RECEIVE_WINDOW  = 60     -- compatibility/status timer inside an allowed session
-local INFLIGHT_GRACE  = 30     -- seconds to finish an interrupted chunk transfer
+local INFLIGHT_GRACE  = 240    -- retain partials across several 60s retries
 local INFLIGHT_MAX_AGE = 300   -- absolute cap even if duplicate chunks keep arriving
 local REQUEST_COOLDOWN = 6     -- min seconds between our own Sync Now presses
 local ANSWER_COOLDOWN  = 2     -- minimum gap between completed peer responses
@@ -311,16 +311,43 @@ end
 
 function Sync.IsKnownPeer(name) return Sync.GetPeerInfo(name) ~= nil end
 
+function Sync.PeerDiagnostics()
+    local out = {}
+    local now = Now and Now() or ((GetTime and GetTime()) or 0)
+    for _, peer in pairs(knownPeers) do
+        out[#out + 1] = {
+            name=tostring(peer.name or "?"),
+            version=tostring(peer.version or "unknown"),
+            age=math.max(0, now - (tonumber(peer.lastSeen) or now)),
+        }
+    end
+    table.sort(out, function(a, b)
+        return a.name:lower() < b.name:lower()
+    end)
+    return out
+end
+
 local stats = {
     sent=0, received=0, duplicatesSkipped=0,
     malformedRejected=0, ignoredOutsideWindow=0,
     oversizeDropped=0, updated=0, skippedUpToDate=0,
     queueOverflowRejected=0, pendingOverflowRejected=0,
     baselineSkipped=0, overlaySent=0,
+    wireTooLongRejected=0, wireControlRejected=0,
+    wireNonStringRejected=0, maxRejectedWireLength=0,
+    dpsLegacyReceived=0, dpsLegacyAccepted=0, dpsLegacyRejected=0,
+    dpsChunksReceived=0, dpsTransfersCompleted=0,
+    dpsDirectAccepted=0, dpsRelayAccepted=0,
+    dpsOwnerRejected=0, dpsRecordRejected=0,
+    dpsTransferExpired=0,
+    dpsOwnerQueued=0, dpsRelayQueued=0, dpsRelayCompactQueued=0,
+    dpsValidationRejected=0, dpsQueueRejected=0,
 }
 
 function Sync.WorkState()
     local buildCount, buildBytes, dpsCount, dpsBytes = 0, 0, 0, 0
+    local dpsChunksHeld, dpsChunksExpected = 0, 0
+    local dpsOldestAge, dpsQuietAge = 0, 0
     local pendingResponseCount, pendingLoadoutCount, pendingDeleteCount = 0, 0, 0
     local peerCount = 0
     for _, entry in pairs(inflight) do
@@ -330,6 +357,13 @@ function Sync.WorkState()
     for _, entry in pairs(dpsInflight) do
         dpsCount = dpsCount + 1
         dpsBytes = dpsBytes + (tonumber(entry.bytes) or 0)
+        dpsChunksHeld = dpsChunksHeld + (tonumber(entry.received) or 0)
+        dpsChunksExpected = dpsChunksExpected + (tonumber(entry.total) or 0)
+        local now = Now()
+        dpsOldestAge = math.max(dpsOldestAge,
+            now - (tonumber(entry.t0) or now))
+        dpsQuietAge = math.max(dpsQuietAge,
+            now - (tonumber(entry.lastSeen) or now))
     end
     for _ in pairs(pendingResponses) do
         pendingResponseCount = pendingResponseCount + 1
@@ -351,7 +385,11 @@ function Sync.WorkState()
     return {
         buildInflight=buildCount, buildBytes=buildBytes,
         dpsInflight=dpsCount, dpsBytes=dpsBytes,
+        dpsChunksHeld=dpsChunksHeld, dpsChunksExpected=dpsChunksExpected,
+        dpsOldestAge=dpsOldestAge, dpsQuietAge=dpsQuietAge,
         maxGlobal=MAX_INFLIGHT_GLOBAL, maxPerSender=MAX_INFLIGHT_PER_SENDER,
+        inflightActive=15, inflightGrace=INFLIGHT_GRACE,
+        inflightMaxAge=INFLIGHT_MAX_AGE,
         maxEncodedBytes=MAX_ENCODED_BYTES,
         sending=sending, control=control, outbound=sending + control,
         recovery=recovery,
@@ -1721,7 +1759,7 @@ end
 
 -- Broadcast a validated exact-set DPS record. The JSON/base64 payload is
 -- chunked using the same 255-byte-safe discipline as build sync.
-local function DpsValidationDependencies()
+local function DpsValidationDependencies(allowLegacyRelay)
     local capture = Nexus and Nexus.DpsCapture
     return {
         echoKey=capture and capture.GetEchoKey,
@@ -1729,13 +1767,25 @@ local function DpsValidationDependencies()
         samePeer=SamePeer,
         ownerMatches=OwnerKeyMatchesAuthor,
         localPlayer=MyName(),
+        allowLegacyRelay=allowLegacyRelay == true,
     }
 end
 
 function Responder.ValidatePreparedDps(payload)
     local validator = Nexus and Nexus.DpsWireValidator
     return validator and validator.Validate
-        and validator.Validate(payload, DpsValidationDependencies()) or false
+        and validator.Validate(payload, DpsValidationDependencies(true)) or false
+end
+
+local function CountQueuedDps(payload)
+    if SamePeer(payload and payload.p, MyName()) then
+        stats.dpsOwnerQueued = (stats.dpsOwnerQueued or 0) + 1
+        return false
+    end
+    stats.dpsRelayQueued = (stats.dpsRelayQueued or 0) + 1
+    stats.dpsRelayCompactQueued =
+        (stats.dpsRelayCompactQueued or 0) + 1
+    return true
 end
 
 function Sync.BroadcastDpsRecord(record, prepared, responseMode)
@@ -1754,8 +1804,13 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode)
             return false, "sync queue full", prepared
         end
         local queued, queueWhy = EnqueueBatch(prepared.messages)
-        if not queued then return false, queueWhy, prepared end
-        LogEvent("TX","DPS2 [%s] %.0f by %s (%d chunks)",
+        if not queued then
+            stats.dpsQueueRejected = (stats.dpsQueueRejected or 0) + 1
+            return false, queueWhy, prepared
+        end
+        local relayed = CountQueuedDps(prepared.payload)
+        LogEvent("TX","DPS2%s [%s] %.0f by %s (%d chunks)",
+            relayed and " relay" or "",
             tostring(prepared.payload.c), prepared.payload.d,
             prepared.payload.p, #prepared.messages)
         return true
@@ -1770,37 +1825,62 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode)
     local dps = tonumber(record.dps)
     local duration = tonumber(record.duration)
     local stamp = tonumber(record.ts)
+    local generationAt = tonumber(record.generationAt or record.g)
+        or stamp
     local level = tonumber(record.level)
     local player = tostring(record.player or "")
+    local relayMode = responseMode and not SamePeer(player, MyName())
     local loadoutHash = record.loadoutHash
     if not loadoutHash and D and D.GetEchoHash then
         loadoutHash = D.GetEchoHash(record.echoes)
     end
     local payload = {
-        v = tonumber(record.protocolVersion) or 5,
+        v = relayMode and 6 or (tonumber(record.protocolVersion) or 5),
         h = loadoutHash,
         f = record.fingerprint,
         e = record.echoes,
         c = record.category, d = dps,
-        u = duration, t = stamp,
+        u = duration, t = stamp, g = generationAt,
         p = player, l = level,
-        k = record.class, o = record.ownerKey, r = record.realm,
+        k = record.class,
+        o = record.ownerKey,
+        r = record.realm,
+        y = relayMode and 1 or nil,
         b = record.buildId,
         lk = (type(record.lockedEchoes)=="table" and #record.lockedEchoes>0)
              and record.lockedEchoes or nil,
     }
     local validator = Nexus and Nexus.DpsWireValidator
     if not (validator and validator.Validate
-        and validator.Validate(payload, DpsValidationDependencies())) then
-        return false
+        and validator.Validate(payload,
+            DpsValidationDependencies(relayMode))) then
+        stats.dpsValidationRejected = (stats.dpsValidationRejected or 0) + 1
+        LogEvent("DPS", "DROP outbound %s record for %s: validation failed",
+            relayMode and "relay" or "owner", tostring(player))
+        return false, "invalid DPS record"
     end
     payload.d = math.floor(dps)
     if responseMode then
         Responder.stats.dpsSerializations =
             Responder.stats.dpsSerializations + 1
     end
-    local encoded = Codec.Base64Encode(Codec.JSONEncode(payload))
-    local transferId = tostring(payload.p) .. ":" .. tostring(payload.t) .. ":" .. tostring(payload.d)
+    -- A relay does not need to resend the verbose exact Echo list. The
+    -- receiver accepts this compact form only when build ID and Echo hash
+    -- match an exact build already present in its synced catalog. Keeping the
+    -- fully validated payload in prepared state preserves retry validation.
+    local wirePayload = payload
+    if relayMode then
+        wirePayload = {
+            v=6, h=payload.h, c=payload.c, d=payload.d,
+            u=payload.u, t=payload.t, g=payload.g,
+            p=payload.p, l=payload.l,
+            o=payload.o, r=payload.r, y=1, b=payload.b,
+        }
+    end
+    local encoded = Codec.Base64Encode(Codec.JSONEncode(wirePayload))
+    local transferId = tostring(wirePayload.p) .. ":"
+        .. tostring(wirePayload.g or wirePayload.t) .. ":"
+        .. tostring(wirePayload.d)
     if not ValidTransferIdentifier(transferId)
         or #encoded > MAX_ENCODED_BYTES then return false end
     local header = CODE_DPS2 .. "|" .. MyName() .. "|" .. transferId .. "|999/999|"
@@ -1820,11 +1900,17 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode)
     end
     prepared = {messages=messages, payload=payload}
     if not Responder.CanAdmit(#messages) then
+        stats.dpsQueueRejected = (stats.dpsQueueRejected or 0) + 1
         return false, "sync queue full", prepared
     end
     local queued, queueWhy = EnqueueBatch(messages)
-    if not queued then return false, queueWhy, prepared end
-    LogEvent("TX","DPS2 [%s] %.0f by %s (%d chunks)",
+    if not queued then
+        stats.dpsQueueRejected = (stats.dpsQueueRejected or 0) + 1
+        return false, queueWhy, prepared
+    end
+    CountQueuedDps(payload)
+    LogEvent("TX","DPS2%s [%s] %.0f by %s (%d chunks)",
+        relayMode and " relay" or "",
         tostring(payload.c), payload.d, payload.p, total)
     return true
 end
@@ -1840,10 +1926,36 @@ function Sync.BroadcastDps(buildId, player, dps, level, category)
 end
 
 local function HandleDps(parts)
-    -- The legacy format has no duration, timestamp, or exact Echo evidence.
-    -- Keep the code recognized so old traffic fails cleanly, but never admit
-    -- it to a verified leaderboard.
-    LogEvent("RX", "DROP legacy DPS submission without required evidence")
+    stats.dpsLegacyReceived = (stats.dpsLegacyReceived or 0) + 1
+    local sender, buildId, player = parts[2], parts[3], parts[4]
+    local dps, level, category = tonumber(parts[5]), tonumber(parts[6]), parts[7]
+    if not ValidPeerName(sender)
+        or not ValidIdentifier(buildId, MAX_BUILD_ID_BYTES)
+        or not ValidPeerName(player)
+        or not SamePeer(sender, player)
+        or not dps or dps < 1000 or dps > 500000000
+        or not level or level < 1 or level > 80 or level ~= math.floor(level)
+        or (category ~= "dummy" and category ~= "lk") then
+        LogEvent("RX", "DROP invalid legacy DPS submission")
+        stats.dpsLegacyRejected = (stats.dpsLegacyRejected or 0) + 1
+        return false
+    end
+    local capture = Nexus.DpsCapture
+    if not (capture and type(capture.ReceiveSubmission) == "function") then
+        stats.dpsLegacyRejected = (stats.dpsLegacyRejected or 0) + 1
+        return false
+    end
+    local ok, accepted = pcall(capture.ReceiveSubmission,
+        buildId, player, dps, level, category, 0, "legacy")
+    if ok and accepted then
+        stats.dpsLegacyAccepted = (stats.dpsLegacyAccepted or 0) + 1
+        LogEvent("RX", "ACCEPT legacy DPS '%s' by %s (unverified)",
+            tostring(buildId), tostring(player))
+        return true
+    end
+    LogEvent("RX", "DROP legacy DPS submission for unknown or invalid build")
+    stats.dpsLegacyRejected = (stats.dpsLegacyRejected or 0) + 1
+    return false
 end
 
 local function HandleDps2(parts)
@@ -1856,6 +1968,7 @@ local function HandleDps2(parts)
     idx, total = tonumber(idx), tonumber(total)
     if not (idx and total and idx >= 1 and idx <= total
         and total >= 1 and total <= MAX_CHUNKS) then return false end
+    stats.dpsChunksReceived = (stats.dpsChunksReceived or 0) + 1
     autoConverge.lastInbound = Now()
     local key = sender .. ":" .. transferId
     local e = dpsInflight[key]
@@ -1886,28 +1999,55 @@ local function HandleDps2(parts)
     e.received = e.received + 1
     if e.received ~= total then return false end
     dpsInflight[key] = nil
+    stats.dpsTransfersCompleted = (stats.dpsTransfersCompleted or 0) + 1
     local raw = Codec.Base64Decode(table.concat(e.chunks, "", 1, total))
     local record = raw and Codec.JSONDecode(raw)
     if type(record) ~= "table" then return false end
     if Nexus.DpsCapture and Nexus.DpsCapture.ReceiveRecord then
-        if not SamePeer(record.p or record.player, sender) then
+        local directOwner = SamePeer(record.p or record.player, sender)
+        local recordVersion = tonumber(record.v or record.protocolVersion)
+        -- Pre-v7 peers relayed exact DPS without original transport identity.
+        -- Current responders retain that bounded wire form for historical
+        -- propagation. Every receiver keeps it unverified. Current v7 records
+        -- still require direct owner transport.
+        local legacyRelay = not directOwner
+            and recordVersion and recordVersion >= 2 and recordVersion <= 6
+            and ((record.o == nil and record.ownerKey == nil)
+                or record.y == 1 or record.relay == 1)
+        if not directOwner and not legacyRelay then
+            stats.dpsOwnerRejected = (stats.dpsOwnerRejected or 0) + 1
             LogEvent("RX", "DROP DPS owner mismatch from %s", tostring(sender))
             return false
         end
-        local ok, accepted = pcall(
-            Nexus.DpsCapture.ReceiveRecord, record, sender)
+        local ok, accepted, rejectReason = pcall(
+            Nexus.DpsCapture.ReceiveRecord, record,
+            directOwner and sender or nil,
+            legacyRelay and "legacy-relay" or nil)
         if ok and accepted then
-            -- Mesh redistribution: relay the record so peers learn about it.
-            Sync.BroadcastDpsRecord(record)
-            -- Also relay the exact echo list if we have it locally —
-            -- the original player may be offline so we carry the data forward.
-            local buildId = record.b or record.buildId
-            local build = buildId and CatalogGet(buildId)
-            if build and type(build.echoes) == "table" and #build.echoes > 0 then
-                pcall(Sync.BroadcastBuild, build)
+            if legacyRelay then
+                stats.dpsRelayAccepted = (stats.dpsRelayAccepted or 0) + 1
+                LogEvent("RX", "ACCEPT relayed legacy DPS from %s (unverified)",
+                    tostring(sender))
+            else
+                stats.dpsDirectAccepted = (stats.dpsDirectAccepted or 0) + 1
+                -- Mesh redistribution: relay the record so peers learn about it.
+                Sync.BroadcastDpsRecord(record)
+                -- Also relay the exact echo list if we have it locally —
+                -- the original player may be offline so we carry the data forward.
+                local buildId = record.b or record.buildId
+                local build = buildId and CatalogGet(buildId)
+                if build and type(build.echoes) == "table" and #build.echoes > 0 then
+                    pcall(Sync.BroadcastBuild, build)
+                end
             end
             return true
         end
+        stats.dpsRecordRejected = (stats.dpsRecordRejected or 0) + 1
+        rejectReason = ok and tostring(rejectReason or "unspecified")
+            or "capture-error"
+        stats.lastDpsRejectReason = rejectReason
+        LogEvent("DPS", "DROP completed %s DPS record from %s: %s",
+            legacyRelay and "relay" or "direct", tostring(sender), rejectReason)
     end
     return false
 end
@@ -1952,6 +2092,10 @@ CleanExpiredInflight = function()
     for key, v in pairs(dpsInflight) do
         if now - (v.lastSeen or v.t0 or now) > INFLIGHT_GRACE
             or now - (v.t0 or now) > INFLIGHT_MAX_AGE then
+            stats.dpsTransferExpired = (stats.dpsTransferExpired or 0) + 1
+            LogEvent("DPS", "expired partial DPS transfer from %s (%d/%d chunks)",
+                tostring(v.sender or "?"), tonumber(v.received) or 0,
+                tonumber(v.total) or 0)
             dpsInflight[key] = nil
         end
     end
@@ -2347,6 +2491,7 @@ function Responder.PrepareResponseEntry(entry)
         SplitHashes(localDeltaHash)
     local peerD, myD = SplitHashes(entry.peerDpsHash),
         SplitHashes(myDpsHash)
+    local dps = Nexus and Nexus.DpsCapture
     local buckets, snapshot = {}, nil
     for i = 1, BUILD_BUCKETS do
         if tostring(peerB[i] or "") ~= tostring(myB[i] or "") then
@@ -2361,7 +2506,9 @@ function Responder.PrepareResponseEntry(entry)
             entry.dpsProgress[i] = entry.dpsProgress[i] or {}
             buckets["D"..i]={kind="D", bucket=i,
                 hash=tostring(myD[i] or "0"),
-                progress=entry.dpsProgress[i], claimable=false,
+                progress=entry.dpsProgress[i],
+                claimable=dps and dps.SyncBucketClaimable
+                    and dps.SyncBucketClaimable(i) == true,
                 remaining=BucketDelay(entry.key,"D",i)}
         end
     end
@@ -2584,6 +2731,32 @@ local function RejectIncoming(reason)
     return false
 end
 
+local function RejectWireEnvelope(kind, text)
+    local counter
+    if kind == "too long" then
+        counter = "wireTooLongRejected"
+    elseif kind == "control byte" then
+        counter = "wireControlRejected"
+    else
+        counter = "wireNonStringRejected"
+    end
+    stats[counter] = (tonumber(stats[counter]) or 0) + 1
+    stats.malformedRejected = (stats.malformedRejected or 0) + 1
+    local length = type(text) == "string" and #text or 0
+    stats.maxRejectedWireLength = math.max(
+        tonumber(stats.maxRejectedWireLength) or 0, length)
+    stats.lastRejectedWireKind = kind
+    stats.lastRejectedWireLength = length
+    stats.lastRejectedWirePrefix = type(text) == "string"
+        and text:sub(1, 8):gsub("[%c]", "?") or type(text)
+    local count = stats[counter]
+    if count <= 5 or count % 100 == 0 then
+        LogEvent("RX", "REJECT envelope: %s len=%d count=%d prefix=%q",
+            kind, length, count, tostring(stats.lastRejectedWirePrefix))
+    end
+    return false
+end
+
 local function AcceptPeer(sender, version)
     local parsed = version and Nexus.Version and Nexus.Version.Parse
         and Nexus.Version.Parse(version) or nil
@@ -2601,8 +2774,15 @@ function Sync.HandleIncoming(text, sender)
         suspendReason = tostring(why or "policy")
         return false
     end
-    if type(text) ~= "string" or #text > MAX_WIRE_BYTES
-        or text:find("[%c]") then return RejectIncoming("invalid wire length") end
+    if type(text) ~= "string" then
+        return RejectWireEnvelope("non-string", text)
+    end
+    if #text > MAX_WIRE_BYTES then
+        return RejectWireEnvelope("too long", text)
+    end
+    if text:find("[%c]") then
+        return RejectWireEnvelope("control byte", text)
+    end
     text = text:gsub("||", "|")
     local parts = SplitWire(text)
     if not parts then return RejectIncoming("too many fields") end
@@ -2743,7 +2923,7 @@ function Sync.HandleIncoming(text, sender)
 
     if code == CODE_DPS then
         if #parts ~= 7 then return RejectIncoming("invalid legacy DPS") end
-        HandleDps(parts)
+        if HandleDps(parts) then return AcceptPeer(protocolSender) end
         return false
     end
 
@@ -2846,10 +3026,23 @@ local function PumpLegacyRecovery(elapsed)
     legacyRecoveryHead = legacyRecoveryHead + 1
 end
 
+function Sync._RecentlyActiveTransfer(store)
+    local now = Now()
+    for _, entry in pairs(store) do
+        if now - (tonumber(entry.lastSeen) or now) <= 15 then
+            return true
+        end
+    end
+    return false
+end
+
 local function QueueBusy()
     if controlQueue[controlQueueHead] then return true end
     if sendQueue[sendQueueHead] then return true end
-    if next(inflight) or next(dpsInflight) then return true end
+    -- A quiet partial must survive long enough to merge chunks from the next
+    -- convergence response, but it must not prevent that retry from starting.
+    if Sync._RecentlyActiveTransfer(inflight)
+        or Sync._RecentlyActiveTransfer(dpsInflight) then return true end
     if next(pendingResponses) or next(pendingLoadouts) then return true end
     if PendingDeleteCount() > 0 then return true end
     if Responder.manualPublish then return true end
@@ -3221,6 +3414,10 @@ function Sync.Init(codec, adapter)
     stats.oversizeDropped, stats.updated, stats.skippedUpToDate = 0, 0, 0
     stats.queueOverflowRejected, stats.pendingOverflowRejected = 0, 0
     stats.baselineSkipped, stats.overlaySent = 0, 0
+    stats.lastRejectedWireKind = nil
+    stats.lastRejectedWireLength = nil
+    stats.lastRejectedWirePrefix = nil
+    stats.lastDpsRejectReason = nil
     Responder.Reset()
     hotBuilds    = {}  -- clear on init
     recentBuildBroadcast = {}
