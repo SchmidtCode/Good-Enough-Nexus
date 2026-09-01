@@ -10,6 +10,7 @@ local DPS = Nexus.DpsCapture
 local Adapter = Nexus.GameAdapter
 local clock = 1000; GetTime = function() return clock end
 local wall = 50000; time = function() return wall end
+GetServerTime = function() return 60000 end
 UnitName = function() return "Solkr" end
 UnitLevel = function() return 80 end
 
@@ -66,6 +67,8 @@ stubDps = 75000
 clock = clock + 15; DPS.OnCombatEnd()
 local lb = DPS.GetLeaderboard(buildId,"dummy")
 assert(#lb == 1 and lb[1].dps == 75000, "dummy session not recorded: "..(#lb > 0 and lb[1].dps or "empty"))
+assert(lb[1].generationAt == 60000,
+    "local owner generation did not use the server timestamp")
 assert(#DPS.GetLeaderboard(buildId,"lk") == 0, "LK leaderboard should be empty after dummy session")
 print("dummy session recorded correctly, LK leaderboard untouched -- OK")
 

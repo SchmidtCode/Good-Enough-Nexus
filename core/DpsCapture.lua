@@ -299,6 +299,33 @@ local function BetterRow(candidate, existing)
     return tostring(candidate and candidate.fingerprint or "") < tostring(existing and existing.fingerprint or "")
 end
 
+local function ServerNow()
+    local value = GetServerTime and GetServerTime()
+    if tonumber(value) then return math.floor(tonumber(value)) end
+    value = time and time()
+    return tonumber(value) and math.floor(tonumber(value)) or 0
+end
+
+-- Local capture uses BetterRow so a weaker run never changes the owner's
+-- stored best. Replication first compares the owner's persisted generation,
+-- then uses the same deterministic best-record ordering inside a generation.
+local function GenerationAt(row)
+    local value = tonumber(row and (row.generationAt or row.g))
+    if value == nil then value = tonumber(row and row.ts) or 0 end
+    if value < 0 then return 0 end
+    return math.floor(value)
+end
+
+local function BetterReplicatedRow(candidate, existing)
+    if not existing then return true end
+    local candidateGeneration = GenerationAt(candidate)
+    local existingGeneration = GenerationAt(existing)
+    if candidateGeneration ~= existingGeneration then
+        return candidateGeneration > existingGeneration
+    end
+    return BetterRow(candidate, existing)
+end
+
 local function MigrateLegacyLeaderboard()
     if legacyMigrated then return false end
     local db = DB()
@@ -1136,6 +1163,7 @@ local function SortedEntries(row)
     return {{
         player = row.player or "?", dps = tonumber(row.dps) or 0,
         level = tonumber(row.level) or 0, ts = tonumber(row.ts) or 0,
+        generationAt = GenerationAt(row),
     }}
 end
 
@@ -1176,14 +1204,27 @@ function DPS.IdentityLookupStats()
 end
 
 -- A build is Details-verified only when a valid public record exists for its
--- exact loadout and the capture met the shared 30-second evidence floor.
+-- exact loadout and the capture met the encounter-specific evidence floor.
 function DPS.GetBuildVerification(buildId)
     local key = BuildKey(buildId)
     if not key then return nil end
+    MigrateLegacyLeaderboard()
     local best
     for _, category in ipairs({ "dummy", "lk" }) do
-        local row = GlobalForKey(key, category)
-        if row and (tonumber(row.duration) or 0) >= MIN_DUMMY_SESSION_SECS then
+        local minimumDuration = category == "lk"
+            and MIN_LK_SESSION_SECS or MIN_DUMMY_SESSION_SECS
+        local row
+        for _, candidate in pairs(CharacterBestStore()[category] or {}) do
+            if (tonumber(candidate and candidate.duration) or 0)
+                    >= minimumDuration
+                and not candidate.legacy
+                and RowMatchesBuild(candidate, buildId, key,
+                    EchoHashFromKey(key))
+                and BetterRow(candidate, row) then
+                row = candidate
+            end
+        end
+        if row then
             if not best or (tonumber(row.dps) or 0) > (tonumber(best.dps) or 0) then
                 best = {
                     category=category, dps=tonumber(row.dps) or 0,
@@ -1237,6 +1278,7 @@ end
 local function DpsHashEntry(category, playerKey, row)
     if not (row and (tonumber(row.dps) or 0) > 0) then return nil end
     return table.concat({ category, tostring(playerKey),
+        tostring(GenerationAt(row)),
         tostring(math.floor(tonumber(row.dps) or 0)),
         tostring(row.loadoutHash or EchoHashFromKey(row.fingerprint or "") or "0") }, "|")
 end
@@ -1259,7 +1301,7 @@ local function ComputeDpsSyncHash()
 end
 
 local dpsHashCache = {
-    initialized=false, entries={}, hashes={}, dirty={},
+    initialized=false, entries={}, direct={}, hashes={}, dirty={},
     revisionSource=nil, observedRevision=nil,
     stats={
         hits=0, collectionWalks=0, fullRebuilds=0,
@@ -1285,6 +1327,7 @@ end
 
 local function WarmDpsHashCache()
     local entries = NewDpsBuckets()
+    local direct = NewDpsBuckets()
     local store = CharacterBestStore()
     dpsHashCache.stats.collectionWalks = dpsHashCache.stats.collectionWalks + 1
     for _, category in ipairs({ "dummy", "lk" }) do
@@ -1292,11 +1335,14 @@ local function WarmDpsHashCache()
             local entry = DpsHashEntry(category, playerKey, row)
             if entry then
                 local bucket = DpsBucket(category, playerKey)
-                entries[bucket][category .. "|" .. tostring(playerKey)] = entry
+                local identity = category .. "|" .. tostring(playerKey)
+                entries[bucket][identity] = entry
+                if not row.legacy then direct[bucket][identity] = true end
             end
         end
     end
-    dpsHashCache.entries, dpsHashCache.hashes, dpsHashCache.dirty = entries, {}, {}
+    dpsHashCache.entries, dpsHashCache.direct = entries, direct
+    dpsHashCache.hashes, dpsHashCache.dirty = {}, {}
     for bucket = 1, DPS_BUCKETS do
         dpsHashCache.dirty[bucket] = true
         RebuildDpsBucket(bucket)
@@ -1326,14 +1372,18 @@ local function UpdateDpsHashRecord(category, player, ownerKey, realm,
         or CharacterKey(player, ownerKey, realm)
     if previousCharacterKey and previousCharacterKey ~= playerKey then
         local previousBucket = DpsBucket(category, previousCharacterKey)
-        dpsHashCache.entries[previousBucket]
-            [category .. "|" .. previousCharacterKey] = nil
+        local previousIdentity = category .. "|" .. previousCharacterKey
+        dpsHashCache.entries[previousBucket][previousIdentity] = nil
+        dpsHashCache.direct[previousBucket][previousIdentity] = nil
         dpsHashCache.dirty[previousBucket] = true
     end
     local bucket = DpsBucket(category, playerKey)
     local row = CharacterBestStore()[category][playerKey]
-    dpsHashCache.entries[bucket][category .. "|" .. playerKey] =
-        DpsHashEntry(category, playerKey, row)
+    local identity = category .. "|" .. playerKey
+    dpsHashCache.entries[bucket][identity] = DpsHashEntry(
+        category, playerKey, row)
+    dpsHashCache.direct[bucket][identity] = row and not row.legacy
+        and true or nil
     dpsHashCache.dirty[bucket] = true
     dpsHashCache.stats.targetedInvalidations =
         dpsHashCache.stats.targetedInvalidations + 1
@@ -1395,6 +1445,17 @@ function DPS.GetSyncHash()
     return CachedDpsSyncHash()
 end
 
+-- Relay-only buckets may use responder claims to suppress duplicate history.
+-- A bucket with any directly observed owner row remains unclaimable so that
+-- owner evidence cannot be hidden by an earlier relay response.
+function DPS.SyncBucketClaimable(bucket)
+    bucket = tonumber(bucket)
+    if not bucket or bucket ~= math.floor(bucket)
+        or bucket < 1 or bucket > DPS_BUCKETS then return false end
+    DPS.GetSyncHash()
+    return next(dpsHashCache.direct[bucket] or {}) == nil
+end
+
 function DPS.GetSyncHashUncached()
     MigrateLocalLockedBaseline()
     MigrateLegacyLeaderboard()
@@ -1420,7 +1481,8 @@ function DPS.BroadcastBestForBuild(buildId)
     local store = CharacterBestStore()
     for _, category in ipairs({ "dummy", "lk" }) do
         for _, row in pairs(store[category] or {}) do
-            if row and row.buildId == buildId and (tonumber(row.dps) or 0) > 0 then
+            if row and not row.legacy and row.buildId == buildId
+                and (tonumber(row.dps) or 0) > 0 then
                 local record = {
                     protocolVersion = PROTOCOL_VERSION, fingerprint = row.fingerprint or key,
                     loadoutHash = row.loadoutHash or build.fingerprintHash or EchoHashFromKey(key),
@@ -1428,6 +1490,7 @@ function DPS.BroadcastBestForBuild(buildId)
                     duration = tonumber(row.duration) or 0, ts = tonumber(row.ts) or 0,
                     player = row.player or "?", level = tonumber(row.level) or 0, buildId = buildId,
                     class = row.class, ownerKey = row.ownerKey, realm = row.realm,
+                    generationAt = GenerationAt(row),
                     echoes = StoredEchoes(row, false) or BuildSnapshot(build),
                     lockedEchoes = StoredEchoes(row, true),
                 }
@@ -1515,6 +1578,7 @@ function DPS.BroadcastAllBuildBests(peerHash, onlyBucket, progress, maxItems,
                                 level=tonumber(row.level) or 0,
                                 buildId=row.buildId, class=row.class,
                                 ownerKey=row.ownerKey, realm=row.realm,
+                                generationAt=GenerationAt(row),
                                 echoes=StoredEchoes(row, false),
                                 lockedEchoes=StoredEchoes(row, true),
                             },
@@ -1606,6 +1670,8 @@ function DPS.GetDpsBoard(category)
                     class = row.class, ownerKey = row.ownerKey, realm = row.realm,
                     level = tonumber(row.level) or 0, ts = tonumber(row.ts) or 0,
                     duration = tonumber(row.duration) or 0, category = category,
+                    generationAt = GenerationAt(row),
+                    legacy = row.legacy == true,
                     fingerprint = row.fingerprint, echoes = rowEchoes or BuildSnapshot(build),
                     lockedEchoes = StoredEchoes(row, true),
                     buildId = buildId, build = build,
@@ -1830,6 +1896,7 @@ local function CommitSession(category)
         end
         local personalRow = {
             dps = dpsFloor, level = level, ts = stamp,
+            generationAt = ServerNow(),
             duration = elapsed, player = player,
             buildId = buildId, echoes = snap, fingerprint = key,
             lockedEchoes = lockedSnap,
@@ -1898,6 +1965,7 @@ local function CommitSession(category)
                 protocolVersion = PROTOCOL_VERSION, fingerprint = key,
                 echoes = snap, category = category, dps = dpsFloor,
                 duration = elapsed, ts = stamp, player = player,
+                generationAt = personalRow.generationAt,
                 level = level, buildId = buildId, lockedEchoes = lockedSnap,
                 class = localClass, ownerKey = personalRow.ownerKey,
                 realm = personalRow.realm,
@@ -1958,41 +2026,64 @@ local function ValidWireEchoList(source)
     return entries > 0 and entries == maxIndex
 end
 
-function DPS.ReceiveRecord(record, transportSender)
-    if type(record) ~= "table" then return false end
+function DPS.ReceiveRecord(record, transportSender, source)
+    local function Reject(reason) return false, reason end
+    if type(record) ~= "table" then return Reject("record-not-table") end
+    local incomingLegacy = source == "legacy-relay"
     local version = tonumber(record.v or record.protocolVersion)
     local category = record.c or record.category
     local dps = tonumber(record.d or record.dps)
     local duration = tonumber(record.u or record.duration) or 0
     local ts = tonumber(record.t or record.ts) or 0
+    local generationAt = tonumber(record.g or record.generationAt)
     local player = tostring(record.p or record.player or "")
     local level = tonumber(record.l or record.level) or 0
     local playerClass = record.k or record.class
     local ownerKey = record.o or record.ownerKey
     local realm = record.r or record.realm
     local rawEchoes = record.e or record.echoes
-    if not ValidWireEchoList(rawEchoes) then return false end
-    local echoes = NormalizeEchoes(rawEchoes)
-    local computed = EchoKey(echoes)
     local claimed = record.f or record.fingerprint
     local hash = record.h or record.loadoutHash
+    local buildId = record.b or record.buildId
+
+    -- Compact v2-v6 packets may omit exact Echo and class fields. Recover
+    -- those fields only from a known exact build whose computed hash matches
+    -- the packet. The row remains unverified even when another peer relays it.
+    if incomingLegacy and not ValidWireEchoList(rawEchoes) then
+        local build = type(buildId) == "string" and CatalogGet(buildId) or nil
+        if not (build and ValidWireEchoList(build.echoes)) then
+            return Reject("legacy-build-unavailable")
+        end
+        local buildEchoes = NormalizeEchoes(build.echoes)
+        local buildFingerprint = EchoKey(buildEchoes)
+        local buildHash = EchoHashFromKey(buildFingerprint)
+        if type(hash) ~= "string" or hash == "" or hash ~= buildHash then
+            return Reject("legacy-build-hash-mismatch")
+        end
+        rawEchoes = build.echoes
+        claimed = claimed or buildFingerprint
+        playerClass = playerClass or build.class
+    end
+    if not ValidWireEchoList(rawEchoes) then return Reject("invalid-echo-list") end
+    local echoes = NormalizeEchoes(rawEchoes)
+    local computed = EchoKey(echoes)
     local fingerprint = computed or (type(claimed)=="string" and claimed or nil) or (type(hash)=="string" and ("@"..hash) or nil)
     local ownerName, ownerRealm
     if ownerKey ~= nil then
         if type(ownerKey) ~= "string" or #ownerKey > 160
-            or ownerKey:find("[%c|]") then return false end
+            or ownerKey:find("[%c|]") then return Reject("invalid-owner-key") end
         ownerName, ownerRealm = ownerKey:match("^([^@]+)@([^@]+)$")
         if not ownerName or not ownerRealm
             or ShortIdentity(ownerName) ~= ShortIdentity(player) then
-            return false
+            return Reject("owner-player-mismatch")
         end
     end
     if realm ~= nil and (type(realm) ~= "string" or #realm > 96
-        or realm:find("[%c|]")) then return false end
+        or realm:find("[%c|]")) then return Reject("invalid-realm") end
     if ownerRealm and realm
         and ownerRealm:gsub("%s+", ""):lower()
             ~= tostring(realm):gsub("%s+", ""):lower() then
-        return false
+        return Reject("owner-realm-mismatch")
     end
 
     -- Schema validation
@@ -2000,8 +2091,14 @@ function DPS.ReceiveRecord(record, transportSender)
             and version ~= 6 and version ~= PROTOCOL_VERSION)
         or (category ~= "dummy" and category ~= "lk")
         or not FiniteNumber(dps) or dps <= 0 or dps > 500000000
-        or not FiniteNumber(duration) or duration < 30
-        or not FiniteNumber(ts) or ts <= 0
+        or not FiniteNumber(duration)
+        or (duration < ((category == "lk")
+            and MIN_LK_SESSION_SECS or MIN_DUMMY_SESSION_SECS)
+            and not (incomingLegacy and duration == 0))
+        or not FiniteNumber(ts) or (ts <= 0
+            and not (incomingLegacy and ts == 0))
+        or (generationAt ~= nil and (not FiniteNumber(generationAt)
+            or generationAt < 0))
         or player == "" or #player > 64 or player:find("[%c|]")
         or not FiniteNumber(level) or level < 1 or level > 80
         or level ~= math.floor(level)
@@ -2013,23 +2110,32 @@ function DPS.ReceiveRecord(record, transportSender)
         or (computed and hash and EchoHashFromKey(computed) ~= hash)
         or (transportSender ~= nil
             and ShortIdentity(player) ~= ShortIdentity(transportSender)) then
-        return false
+        return Reject("schema-validation")
     end
 
     -- Integrity checks (deliberately silent -- legitimate clients never trip these)
     -- DPS floor: no real build produces under 1k active-time DPS
-    if dps < 1000 then return false end
+    if dps < 1000 then return Reject("dps-below-floor") end
     -- Session duration floor must match local capture: dummy 30s, LK 20s.
-    local minDur = 30
-    if duration < minDur then return false end
+    local minDur = category == "lk"
+        and MIN_LK_SESSION_SECS or MIN_DUMMY_SESSION_SECS
+    if duration < minDur and not (incomingLegacy and duration == 0) then
+        return Reject("duration-below-floor")
+    end
     -- Hard DPS ceiling: set high to accommodate extreme builds while
     -- still blocking obviously fabricated absurd values.
-    if dps > 500000000 then return false end
+    if dps > 500000000 then return Reject("dps-above-ceiling") end
     -- Timestamp sanity: reject records claiming to be from the future
-    local nowTs = (time and time()) or 0
-    if nowTs > 1000000000 and ts > 0 and ts > nowTs + 300 then return false end
+    local nowTs = ServerNow()
+    if nowTs > 1000000000 and ts > 0 and ts > nowTs + 300 then
+        return Reject("timestamp-in-future")
+    end
+    if generationAt and nowTs > 1000000000
+        and generationAt > nowTs + 300 then
+        return Reject("generation-in-future")
+    end
     -- Echo count sanity
-    if #echoes < 1 or #echoes > 120 then return false end
+    if #echoes < 1 or #echoes > 120 then return Reject("echo-count") end
 
     MigrateLegacyLeaderboard()
     local bucket = CharacterBestStore()[category]
@@ -2048,7 +2154,9 @@ function DPS.ReceiveRecord(record, transportSender)
         end
     end
     local rawLocked = record.lk or record.lockedEchoes
-    if rawLocked ~= nil and not ValidWireEchoList(rawLocked) then return false end
+    if rawLocked ~= nil and not ValidWireEchoList(rawLocked) then
+        return Reject("invalid-locked-echo-list")
+    end
     local incomingLocked = NormalizeEchoes(rawLocked)
     local row = {
         dps = math.floor(dps), level = level, ts = ts, duration = duration,
@@ -2056,13 +2164,16 @@ function DPS.ReceiveRecord(record, transportSender)
         class = playerClass and tostring(playerClass):upper() or nil,
         ownerKey = ownerKey and tostring(ownerKey):lower() or nil,
         realm = realm and tostring(realm):lower() or ownerRealm,
-        buildId = record.b or record.buildId,
+        buildId = buildId,
         echoes = echoes, fingerprint = fingerprint, loadoutHash = hash or EchoHashFromKey(fingerprint),
         lockedEchoes = incomingLocked,
         protocolVersion = PROTOCOL_VERSION,
+        generationAt = math.floor(generationAt ~= nil and generationAt
+            or (ts > 0 and ts or 0)),
+        legacy = incomingLegacy,
     }
     ReferenceEvidence(row)
-    if not IsBetterPublicRecord(row, existing) then
+    if not BetterReplicatedRow(row, existing) then
         -- Metadata enrichment: the same winning parse may have been received
         -- before its source client's locked-perk API was ready. Accept a later
         -- copy that fills the previously empty locked-Echo snapshot.
@@ -2072,6 +2183,7 @@ function DPS.ReceiveRecord(record, transportSender)
             and tostring(existing.fingerprint or "") == tostring(fingerprint or "")
         if sameRecord then
             local enriched = false
+            local trustUpgraded = false
             local normalizedClass = NormalizeClass(playerClass)
             if normalizedClass and existing.class ~= normalizedClass then
                 existing.class = normalizedClass
@@ -2090,6 +2202,11 @@ function DPS.ReceiveRecord(record, transportSender)
                 ReferenceEvidence(existing)
                 enriched = true
             end
+            if not incomingLegacy and existing.legacy == true then
+                existing.legacy = false
+                enriched = true
+                trustUpgraded = true
+            end
             local rekeyed = existingKey ~= characterKey
             if rekeyed then
                 bucket[existingKey] = nil
@@ -2097,7 +2214,7 @@ function DPS.ReceiveRecord(record, transportSender)
                 enriched = true
             end
             if enriched then
-                if rekeyed then
+                if rekeyed or trustUpgraded then
                     BumpDps("public record identity enriched", {
                         scope="record", category=category, player=player,
                         ownerKey=existing.ownerKey, realm=existing.realm,
@@ -2145,21 +2262,38 @@ function DPS.ReceiveRecord(record, transportSender)
     return true
 end
 
-function DPS.ReceiveSubmission(buildId, player, dps, level, category, ts)
+function DPS.ReceiveSubmission(buildId, player, dps, level, category, ts, source)
     dps = tonumber(dps); level = tonumber(level) or 0
     category = (category == "lk" or category == "dummy") and category or "dummy"
-    local key = BuildKey(buildId)
-    if not (key and player and dps and dps > 0) then return end
+    local key, build = BuildKey(buildId)
+    if not (key and player and dps and dps >= 1000
+        and dps <= 500000000 and level >= 1 and level <= 80
+        and level == math.floor(level)) then return false end
+    local legacy = source == "legacy"
+    -- Evidence-free legacy packets are only useful when the matching build
+    -- is already known and carries the exact Echo set. Keep them visible as
+    -- legacy evidence, but never treat them as verified DPS captures.
+    if legacy and not (build and type(build.echoes) == "table"
+        and #build.echoes > 0) then
+        return Reject("not-better-than-existing")
+    end
     local bucket = CharacterBestStore()[category]
     local characterKey = CharacterKey(player)
     local existing = bucket[characterKey]
+    if legacy and existing and not existing.legacy then return false end
     local row = {
-        dps = dps, level = level, ts = ts or 0, player = player, buildId = buildId,
-        echoes = BuildSnapshot(CatalogGet(buildId)),
-        fingerprint = key, protocolVersion = PROTOCOL_VERSION,
+        dps = math.floor(dps), level = level, ts = tonumber(ts) or 0,
+        player = player, buildId = buildId, echoes = BuildSnapshot(build),
+        fingerprint = key, loadoutHash = EchoHashFromKey(key),
+        class = build and NormalizeClass(build.class) or nil,
+        generationAt = tonumber(ts) or 0,
+        protocolVersion = PROTOCOL_VERSION, legacy = legacy,
     }
     ReferenceEvidence(row)
-    if not IsBetterPublicRecord(row, existing) then return end
+    local replaceLegacy = not legacy and existing and existing.legacy == true
+    if not replaceLegacy and not IsBetterPublicRecord(row, existing) then
+        return Reject("not-better-than-existing")
+    end
     local supersededBuildId = existing and existing.buildId
     bucket[characterKey] = row
     if supersededBuildId and supersededBuildId ~= row.buildId then
@@ -2171,6 +2305,27 @@ function DPS.ReceiveSubmission(buildId, player, dps, level, category, ts)
         characterKey=characterKey,
     })
     RequestDataViewRefresh()
+    return true
+end
+
+function DPS.SyncDiagnostics()
+    MigrateLegacyLeaderboard()
+    local out = {
+        dummy={total=0, direct=0, legacy=0},
+        lk={total=0, direct=0, legacy=0},
+    }
+    local store = CharacterBestStore()
+    for _, category in ipairs({"dummy", "lk"}) do
+        for _, row in pairs(store[category] or {}) do
+            if type(row) == "table" and (tonumber(row.dps) or 0) > 0 then
+                out[category].total = out[category].total + 1
+                local kind = row.legacy and "legacy" or "direct"
+                out[category][kind] = out[category][kind] + 1
+            end
+        end
+    end
+    out.hash = DPS.GetSyncHash()
+    return out
 end
 
 ------------------------------------------------------------------------

@@ -4,8 +4,8 @@ Nexus = Nexus or {}
 local M = {}
 Nexus.Changelog = M
 
-local VERSION = "1.96.4"
-local RELEASE_KEY = "1.96.4"
+local VERSION = "1.96.5"
+local RELEASE_KEY = "1.96.5"
 local frame
 local shownThisSession = false
 
@@ -43,28 +43,28 @@ local function Create()
 
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -20)
-    title:SetText("Nexus 1.96.4 Echo Update")
+    title:SetText("Nexus 1.96.5 Experimental")
 
     local body = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     body:SetPoint("TOPLEFT", 28, -52)
     body:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 52)
     body:SetJustifyH("LEFT")
     body:SetJustifyV("TOP")
-    body:SetText([[|cffffd200Choose the Nexus HUD target|r
+    body:SetText([[|cffff5050Experimental leaderboard sync|r
 
-- Open Ebonhold Echoes and use the blue Nexus HUD target menu above the Echo list.
-- That wishlist controls Progress, Still Needed, To Shed, and Auto.
+- Back up NexusDB and WishlistRealizerDB before testing this release.
+- If Nexus causes stutter, long syncs, FPS loss, or unusual memory use, report it to me and reinstall v1.96.4.
 
-|cffffd200Random boards|r
+|cffffd200How DPS sync now works|r
 
-- Saved Builds no longer predict any offering. Every slot is random except banished choices.
-- When two wanted Echoes appear, Nexus freezes one before taking the other.
+- Your own addon still records only your highest DPS for each encounter.
+- Current clients attach a server timestamp to the owner's saved record. The newest owner snapshot wins during sync.
+- Current clients can relay stored records while the original player is offline, so history spreads as more players update.
 
-|cffffd200Level 80 and orbs|r
+|cffffd200Older versions|r
 
-- Nexus compares your HUD target with the active Ebonhold Saved Build.
-- After an orb gives you a wanted Echo, save over that active build. If a new 1-80 run looks stale, switch away and back first.
-- Disable Project Ebonhold Enhanced before using Nexus.]])
+- Records sent directly by v1.19.5 players are accepted.
+- Older clients cannot carry third-party history and may continue showing their older highest score until they update.]])
 
     local close = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     close:SetSize(92, 24)

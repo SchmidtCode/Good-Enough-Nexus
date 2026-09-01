@@ -30,14 +30,16 @@ dofile("ui/Changelog.lua")
 Nexus.Changelog.ShowIfNeeded()
 
 local changelog = _G.NexusChangelogPopup
-local changelogBody = FindText("Choose the Nexus HUD target")
+local changelogBody = FindText("Experimental leaderboard sync")
 assert(changelog and changelogBody, "release update window was not created")
 Check(changelog:GetHeight() >= 360,
     "release update window is too short for its content")
-Check(not changelogBody:GetText():find("Back up", 1, true),
-    "release update window still asks the user to back up databases")
-Check(changelogBody:GetText():find("save over that active build", 1, true),
-    "release update window does not explain the level-80 orb save flow")
+Check(changelogBody:GetText():find("Back up NexusDB", 1, true),
+    "experimental release window omits the SavedVariables backup warning")
+Check(changelogBody:GetText():find("reinstall v1.96.4", 1, true),
+    "experimental release window omits the rollback instruction")
+Check(changelogBody:GetText():find("newest owner snapshot wins", 1, true),
+    "experimental release window does not explain owner-generation sync")
 
 local hasBottomBound = false
 for pointIndex = 1, #changelogBody.points do

@@ -21,7 +21,7 @@ dofile("ui/JournalTab.lua")
 
 Nexus.DpsCapture = { Init = function() end, OnUpdate = function() end }
 Nexus.Release = {
-    version = "1.96.4", baseVersion = "1.19.5", published = true,
+    version = "1.96.5", baseVersion = "1.19.5", published = true,
     releasesUrl = "https://github.com/Viscerals/Better-Nexus/releases",
 }
 NexusDB = { settings = { updateNotifications = true } }

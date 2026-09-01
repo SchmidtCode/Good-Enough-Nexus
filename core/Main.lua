@@ -6,7 +6,7 @@
 -- any closure that reads it.
 
 Nexus = Nexus or {}
-Nexus.VERSION = (Nexus.Release and Nexus.Release.version) or "1.96.4"
+Nexus.VERSION = (Nexus.Release and Nexus.Release.version) or "1.96.5"
 
 local Model, Policy, Ratchet, Strategy, Store, Adapter
 local Readout, Panel, JournalTab, DefaultProfile
@@ -2706,6 +2706,73 @@ local function LogText_Sync()
     Add("ignored (no sync open) : %d", st.ignoredOutsideWindow or 0)
     Add("oversize dropped       : %d", st.oversizeDropped or 0)
     Add("deleted (tombstoned)   : %d", s.TombstoneCount and s.TombstoneCount() or 0)
+    Add("")
+
+    local dps = Nexus and Nexus.DpsCapture
+    local dpsState = dps and dps.SyncDiagnostics
+        and dps.SyncDiagnostics() or {}
+    local response = s.ResponseStats and s.ResponseStats() or {}
+    local work = s.WorkState and s.WorkState() or {}
+    local dummy = dpsState.dummy or {}
+    local lk = dpsState.lk or {}
+    Add("-- DPS sync --")
+    Add("diagnostic schema      : relay-v6-generation-experimental")
+    Add("local DPS hash         : %s", tostring(dpsState.hash or "unavailable"))
+    Add("stored Dummy           : %d total, %d direct, %d relayed/legacy",
+        dummy.total or 0, dummy.direct or 0, dummy.legacy or 0)
+    Add("stored Lich King       : %d total, %d direct, %d relayed/legacy",
+        lk.total or 0, lk.direct or 0, lk.legacy or 0)
+    Add("WLDS seen/accepted/drop: %d / %d / %d",
+        st.dpsLegacyReceived or 0, st.dpsLegacyAccepted or 0,
+        st.dpsLegacyRejected or 0)
+    Add("WLD2 chunks/transfers  : %d / %d",
+        st.dpsChunksReceived or 0, st.dpsTransfersCompleted or 0)
+    Add("WLD2 accepted direct   : %d", st.dpsDirectAccepted or 0)
+    Add("WLD2 accepted relayed  : %d", st.dpsRelayAccepted or 0)
+    Add("WLD2 rejected owner    : %d", st.dpsOwnerRejected or 0)
+    Add("WLD2 rejected capture  : %d", st.dpsRecordRejected or 0)
+    Add("last capture rejection : %s",
+        tostring(st.lastDpsRejectReason or "none"))
+    Add("outbound owner/relay   : %d / %d records",
+        st.dpsOwnerQueued or 0, st.dpsRelayQueued or 0)
+    Add("compact relay records  : %d", st.dpsRelayCompactQueued or 0)
+    Add("outbound validation/queue fail: %d / %d",
+        st.dpsValidationRejected or 0, st.dpsQueueRejected or 0)
+    Add("response serializations: %d, last=%s/%s",
+        response.dpsSerializations or 0,
+        tostring(response.lastRequester or "none"),
+        tostring(response.lastBucket or "none"))
+    Add("DPS work pending/inflight: %d / %d",
+        work.pendingResponses or 0, work.dpsInflight or 0)
+    Add("DPS partial chunks     : %d / %d, age %.0fs, quiet %.0fs",
+        work.dpsChunksHeld or 0, work.dpsChunksExpected or 0,
+        work.dpsOldestAge or 0, work.dpsQuietAge or 0)
+    Add("DPS partials expired   : %d", st.dpsTransferExpired or 0)
+    Add("")
+
+    Add("-- rejected wire envelopes --")
+    Add("too long/control/type  : %d / %d / %d",
+        st.wireTooLongRejected or 0, st.wireControlRejected or 0,
+        st.wireNonStringRejected or 0)
+    Add("largest rejected length: %d", st.maxRejectedWireLength or 0)
+    Add("last rejected envelope : kind=%s len=%s prefix=%q",
+        tostring(st.lastRejectedWireKind or "none"),
+        tostring(st.lastRejectedWireLength or 0),
+        tostring(st.lastRejectedWirePrefix or ""))
+    Add("")
+
+    Add("-- known mesh peers --")
+    local peers = s.PeerDiagnostics and s.PeerDiagnostics() or {}
+    if #peers == 0 then
+        Add("  (no versioned peers observed this session)")
+    else
+        for index = 1, math.min(#peers, 40) do
+            local peer = peers[index]
+            Add("  %-24s v%-14s seen %.0fs ago",
+                peer.name, peer.version, peer.age)
+        end
+        if #peers > 40 then Add("  (%d more peers omitted)", #peers - 40) end
+    end
     Add("")
 
     Add("-- builds in my library --")

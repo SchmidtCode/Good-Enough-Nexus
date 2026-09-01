@@ -136,7 +136,7 @@ assert((Sync.Stats().queueOverflowRejected or 0) > 0,
     "queue pressure did not report rejected-newest overflow")
 
 -- Abandoned chunk and pending-response state expires deterministically.
-clock = clock + 61
+clock = clock + math.max(61, (state.inflightGrace or 120) + 1)
 Sync.OnUpdate(0)
 state = Sync.WorkState()
 assert(state.buildInflight == 0 and state.dpsInflight == 0,
