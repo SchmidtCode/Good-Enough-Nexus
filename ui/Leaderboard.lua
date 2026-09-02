@@ -276,7 +276,7 @@ local function RenderDetailMeasured(row)
     detail.empty:Hide()
     for _,x in ipairs({detail.title,detail.owner,detail.record,detail.desc,detail.echoTitle,detail.more,detail.copy,detail.open}) do x:Show() end
     local b=row.build or {}; local c=CLASS_COLOR[tostring(b.class or ""):upper()] or {1,1,1}
-    detail.title:SetText(b.title or "Record Loadout"); detail.title:SetTextColor(c[1],c[2],c[3]); detail.owner:SetText("by "..tostring(b.author or row.player or "?"))
+    detail.title:SetText(b.title or "Record Loadout"); detail.title:SetTextColor(c[1],c[2],c[3]); detail.owner:SetText("by "..tostring(b.author or row.player or "?")..(row.evidence=="relay" and "  |cffffcc55Relayed • Unverified|r" or ""))
     if row.category=="combined" then
         detail.record:SetText("|cff4dff80Average "..DpsText(row.average).." DPS|r\nDummy "..DpsText(row.dummyDps).."  •  Lich King "..DpsText(row.lkDps))
     else
@@ -333,10 +333,10 @@ local function BindRowsMeasured(reason)
             r.build:SetText(tostring((row.build or {}).title or "Record Loadout"))
             if category=="combined" then
                 r.dps:SetText("|cff4dff80"..DpsText(row.average).." avg|r")
-                r.extra:SetText("Dummy "..DpsText(row.dummyDps).."  •  LK "..DpsText(row.lkDps))
+                r.extra:SetText("Dummy "..DpsText(row.dummyDps).."  •  LK "..DpsText(row.lkDps)..(row.evidence=="relay" and "  |cffffcc55• Relayed|r" or ""))
             else
                 r.dps:SetText("|cff4dff80"..DpsText(row.dps).." DPS|r")
-                r.extra:SetText(DurationText(row.duration))
+                r.extra:SetText(DurationText(row.duration)..(row.evidence=="relay" and "  |cffffcc55• Relayed|r" or ""))
             end
             if RecordKey(row)==selectedKey then r.sel:Show() else r.sel:Hide() end
         end

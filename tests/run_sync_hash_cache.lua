@@ -39,8 +39,10 @@ local function AssertCanonical()
     local canonicalCurrent, canonicalLegacy = Sync.GetCanonicalBuildHashes()
     assert(current == canonicalCurrent and legacy == canonicalLegacy,
         "cached build hash diverged from the established canonical algorithm")
-    assert(dps == DPS.GetSyncHashUncached(),
-        "cached DPS hash diverged from the established canonical algorithm")
+    assert(dps == DPS.GetLegacySyncHashUncached(),
+        "cached legacy DPS hash diverged from v1.19.5 semantics")
+    assert(Sync.GetEnhancedDpsHash() == DPS.GetEnhancedSyncHashUncached(),
+        "cached enhanced DPS hash diverged from current semantics")
     return current, legacy, dps
 end
 

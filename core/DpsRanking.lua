@@ -60,6 +60,11 @@ local function RowOf(entry, reader)
     return entry
 end
 
+local function EvidenceOf(row)
+    return type(row) == "table" and row.evidence == "relay"
+        and "relay" or "owner"
+end
+
 function Ranking.PairCategories(dummyEntries, lkEntries, reader)
     local dummyByIdentity, dummyByBuild = {}, {}
     for _, entry in ipairs(type(dummyEntries) == "table" and dummyEntries or {}) do
@@ -127,6 +132,10 @@ function Ranking.CombinedRows(dummyRows, lkRows)
         local drow, lrow = pair.dummyRow, pair.lkRow
         local average = ((tonumber(drow.dps) or 0)
             + (tonumber(lrow.dps) or 0)) / 2
+        local dummyEvidence = EvidenceOf(drow)
+        local lkEvidence = EvidenceOf(lrow)
+        local evidence = dummyEvidence == "owner" and lkEvidence == "owner"
+            and "owner" or "relay"
         out[#out + 1] = {
             player=lrow.player, dps=average, average=average,
             dummyDps=drow.dps, lkDps=lrow.dps,
@@ -141,6 +150,9 @@ function Ranking.CombinedRows(dummyRows, lkRows)
             lockedEchoes=lrow.lockedEchoes or drow.lockedEchoes,
             buildId=lrow.buildId or drow.buildId,
             build=lrow.build or drow.build,
+            dummyEvidence=dummyEvidence, lkEvidence=lkEvidence,
+            evidence=evidence, verified=evidence == "owner",
+            legacy=evidence == "relay",
         }
     end
     table.sort(out, function(left, right)

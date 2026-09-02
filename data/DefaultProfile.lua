@@ -38,6 +38,9 @@ DefaultProfile.defaultSettings = {
     -- character is resting (cities/inns), out of combat, and outside gameplay
     -- instances. Manual and Off remain persistent user choices.
     syncMode = "automatic", -- "off", "manual", or "automatic"
+    -- Experimental current-client response optimization. The channel remains
+    -- the permanent fallback and this stays off until live validation passes.
+    syncDirectExperimental = false,
     syncOnlyWhileResting = true,
     syncSuspendInCombat = true,
     syncSuspendedInstanceTypes = {

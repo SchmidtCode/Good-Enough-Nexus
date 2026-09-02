@@ -20,9 +20,27 @@ local dummy=DPS.GetDpsBoard("dummy")
 assert(#dummy==2,"dummy board should contain one row per character")
 assert(dummy[1].player=="Bravo" and dummy[1].dps==28000000,"dummy board not DPS-ranked")
 assert(dummy[1].build and dummy[1].buildId and #dummy[1].echoes==2,"board row lacks copyable exact build")
+assert(dummy[1].evidence=="owner" and dummy[1].verified==true,
+  "owner board row lacks explicit evidence")
+assert(DPS.GetBuildVerification(dummy[1].buildId),
+  "owner evidence did not satisfy exact-build verification")
 local lk=DPS.GetDpsBoard("lk")
 assert(#lk==1 and lk[1].player=="Alpha" and lk[1].category=="lk","LK board not separate")
 assert(DPS.GetDpsBoard("bad")[1]==nil,"invalid category should be empty")
+
+local relayed={{spellId=200015,stacks=1},{spellId=200016,stacks=2}}
+assert(DPS.ReceiveRecord({v=6,f=DPS.GetEchoKey(relayed),e=relayed,
+  c="dummy",d=27000000,u=65,t=103,p="RelayOnly",k="MAGE",l=80},
+  nil,"legacy-relay"),"relay-only row was rejected")
+local relayRow
+for _,row in ipairs(DPS.GetDpsBoard("dummy")) do
+  if row.player=="RelayOnly" then relayRow=row break end
+end
+assert(relayRow and relayRow.evidence=="relay"
+  and relayRow.verified==false and relayRow.legacy==true,
+  "relay row was not explicitly marked unverified")
+assert(not DPS.GetBuildVerification(relayRow.buildId),
+  "relay evidence incorrectly satisfied exact-build verification")
 
 -- Same-named characters on different realms are separate public identities.
 local twinA={{spellId=200020,stacks=1}}

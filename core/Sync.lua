@@ -15,6 +15,9 @@
 --   WLRC|<sender>|<requester>|<requestId>|<buildhash>|<dpshash> -- claim
 --   WLRB|<sender>|<id>|<m>|<idx>/<total>|<b64>  -- build chunk
 --   WLRD|<sender>|<id>|<stamp>                   -- delete notification
+--   WLXQ|<sender>|<requestId>|1|<CW1|C0>|<enhancedDpsHash>
+--     request-scoped current-client state; C0 keeps bulk on the channel
+--   WLAK|<sender>|<requestId>|<B|D>|<logicalId>  -- accepted direct object
 --
 -- PAYLOAD FORMAT (compact, ~65% smaller than verbose):
 --   { id, t=title, a=author, c=class, m=lastModified,
@@ -50,11 +53,16 @@ local CODE_DELETE     = "WLRD"
 local CODE_DPS        = "WLDS" -- legacy build-id DPS
 local CODE_DPS2       = "WLD2" -- exact-set DPS chunks
 local CODE_PRESENCE   = "WLNP" -- lightweight Nexus peer/version presence
+Sync._enhanced = {extension="WLXQ", ack="WLAK", maxExtensions=256,
+    maxExtensionsPerSender=8, extensionTtl=30, maxDirectTransfers=128,
+    maxDirectTransfersPerPeer=8, directTransferTtl=600,
+    directFallbackTtl=3600}
 local PEER_PROTOCOL_CODES = {
     [CODE_BUILD]=true, [CODE_INDEX]=true, [CODE_LOADOUT_REQ]=true,
     [CODE_LOADOUT_CLAIM]=true, [CODE_REQUEST]=true, [CODE_CLAIM]=true,
     [CODE_BUCKET_CLAIM]=true, [CODE_DELETE]=true, [CODE_DPS]=true,
-    [CODE_DPS2]=true, [CODE_PRESENCE]=true,
+    [CODE_DPS2]=true, [CODE_PRESENCE]=true, [Sync._enhanced.extension]=true,
+    [Sync._enhanced.ack]=true,
 }
 local CHAT_LIMIT      = 255    -- WoW SendChatMessage hard cap
 local CHAT_SAFETY     = 8      -- conservative margin
@@ -148,6 +156,11 @@ local suspendReason = nil
 local pendingStatusReply = nil
 local Now, MyName
 local knownPeers = {} -- normalized player name -> { name, version, lastSeen }
+Sync._requestExtensions = {} -- normalized sender:request id -> enhanced request state
+Sync._directTransfers = {}
+Sync._pendingDirectAcks = {}
+Sync._fallbackTransfers = {}
+Sync._outgoingRequest = nil
 local CleanExpiredInflight
 local recentBuildBroadcast = {}
 local BUILD_BROADCAST_DEDUPE = 2
@@ -342,7 +355,36 @@ local stats = {
     dpsTransferExpired=0,
     dpsOwnerQueued=0, dpsRelayQueued=0, dpsRelayCompactQueued=0,
     dpsValidationRejected=0, dpsQueueRejected=0,
+    legacyRequests=0, enhancedRequests=0,
+    requestExtensionsSeen=0, requestExtensionsExpired=0,
+    channelControlTx=0, channelControlRx=0,
+    channelBulkTx=0, channelBulkRx=0,
+    directBulkTx=0, directBulkRx=0,
+    uninvolvedBulkRx=0, nonRequestedBulkRx=0,
+    directAckSuccess=0, directAckTimeout=0, directFallback=0,
+    directAttempt=0, directTimeout=0,
+    directImmediateFailure=0, bytesQueued=0, maxQueueDepth=0,
+    transferDurationTotal=0, transferDurationCount=0,
+    transferDurationMax=0,
 }
+
+function Sync.DirectTransportEnabled()
+    return NexusDB and NexusDB.settings
+        and NexusDB.settings.syncDirectExperimental == true
+end
+
+function Sync.SetDirectTransportEnabled(enabled)
+    NexusDB = NexusDB or {}
+    NexusDB.settings = NexusDB.settings or {}
+    NexusDB.settings.syncDirectExperimental = enabled == true
+    return NexusDB.settings.syncDirectExperimental
+end
+
+function Sync._IsBulkPayload(payload)
+    return type(payload) == "string"
+        and (payload:sub(1, 4) == CODE_BUILD
+            or payload:sub(1, 4) == CODE_DPS2)
+end
 
 function Sync.WorkState()
     local buildCount, buildBytes, dpsCount, dpsBytes = 0, 0, 0, 0
@@ -350,6 +392,7 @@ function Sync.WorkState()
     local dpsOldestAge, dpsQuietAge = 0, 0
     local pendingResponseCount, pendingLoadoutCount, pendingDeleteCount = 0, 0, 0
     local peerCount = 0
+    local directAckPending, directFallbackPending = 0, 0
     for _, entry in pairs(inflight) do
         buildCount = buildCount + 1
         buildBytes = buildBytes + (tonumber(entry.bytes) or 0)
@@ -379,6 +422,12 @@ function Sync.WorkState()
         end
     end
     for _ in pairs(knownPeers) do peerCount = peerCount + 1 end
+    for _ in pairs(Sync._pendingDirectAcks) do
+        directAckPending = directAckPending + 1
+    end
+    for _ in pairs(Sync._fallbackTransfers) do
+        directFallbackPending = directFallbackPending + 1
+    end
     local sending = math.max(0, sendQueueTail - sendQueueHead + 1)
     local control = math.max(0, controlQueueTail - controlQueueHead + 1)
     local recovery = math.max(0, legacyRecoveryTail - legacyRecoveryHead + 1)
@@ -398,12 +447,16 @@ function Sync.WorkState()
         pendingDeletes=pendingDeleteCount,
         manualPublishing=Responder.manualPublish ~= nil,
         knownPeers=peerCount,
+        directAckPending=directAckPending,
+        directFallbackPending=directFallbackPending,
         maxOutboundQueue=MAX_OUTBOUND_QUEUE,
         maxControlQueue=MAX_CONTROL_QUEUE,
         maxRecoveryQueue=MAX_RECOVERY_QUEUE,
         maxPendingResponses=MAX_PENDING_RESPONSES,
         maxPendingLoadouts=MAX_PENDING_LOADOUTS,
         maxKnownPeers=MAX_KNOWN_PEERS,
+        maxDirectTransfers=Sync._enhanced.maxDirectTransfers,
+        maxDirectTransfersPerPeer=Sync._enhanced.maxDirectTransfersPerPeer,
         responseHeadroom=RESPONSE_QUEUE_HEADROOM,
     }
 end
@@ -489,6 +542,11 @@ function Sync._Suspend(reason)
     sendQueue, sendQueueHead, sendQueueTail = {}, 1, 0
     controlQueue, controlQueueHead, controlQueueTail = {}, 1, 0
     inflight, dpsInflight = {}, {}
+    Sync._requestExtensions = {}
+    Sync._directTransfers = {}
+    Sync._pendingDirectAcks = {}
+    Sync._fallbackTransfers = {}
+    Sync._outgoingRequest = nil
     Responder.ClearPending()
     legacyRecoveryQueue, legacyRecoveryHead, legacyRecoveryTail = {}, 1, 0
     Responder.manualPublish = nil
@@ -671,11 +729,35 @@ end
 
 local function CurrentDpsHash()
     local D = Nexus.DpsCapture
-    if D and D.GetSyncHash then
-        local ok, value = pcall(D.GetSyncHash)
+    local getter = D and (D.GetLegacySyncHash or D.GetSyncHash)
+    if getter then
+        local ok, value = pcall(getter)
         if ok and value then return tostring(value) end
     end
     return "0"
+end
+
+function Sync.RequestDiagnostics(sender, requestId)
+    local key = tostring(sender or "") .. ":" .. tostring(requestId or "")
+    local entry = pendingResponses[key]
+    local extension = Sync._requestExtensions[
+        NormalizePeerName(sender) .. ":" .. tostring(requestId or "")]
+    return {
+        pending=entry ~= nil, extension=extension ~= nil,
+        digestMode=entry and entry.dpsDigestMode or nil,
+        directCapable=entry and entry.routeContext
+            and entry.routeContext.chatWhisper == true or false,
+    }
+end
+
+function Sync.GetEnhancedDpsHash()
+    local D = Nexus.DpsCapture
+    local getter = D and (D.GetEnhancedSyncHash or D.GetSyncHash)
+    if getter then
+        local ok, value = pcall(getter)
+        if ok and value then return tostring(value) end
+    end
+    return CurrentDpsHash()
 end
 
 -- Read-only compatibility surface used by diagnostics and deterministic tests.
@@ -950,10 +1032,14 @@ local function Enqueue(payload)
     end
     sendQueueTail = sendQueueTail + 1
     sendQueue[sendQueueTail] = payload
+    stats.bytesQueued = (stats.bytesQueued or 0) + #payload
+    stats.maxQueueDepth = math.max(tonumber(stats.maxQueueDepth) or 0,
+        QueueDepth(sendQueueHead, sendQueueTail)
+            + QueueDepth(controlQueueHead, controlQueueTail))
     return true
 end
 
-local function EnqueueBatch(payloads)
+local function EnqueueBatch(payloads, routeContext)
     local allowed, why = Sync._TransportAllowed()
     if not allowed then return false, why end
     if type(payloads) ~= "table" or #payloads == 0 then
@@ -969,11 +1055,56 @@ local function EnqueueBatch(payloads)
         return RejectQueueOverflow("bulk batch", #payloads, depth,
             MAX_OUTBOUND_QUEUE)
     end
+    local transfer
+    if routeContext and routeContext.chatWhisper
+        and Sync.DirectTransportEnabled() and Sync._IsBulkPayload(payloads[1]) then
+        local code, logicalId = payloads[1]:match("^([^|]+)|[^|]+|([^|]+)|")
+        local kind = code == CODE_BUILD and "B"
+            or (code == CODE_DPS2 and "D" or nil)
+        local target = tostring(routeContext.requester or "")
+        local requestId = tostring(routeContext.requestId or "")
+        if kind and ValidPeerName(target)
+            and ValidIdentifier(requestId, MAX_REQUEST_ID_BYTES)
+            and ValidTransferIdentifier(logicalId) then
+            local total, perTarget = 0, 0
+            for _, active in pairs(Sync._directTransfers) do
+                total = total + 1
+                if SamePeer(active.target, target) then perTarget = perTarget + 1 end
+            end
+            if total < Sync._enhanced.maxDirectTransfers
+                and perTarget < Sync._enhanced.maxDirectTransfersPerPeer then
+                local key = table.concat({NormalizePeerName(target), requestId,
+                    kind, logicalId}, "|")
+                transfer = {key=key, target=target, requestId=requestId,
+                    kind=kind, logicalId=logicalId, payloads=payloads,
+                    remaining=#payloads, queuedAt=Now(), fallback=false}
+                Sync._directTransfers[key] = transfer
+                stats.directAttempt = (stats.directAttempt or 0) + 1
+            end
+        end
+    end
     for i = 1, #payloads do
         sendQueueTail = sendQueueTail + 1
-        sendQueue[sendQueueTail] = payloads[i]
+        if transfer then
+            sendQueue[sendQueueTail] = {payload=payloads[i],
+                transport="WHISPER", target=transfer.target, transfer=transfer}
+        else
+            sendQueue[sendQueueTail] = payloads[i]
+        end
     end
+    for i = 1, #payloads do
+        stats.bytesQueued = (stats.bytesQueued or 0) + #payloads[i]
+    end
+    stats.maxQueueDepth = math.max(tonumber(stats.maxQueueDepth) or 0,
+        QueueDepth(sendQueueHead, sendQueueTail)
+            + QueueDepth(controlQueueHead, controlQueueTail))
     return true
+end
+
+-- Transport seam used by reconciliation and deterministic harnesses. Callers
+-- provide canonical packets; routing never changes serialization semantics.
+function Sync.EnqueueLogicalTransfer(payloads, routeContext)
+    return EnqueueBatch(payloads, routeContext)
 end
 
 local function EnqueueControl(payload)
@@ -986,6 +1117,10 @@ local function EnqueueControl(payload)
     end
     controlQueueTail = controlQueueTail + 1
     controlQueue[controlQueueTail] = payload
+    stats.bytesQueued = (stats.bytesQueued or 0) + #payload
+    stats.maxQueueDepth = math.max(tonumber(stats.maxQueueDepth) or 0,
+        QueueDepth(sendQueueHead, sendQueueTail)
+            + QueueDepth(controlQueueHead, controlQueueTail))
     return true
 end
 
@@ -1047,6 +1182,79 @@ local function PopQueued(isControl)
     end
 end
 
+function Sync._FallbackDirectTransfer(transfer, reason)
+    if type(transfer) ~= "table" or transfer.fallback then return false end
+    transfer.fallback = true
+    transfer.fallbackAt = Now()
+    Sync._pendingDirectAcks[transfer.key] = nil
+    Sync._directTransfers[transfer.key] = nil
+    local retained = {}
+    for i = sendQueueHead, sendQueueTail do
+        local queued = sendQueue[i]
+        if queued and not (type(queued) == "table"
+            and queued.transfer == transfer) then
+            retained[#retained + 1] = queued
+        end
+    end
+    sendQueue, sendQueueHead, sendQueueTail = retained, 1, #retained
+    local queued = EnqueueBatch(transfer.payloads)
+    if not queued then Sync._fallbackTransfers[transfer.key] = transfer end
+    stats.directFallback = (stats.directFallback or 0) + 1
+    LogEvent("TX", "direct %s transfer %s fell back to channel: %s",
+        tostring(transfer.kind), tostring(transfer.logicalId),
+        tostring(reason or "unknown"))
+    return queued == true
+end
+
+function Sync._PruneDirectState(now)
+    now = tonumber(now) or Now()
+    for _, transfer in pairs(Sync._directTransfers) do
+        if not transfer.fallback
+            and now - (tonumber(transfer.queuedAt) or now)
+                > Sync._enhanced.directTransferTtl then
+            Sync._FallbackDirectTransfer(transfer,
+                "direct transfer state expired")
+            break
+        end
+    end
+    for key, transfer in pairs(Sync._fallbackTransfers) do
+        if now - (tonumber(transfer.fallbackAt) or now)
+                > Sync._enhanced.directFallbackTtl then
+            Sync._fallbackTransfers[key] = nil
+            LogEvent("TX", "expired saturated channel fallback for %s",
+                tostring(transfer.logicalId or "?"))
+        end
+    end
+    if Sync._outgoingRequest
+        and now - (tonumber(Sync._outgoingRequest.createdAt) or now)
+            > INFLIGHT_MAX_AGE then
+        Sync._outgoingRequest = nil
+    end
+end
+
+function Sync._PumpDirectFallbacks()
+    for key, transfer in pairs(Sync._fallbackTransfers) do
+        local queued = EnqueueBatch(transfer.payloads)
+        if queued then Sync._fallbackTransfers[key] = nil end
+        return
+    end
+end
+
+function Sync._PumpDirectAcks()
+    local now = Now()
+    for _, transfer in pairs(Sync._pendingDirectAcks) do
+        if now - (tonumber(transfer.sentAt) or now) >= 12 then
+            if not transfer.timeoutCounted then
+                transfer.timeoutCounted = true
+                stats.directAckTimeout = (stats.directAckTimeout or 0) + 1
+                stats.directTimeout = (stats.directTimeout or 0) + 1
+            end
+            Sync._FallbackDirectTransfer(transfer, "ACK timeout")
+            return
+        end
+    end
+end
+
 local function PumpQueue(elapsed)
     if not Sync._TransportAllowed() then return end
     local now = Now()
@@ -1055,16 +1263,48 @@ local function PumpQueue(elapsed)
     local interval = now < (throttleSlowUntil or 0) and 1.75 or SEND_INTERVAL
     if ticker < interval then return end
     ticker = 0
-    local payload = controlQueue[controlQueueHead]
-    local isControl = payload ~= nil
-    if not payload then payload = sendQueue[sendQueueHead] end
-    if not payload then
+    local queued = controlQueue[controlQueueHead]
+    local isControl = queued ~= nil
+    if not queued then queued = sendQueue[sendQueueHead] end
+    if not queued then
         if sendQueueHead > sendQueueTail then
             sendQueue, sendQueueHead, sendQueueTail = {}, 1, 0
         end
         if controlQueueHead > controlQueueTail then
             controlQueue, controlQueueHead, controlQueueTail = {}, 1, 0
         end
+        return
+    end
+    local payload = type(queued) == "table" and queued.payload or queued
+    if type(queued) == "table" and queued.transport == "WHISPER" then
+        if #payload > CHAT_LIMIT then
+            stats.oversizeDropped = (stats.oversizeDropped or 0) + 1
+            Sync._FallbackDirectTransfer(queued.transfer,
+                "canonical packet exceeds whisper limit")
+            return
+        end
+        lastTransportAttempt = now
+        local ok, result = pcall(SendChatMessage, payload, "WHISPER", nil,
+            queued.target)
+        if not ok or result == false then
+            stats.directImmediateFailure =
+                (stats.directImmediateFailure or 0) + 1
+            Sync._FallbackDirectTransfer(queued.transfer,
+                "SendChatMessage failure")
+            return
+        end
+        PopQueued(false)
+        stats.sent = stats.sent + 1
+        stats.directBulkTx = (stats.directBulkTx or 0) + 1
+        local transfer = queued.transfer
+        transfer.remaining = math.max(0,
+            (tonumber(transfer.remaining) or 1) - 1)
+        if transfer.remaining == 0 then
+            transfer.sentAt = now
+            Sync._pendingDirectAcks[transfer.key] = transfer
+        end
+        LogEvent("TX", "sent %d chars whisper=%s: %s",
+            #payload, tostring(queued.target), payload:sub(1,44))
         return
     end
     local validatedChannel = ResolveSendChannel()
@@ -1086,6 +1326,11 @@ local function PumpQueue(elapsed)
     if ok then
         PopQueued(isControl)
         stats.sent = stats.sent + 1
+        if Sync._IsBulkPayload(payload) then
+            stats.channelBulkTx = (stats.channelBulkTx or 0) + 1
+        else
+            stats.channelControlTx = (stats.channelControlTx or 0) + 1
+        end
         LogEvent("TX","sent %d chars ch=%s: %s",
             #escaped, tostring(validatedChannel), payload:sub(1,44))
     else
@@ -1461,14 +1706,14 @@ function Responder.PrepareBuild(build, responseMode)
     }
 end
 
-function Responder.AdmitBuild(prepared, responseMode)
+function Responder.AdmitBuild(prepared, responseMode, routeContext)
     if type(prepared) ~= "table" or type(prepared.messages) ~= "table" then
         return false, "invalid prepared build"
     end
     if not Responder.CanAdmit(#prepared.messages) then
         return false, "sync queue full"
     end
-    local queued, why = EnqueueBatch(prepared.messages)
+    local queued, why = EnqueueBatch(prepared.messages, routeContext)
     if not queued then return false, why end
     if responseMode then
         Responder.stats.buildAdmissions =
@@ -1651,7 +1896,8 @@ function Responder.AdmitCandidate(item, bucketState)
     end
     local admitted, admitWhy
     if item.kind == "build" and not prepared.summary then
-        admitted, admitWhy = Responder.AdmitBuild(prepared, true)
+        admitted, admitWhy = Responder.AdmitBuild(prepared, true,
+            bucketState.routeContext)
     else
         admitted, admitWhy = EnqueueBatch(prepared.messages)
         if admitted and prepared.summary then
@@ -1743,7 +1989,18 @@ local function RequestSyncOnce()
     -- one responder instead of all flooding the channel with duplicates.
     local buildHash = CurrentBuildHash()
     local dpsHash = CurrentDpsHash()
+    local enhancedDpsHash = Sync.GetEnhancedDpsHash()
+    local requestCapabilities = Sync.DirectTransportEnabled() and "CW1" or "C0"
     local requestId = tostring(math.floor(now * 1000)) .. "-" .. tostring(math.random(1000,9999))
+    -- New request metadata is carried in a separate, ignorable control packet.
+    -- The permanent WLRQ path remains byte-for-byte compatible with v1.19.5.
+    local extensionQueued, extensionWhy = EnqueueControl(string.format(
+        "%s|%s|%s|1|%s|%s", Sync._enhanced.extension, MyName(), requestId,
+        requestCapabilities, enhancedDpsHash))
+    if not extensionQueued then
+        LogEvent("SYNC", "enhanced request metadata skipped: %s",
+            tostring(extensionWhy or "control queue full"))
+    end
     local queued, queueWhy = Enqueue(string.format("%s|%s|%s|%s|%s|%s",
         CODE_REQUEST, MyName(), buildHash, dpsHash, requestId,
         tostring((Nexus and Nexus.VERSION) or "0.0.0-dev")))
@@ -1752,8 +2009,9 @@ local function RequestSyncOnce()
         receiveWindowUntil = 0
         return false, queueWhy or "sync queue full"
     end
-    LogEvent("SYNC","requested sync (build=%s dps=%s id=%s) -- reconciliation active",
-        buildHash, dpsHash, requestId)
+    Sync._outgoingRequest = {requestId=requestId, createdAt=now}
+    LogEvent("SYNC","requested sync (build=%s legacyDps=%s enhancedDps=%s id=%s) -- reconciliation active",
+        buildHash, dpsHash, enhancedDpsHash, requestId)
     return true
 end
 
@@ -1788,7 +2046,7 @@ local function CountQueuedDps(payload)
     return true
 end
 
-function Sync.BroadcastDpsRecord(record, prepared, responseMode)
+function Sync.BroadcastDpsRecord(record, prepared, responseMode, routeContext)
     if type(prepared) ~= "table" then prepared = nil end
     if responseMode and Responder.Backpressured() then
         return false, "sync queue full", prepared
@@ -1803,7 +2061,7 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode)
         if not Responder.CanAdmit(#prepared.messages) then
             return false, "sync queue full", prepared
         end
-        local queued, queueWhy = EnqueueBatch(prepared.messages)
+        local queued, queueWhy = EnqueueBatch(prepared.messages, routeContext)
         if not queued then
             stats.dpsQueueRejected = (stats.dpsQueueRejected or 0) + 1
             return false, queueWhy, prepared
@@ -1903,7 +2161,7 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode)
         stats.dpsQueueRejected = (stats.dpsQueueRejected or 0) + 1
         return false, "sync queue full", prepared
     end
-    local queued, queueWhy = EnqueueBatch(messages)
+    local queued, queueWhy = EnqueueBatch(messages, routeContext)
     if not queued then
         stats.dpsQueueRejected = (stats.dpsQueueRejected or 0) + 1
         return false, queueWhy, prepared
@@ -1958,7 +2216,7 @@ local function HandleDps(parts)
     return false
 end
 
-local function HandleDps2(parts)
+local function HandleDps2(parts, transport)
     local sender, transferId, spec, data = parts[2], parts[3], parts[4], parts[5]
     if not ValidPeerName(sender)
         or not ValidTransferIdentifier(transferId)
@@ -2040,6 +2298,7 @@ local function HandleDps2(parts)
                     pcall(Sync.BroadcastBuild, build)
                 end
             end
+            Sync._AckAcceptedDirect(sender, "D", transferId, transport)
             return true
         end
         stats.dpsRecordRejected = (stats.dpsRecordRejected or 0) + 1
@@ -2409,7 +2668,8 @@ local function SendBucketResponse(entry, kind, bucket, bucketState)
         if D and D.BroadcastAllBuildBests then
             local ok, result, allAdmitted, didProgress, responseWhy = pcall(
                 D.BroadcastAllBuildBests, entry.peerDpsHash, bucket,
-                bucketState.progress, 1)
+                bucketState.progress, 1, false, entry.dpsDigestMode,
+                entry.routeContext)
             if ok then dpsN = tonumber(result) or 0 end
             complete = ok and allAdmitted == true
             progressed = ok and didProgress == true
@@ -2425,6 +2685,76 @@ local function SendBucketResponse(entry, kind, bucket, bucketState)
         progressed or n > 0 or dpsN > 0, why
 end
 
+function Sync._RequestExtensionKey(sender, requestId)
+    return NormalizePeerName(sender) .. ":" .. tostring(requestId or "")
+end
+
+function Sync._PruneRequestExtensions(now)
+    now = tonumber(now) or Now()
+    for key, extension in pairs(Sync._requestExtensions) do
+        if now - (tonumber(extension.seenAt) or now) > Sync._enhanced.extensionTtl then
+            Sync._requestExtensions[key] = nil
+            stats.requestExtensionsExpired =
+                (stats.requestExtensionsExpired or 0) + 1
+        end
+    end
+end
+
+function Sync._FindRequestExtension(sender, requestId)
+    Sync._PruneRequestExtensions(Now())
+    return Sync._requestExtensions[Sync._RequestExtensionKey(sender, requestId)]
+end
+
+function Sync._HandleRequestExtension(sender, requestId, protocolVersion,
+                                      capabilities, enhancedDpsHash)
+    Sync._PruneRequestExtensions(Now())
+    local total, perSender = 0, 0
+    local senderKey = NormalizePeerName(sender)
+    for _, extension in pairs(Sync._requestExtensions) do
+        total = total + 1
+        if NormalizePeerName(extension.sender) == senderKey then
+            perSender = perSender + 1
+        end
+    end
+    local key = Sync._RequestExtensionKey(sender, requestId)
+    local prior = Sync._requestExtensions[key]
+    if prior then
+        if tostring(prior.protocolVersion) ~= tostring(protocolVersion)
+            or tostring(prior.capabilities) ~= tostring(capabilities)
+            or tostring(prior.enhancedDpsHash) ~= tostring(enhancedDpsHash) then
+            return false
+        end
+        prior.seenAt = Now()
+        return true
+    end
+    if not prior and (total >= Sync._enhanced.maxExtensions
+        or perSender >= Sync._enhanced.maxExtensionsPerSender) then
+        return false
+    end
+    local extension = {
+        sender=sender, requestId=requestId, protocolVersion=protocolVersion,
+        capabilities=capabilities, enhancedDpsHash=enhancedDpsHash,
+        chatWhisper=capabilities == "CW1", seenAt=Now(),
+    }
+    Sync._requestExtensions[key] = extension
+    stats.requestExtensionsSeen = (stats.requestExtensionsSeen or 0) + 1
+
+    -- Tolerate WLRQ/WLXQ reordering. If preparation already happened, restart
+    -- it against the enhanced digest before any further response work.
+    local entry = pendingResponses[tostring(sender)..":"..tostring(requestId)]
+    if entry then
+        entry.peerDpsHash = enhancedDpsHash
+        entry.dpsDigestMode = "enhanced"
+        entry.capabilities = capabilities
+        entry.routeContext = {requester=entry.requester,
+            requestId=entry.requestId, chatWhisper=extension.chatWhisper}
+        if entry.prepared and Responder.ResetResponseEntry then
+            Responder.ResetResponseEntry(entry)
+        end
+    end
+    return true
+end
+
 local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
     if requester == MyName() then
         LogEvent("RX","ignoring own request (no echo loop)")
@@ -2433,11 +2763,15 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
     peerBuildHash, peerDpsHash = peerBuildHash or "0", peerDpsHash or "0"
     requestId = requestId or ("legacy-"..tostring(requester).."-"..tostring(math.floor(Now())))
     local key=tostring(requester)..":"..tostring(requestId)
+    local extension = Sync._FindRequestExtension(requester, requestId)
+    local digestMode = extension and "enhanced" or "legacy"
+    local selectedDpsHash = extension and extension.enhancedDpsHash or peerDpsHash
     local prior = pendingResponses[key]
     if prior then
         if tostring(prior.peerBuildWireHash or prior.peerBuildHash)
                 ~= tostring(peerBuildHash)
-            or tostring(prior.peerDpsHash) ~= tostring(peerDpsHash) then
+            or tostring(prior.peerLegacyDpsHash or prior.peerDpsHash)
+                ~= tostring(peerDpsHash) then
             LogEvent("RX", "REJECT conflicting request metadata for %s", key)
             return false
         end
@@ -2445,7 +2779,11 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
     end
     local entry = {
         key=key, requester=requester, requestId=requestId,
-        peerBuildWireHash=peerBuildHash, peerDpsHash=peerDpsHash,
+        peerBuildWireHash=peerBuildHash, peerLegacyDpsHash=peerDpsHash,
+        peerDpsHash=selectedDpsHash, dpsDigestMode=digestMode,
+        capabilities=extension and extension.capabilities or nil,
+        routeContext=extension and {requester=requester, requestId=requestId,
+            chatWhisper=extension.chatWhisper} or nil,
         createdAt=Now(), lastActiveAt=Now(), prepared=false,
         remaining=StableDelay(key..":prepare:"..MyName()),
         buildProgress={}, dpsProgress={}, bucketCursor=0,
@@ -2458,13 +2796,20 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
             tostring(requester), MAX_PENDING_RESPONSES)
         return false
     end
+    if digestMode == "enhanced" then
+        stats.enhancedRequests = (stats.enhancedRequests or 0) + 1
+    else
+        stats.legacyRequests = (stats.legacyRequests or 0) + 1
+    end
     LogEvent("RX","mesh request from %s scheduled (id=%s)",
         tostring(requester),tostring(requestId))
     return true
 end
 
 function Responder.PrepareResponseEntry(entry)
-    local localDeltaHash, myDpsHash = DeltaBuildHash(), CurrentDpsHash()
+    local localDeltaHash = DeltaBuildHash()
+    local myDpsHash = entry.dpsDigestMode == "enhanced"
+        and Sync.GetEnhancedDpsHash() or CurrentDpsHash()
     local peerWireBuckets = SplitHashes(entry.peerBuildWireHash)
     local comparablePeerHash, buildMode
     if #peerWireBuckets == BUILD_BUCKETS + 1
@@ -2499,6 +2844,7 @@ function Responder.PrepareResponseEntry(entry)
             buckets["B"..i]={kind="B", bucket=i,
                 hash=tostring(myB[i] or "0"), snapshot=snapshot,
                 progress=entry.buildProgress, claimSafe=true,
+                routeContext=entry.routeContext,
                 claimable=not BucketContainsTombstone(i),
                 remaining=BucketDelay(entry.key,"B",i)}
         end
@@ -2507,8 +2853,9 @@ function Responder.PrepareResponseEntry(entry)
             buckets["D"..i]={kind="D", bucket=i,
                 hash=tostring(myD[i] or "0"),
                 progress=entry.dpsProgress[i],
+                routeContext=entry.routeContext,
                 claimable=dps and dps.SyncBucketClaimable
-                    and dps.SyncBucketClaimable(i) == true,
+                    and dps.SyncBucketClaimable(i, entry.dpsDigestMode) == true,
                 remaining=BucketDelay(entry.key,"D",i)}
         end
     end
@@ -2725,6 +3072,31 @@ local function SplitWire(text)
     end
 end
 
+function Sync.IsDirectBulkWhisper(text, sender)
+    if type(text) ~= "string" or #text > MAX_WIRE_BYTES
+        or text:find("[%c]") or text:find("||", 1, true) then return false end
+    local parts = SplitWire(text)
+    if not parts or not ValidPeerName(parts[2])
+        or (sender ~= nil and (not ValidPeerName(sender)
+            or not SameTransportSender(parts[2], sender))) then return false end
+    if parts[1] == CODE_BUILD then
+        return #parts == 6
+            and ValidIdentifier(parts[3], MAX_BUILD_ID_BYTES)
+            and ValidIntegerText(parts[4], 0)
+            and ValidField(parts[5], 16, false)
+            and parts[5]:match("^%d+/%d+$") ~= nil
+            and ValidField(parts[6], MAX_CHUNK_BYTES, false)
+    end
+    if parts[1] == CODE_DPS2 then
+        return #parts == 5
+            and ValidTransferIdentifier(parts[3])
+            and ValidField(parts[4], 16, false)
+            and parts[4]:match("^%d+/%d+$") ~= nil
+            and ValidField(parts[5], MAX_CHUNK_BYTES, false)
+    end
+    return false
+end
+
 local function RejectIncoming(reason)
     stats.malformedRejected = (stats.malformedRejected or 0) + 1
     LogEvent("RX", "REJECT envelope: %s", tostring(reason or "malformed"))
@@ -2767,7 +3139,48 @@ local function AcceptPeer(sender, version)
     return true
 end
 
-function Sync.HandleIncoming(text, sender)
+function Sync._AckAcceptedDirect(sender, kind, logicalId, transport)
+    if transport ~= "WHISPER" then return false end
+    local request = Sync._outgoingRequest
+    if not request or Now() - (tonumber(request.createdAt) or 0) > INFLIGHT_MAX_AGE then
+        return false
+    end
+    return EnqueueControl(string.format("%s|%s|%s|%s|%s",
+        Sync._enhanced.ack, MyName(), tostring(request.requestId),
+        tostring(kind), tostring(logicalId)))
+end
+
+function Sync._HandleDirectAck(sender, requestId, kind, logicalId)
+    for key, transfer in pairs(Sync._pendingDirectAcks) do
+        if SamePeer(transfer.target, sender)
+            and tostring(transfer.requestId) == tostring(requestId)
+            and tostring(transfer.kind) == tostring(kind)
+            and tostring(transfer.logicalId) == tostring(logicalId) then
+            Sync._pendingDirectAcks[key] = nil
+            Sync._directTransfers[key] = nil
+            stats.directAckSuccess = (stats.directAckSuccess or 0) + 1
+            local duration = math.max(0, Now()
+                - (tonumber(transfer.queuedAt) or Now()))
+            stats.directTransferDurationTotal =
+                (stats.directTransferDurationTotal or 0) + duration
+            stats.directTransferDurationCount =
+                (stats.directTransferDurationCount or 0) + 1
+            stats.directTransferDurationMax = math.max(
+                tonumber(stats.directTransferDurationMax) or 0, duration)
+            stats.transferDurationTotal =
+                (stats.transferDurationTotal or 0) + duration
+            stats.transferDurationCount =
+                (stats.transferDurationCount or 0) + 1
+            stats.transferDurationMax = math.max(
+                tonumber(stats.transferDurationMax) or 0, duration)
+            return true
+        end
+    end
+    return false
+end
+
+function Sync.HandleIncoming(text, sender, transport)
+    transport = transport == "WHISPER" and "WHISPER" or "CHANNEL"
     local allowed, why = Sync._TransportAllowed()
     if not allowed then
         stats.ignoredOutsideWindow = (stats.ignoredOutsideWindow or 0) + 1
@@ -2805,11 +3218,58 @@ function Sync.HandleIncoming(text, sender)
     parts[2] = actualSender
     protocolSender = actualSender
 
+    local bulk = code == CODE_BUILD or code == CODE_DPS2
+    if transport == "WHISPER" then
+        if not bulk then return RejectIncoming("invalid whisper protocol") end
+        local request = Sync._outgoingRequest
+        if not request or Now() - (tonumber(request.createdAt) or 0)
+                > INFLIGHT_MAX_AGE then
+            stats.uninvolvedBulkRx = (stats.uninvolvedBulkRx or 0) + 1
+            stats.nonRequestedBulkRx = (stats.nonRequestedBulkRx or 0) + 1
+            return false
+        end
+        stats.directBulkRx = (stats.directBulkRx or 0) + 1
+    elseif bulk then
+        stats.channelBulkRx = (stats.channelBulkRx or 0) + 1
+        if Now() > receiveWindowUntil then
+            stats.uninvolvedBulkRx = (stats.uninvolvedBulkRx or 0) + 1
+            stats.nonRequestedBulkRx = (stats.nonRequestedBulkRx or 0) + 1
+        end
+    else
+        stats.channelControlRx = (stats.channelControlRx or 0) + 1
+    end
+
     if code == CODE_PRESENCE then
         if #parts ~= 3 or not ValidVersion(parts[3]) then
             return RejectIncoming("invalid presence")
         end
         return AcceptPeer(protocolSender, parts[3])
+    end
+
+    if code == Sync._enhanced.extension then
+        if #parts ~= 6
+            or not ValidIdentifier(parts[3], MAX_REQUEST_ID_BYTES)
+            or parts[4] ~= "1"
+            or (parts[5] ~= "CW1" and parts[5] ~= "C0")
+            or not ValidHash(parts[6]) then
+            return RejectIncoming("invalid request extension")
+        end
+        if Sync._HandleRequestExtension(protocolSender, parts[3], parts[4],
+                parts[5], parts[6]) then
+            return AcceptPeer(protocolSender)
+        end
+        return false
+    end
+
+    if code == Sync._enhanced.ack then
+        if #parts ~= 5
+            or not ValidIdentifier(parts[3], MAX_REQUEST_ID_BYTES)
+            or (parts[4] ~= "B" and parts[4] ~= "D")
+            or not ValidTransferIdentifier(parts[5]) then
+            return RejectIncoming("invalid direct ACK")
+        end
+        return Sync._HandleDirectAck(protocolSender, parts[3],
+            parts[4], parts[5])
     end
 
     if code == CODE_REQUEST then
@@ -2929,7 +3389,7 @@ function Sync.HandleIncoming(text, sender)
 
     if code == CODE_DPS2 then
         if #parts ~= 5 then return RejectIncoming("invalid DPS transfer") end
-        if HandleDps2(parts) then return AcceptPeer(protocolSender) end
+        if HandleDps2(parts, transport) then return AcceptPeer(protocolSender) end
         return false
     end
 
@@ -2957,7 +3417,10 @@ function Sync.HandleIncoming(text, sender)
     if not entry then
         if total == 1 then
             local accepted = HandleComplete(buildId, lastMod, data, msgSender)
-            if accepted then return AcceptPeer(protocolSender) end
+            if accepted then
+                Sync._AckAcceptedDirect(msgSender, "B", buildId, transport)
+                return AcceptPeer(protocolSender)
+            end
             return false
         end
         CleanExpiredInflight()
@@ -2995,6 +3458,7 @@ function Sync.HandleIncoming(text, sender)
     LogEvent("RX","transfer '%s' complete (%d/%d chunks, %d bytes)",
         tostring(buildId), entry.received, entry.total, #full)
     if HandleComplete(buildId, entry.lastMod, full, msgSender) then
+        Sync._AckAcceptedDirect(msgSender, "B", buildId, transport)
         return AcceptPeer(protocolSender)
     end
     return false
@@ -3044,6 +3508,8 @@ local function QueueBusy()
     if Sync._RecentlyActiveTransfer(inflight)
         or Sync._RecentlyActiveTransfer(dpsInflight) then return true end
     if next(pendingResponses) or next(pendingLoadouts) then return true end
+    if next(Sync._pendingDirectAcks) then return true end
+    if next(Sync._fallbackTransfers) then return true end
     if PendingDeleteCount() > 0 then return true end
     if Responder.manualPublish then return true end
     if legacyRecoveryHead <= legacyRecoveryTail
@@ -3205,6 +3671,8 @@ function Sync.PruneTransientState(now)
             removed.hotBuilds = removed.hotBuilds + 1
         end
     end
+    Sync._PruneRequestExtensions(now)
+    Sync._PruneDirectState(now)
     return removed
 end
 
@@ -3297,7 +3765,9 @@ function Sync.OnUpdate(elapsed)
     PumpLegacyRecovery(elapsed)
     if not Sync._pendingDeleteScheduled then PumpPendingDeletes(elapsed) end
     Responder.PumpManualPublish()
+    Sync._PumpDirectFallbacks()
     PumpQueue(elapsed)
+    Sync._PumpDirectAcks()
     if Sync.FlushStatusReply then Sync.FlushStatusReply() end
     if autoSyncPending then
         autoSyncElapsed = autoSyncElapsed + (tonumber(elapsed) or 0)
@@ -3401,6 +3871,11 @@ function Sync.Init(codec, adapter)
     sendQueue, sendQueueHead, sendQueueTail = {}, 1, 0
     controlQueue, controlQueueHead, controlQueueTail = {}, 1, 0
     inflight, dpsInflight = {}, {}
+    Sync._requestExtensions = {}
+    Sync._directTransfers = {}
+    Sync._pendingDirectAcks = {}
+    Sync._fallbackTransfers = {}
+    Sync._outgoingRequest = nil
     ticker = 0
     throttlePauseUntil, throttleSlowUntil = 0, 0
     lastTransportAttempt = -math.huge

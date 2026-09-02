@@ -18,8 +18,9 @@ assert(DPS.ReceiveRecord({v=3,f=fp,e=echoes,c="dummy",d=31000000,u=65,
 
 H.sentChatMessages={}
 clock=clock+100
-local relayHash=DPS.GetSyncHash()
-assert(relayHash~="0,0,0,0,0,0,0,0","seeded relay DPS hash was empty")
+local relayLegacyHash=DPS.GetLegacySyncHash()
+local relayEnhancedHash=DPS.GetEnhancedSyncHash()
+assert(relayLegacyHash~="0,0,0,0,0,0,0,0","seeded relay DPS hash was empty")
 Sync.HandleIncoming("WLRQ|NewPeer|0","NewPeer")
 for i=1,1000 do Sync.OnUpdate(0.2) end
 local sawBuild=false
@@ -36,7 +37,7 @@ local responseStats=Sync.ResponseStats()
 local workState=Sync.WorkState()
 assert(#relayedDpsMessages>0,string.format(
     "relay did not answer DPS request hash=%s pending=%s serialized=%s",
-    relayHash,tostring(workState.pendingResponses),
+    relayLegacyHash,tostring(workState.pendingResponses),
     tostring(responseStats.dpsSerializations)))
 assert(#relayedDpsMessages<=3,string.format(
     "relayed DPS recovery remained too fragile at %d chat chunks",
@@ -55,8 +56,10 @@ assert(recovered[1].generationAt==60000,
     "compact relay did not preserve the owner generation")
 assert(recovered[1].legacy==true,
     "relayed DPS row was not marked as unverified legacy evidence")
-assert(DPS.GetSyncHashUncached()==relayHash,
-    "relayed DPS evidence did not converge to the source hash")
+assert(DPS.GetLegacySyncHashUncached()==relayLegacyHash,
+    "relayed DPS evidence did not converge under v1.19.5 semantics")
+assert(DPS.GetEnhancedSyncHashUncached()~=relayEnhancedHash,
+    "enhanced digest failed to distinguish relay from owner evidence")
 H.sentChatMessages={}
 assert(DPS.BroadcastAllBuildBests("0")>0,
     "relayed owner snapshot was not redistributed to the next peer")

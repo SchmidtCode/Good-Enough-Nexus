@@ -178,6 +178,8 @@ H.sentChatMessages = {}
 assert(Sync.RequestSync(), "retry convergence did not start")
 uptime = uptime + 1.2
 Sync.OnUpdate(1.2)
+uptime = uptime + 1.2
+Sync.OnUpdate(1.2) -- WLXQ is paced separately from legacy-compatible WLRQ
 local retryPackets = dps2Packets(
     "RelayPeer", "RelayPeer:50006:dummy", compactV6, 40)
 assert(#retryPackets >= 4, "retry fixture needs a multi-chunk DPS record")
@@ -188,6 +190,8 @@ assert(Sync.WorkState().dpsInflight == 1,
     "partial DPS transfer was not retained")
 uptime = uptime + 61
 Sync.OnUpdate(61)
+uptime = uptime + 1.2
+Sync.OnUpdate(1.2)
 uptime = uptime + 1.2
 Sync.OnUpdate(1.2)
 assert(Sync.WorkState().dpsInflight == 1,

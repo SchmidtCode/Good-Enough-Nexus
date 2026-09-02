@@ -2696,6 +2696,7 @@ local function LogText_Sync()
     Add("")
 
     local st = s.Stats()
+    local work = s.WorkState and s.WorkState() or {}
     Add("-- counters --")
     Add("messages sent          : %d", st.sent or 0)
     Add("builds stored (new)    : %d", (st.received or 0) - (st.updated or 0))
@@ -2708,11 +2709,40 @@ local function LogText_Sync()
     Add("deleted (tombstoned)   : %d", s.TombstoneCount and s.TombstoneCount() or 0)
     Add("")
 
+    Add("-- reconciliation transport --")
+    Add("experimental CW1       : %s",
+        tostring(s.DirectTransportEnabled and s.DirectTransportEnabled()))
+    Add("channel control TX/RX  : %d / %d",
+        st.channelControlTx or 0, st.channelControlRx or 0)
+    Add("channel bulk TX/RX     : %d / %d",
+        st.channelBulkTx or 0, st.channelBulkRx or 0)
+    Add("direct bulk TX/RX      : %d / %d",
+        st.directBulkTx or 0, st.directBulkRx or 0)
+    Add("uninvolved bulk RX     : %d", st.uninvolvedBulkRx or 0)
+    Add("direct attempt/ACK     : %d / %d",
+        st.directAttempt or 0, st.directAckSuccess or 0)
+    Add("timeout/API fail/fallback: %d / %d / %d",
+        st.directTimeout or 0, st.directImmediateFailure or 0,
+        st.directFallback or 0)
+    Add("request legacy/enhanced: %d / %d",
+        st.legacyRequests or 0, st.enhancedRequests or 0)
+    Add("extensions seen/expired: %d / %d",
+        st.requestExtensionsSeen or 0, st.requestExtensionsExpired or 0)
+    Add("queued bytes/max depth : %d / %d",
+        st.bytesQueued or 0, st.maxQueueDepth or 0)
+    Add("direct duration count/avg/max: %d / %.1fs / %.1fs",
+        st.directTransferDurationCount or 0,
+        (st.directTransferDurationTotal or 0)
+            / math.max(1, st.directTransferDurationCount or 0),
+        st.directTransferDurationMax or 0)
+    Add("pending ACK/fallback   : %d / %d",
+        work.directAckPending or 0, work.directFallbackPending or 0)
+    Add("")
+
     local dps = Nexus and Nexus.DpsCapture
     local dpsState = dps and dps.SyncDiagnostics
         and dps.SyncDiagnostics() or {}
     local response = s.ResponseStats and s.ResponseStats() or {}
-    local work = s.WorkState and s.WorkState() or {}
     local dummy = dpsState.dummy or {}
     local lk = dpsState.lk or {}
     Add("-- DPS sync --")
@@ -3138,6 +3168,17 @@ EH:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4,
             pcall(Nexus.Sync.ContextChanged, event)
         end
     elseif event == "CHAT_MSG_WHISPER" then
+        if initialized and Nexus.Sync and Nexus.Sync.IsDirectBulkWhisper
+            and Nexus.Sync.IsDirectBulkWhisper(arg1, arg2) then
+            local ok, err = pcall(Nexus.Sync.HandleIncoming,
+                arg1, arg2, "WHISPER")
+            if not ok then
+                RecordError("Sync.HandleIncomingWhisper", err)
+                Nexus.Sync.LogEvent("RX", "whisper handler ERROR: %s",
+                    ErrorText(err))
+            end
+            return
+        end
         -- Dev diagnostic: a WLRQ whisper with token "dev" is a status
         -- request from a developer client.  Looks like routine sync traffic.
         if initialized and Nexus.Sync and type(arg1) == "string"
@@ -3180,6 +3221,16 @@ EH:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4,
     end
 end)
 EH:RegisterEvent("CHAT_MSG_WHISPER")
+if ChatFrame_AddMessageEventFilter then
+    pcall(ChatFrame_AddMessageEventFilter, "CHAT_MSG_WHISPER",
+        function(_, _, text, sender, ...)
+            if initialized and Nexus.Sync and Nexus.Sync.IsDirectBulkWhisper
+                and Nexus.Sync.IsDirectBulkWhisper(text, sender) then
+                return true
+            end
+            return false, text, sender, ...
+        end)
+end
 EH:SetScript("OnUpdate", function(_, elapsed)
     -- Detect unusually long frame stalls. On 3.3.5 these are common during
     -- loading screens and zone transitions and do not indicate a real problem.
@@ -3480,6 +3531,23 @@ local function CommandSyncMode(message)
         .. ". Sync runs only while resting and in a safe context.")
 end
 
+local function CommandSyncDirect(message)
+    if not (Nexus.Sync and Nexus.Sync.SetDirectTransportEnabled) then
+        Print("sync unavailable"); return
+    end
+    local requested = message:match("^syncdirect%s+(%S+)$")
+    if requested ~= "on" and requested ~= "off" then
+        local enabled = Nexus.Sync.DirectTransportEnabled
+            and Nexus.Sync.DirectTransportEnabled()
+        Print("Experimental direct sync: " .. (enabled and "ON" or "OFF"))
+        Print("usage: /nexus syncdirect <on|off>")
+        return
+    end
+    local enabled = Nexus.Sync.SetDirectTransportEnabled(requested == "on")
+    Print("Experimental direct sync set to " .. (enabled and "ON" or "OFF")
+        .. ". Channel fallback remains active.")
+end
+
 local function RetentionLimits()
     return Nexus.DataRetention and Nexus.DataRetention.Limits
         and Nexus.DataRetention.Limits(NexusDB) or nil
@@ -3609,7 +3677,7 @@ local function CommandHelp()
     Print("v" .. Nexus.VERSION .. " -- " .. statusLine)
     Print("|cffffd200Nexus v" .. Nexus.VERSION .. "|r  --  /nexus (or /nx, /wr)")
     Print("|cffffd200Setup:|r  builds  |  leaderboard  |  editor  |  sync  |  overlay")
-    Print("|cffffd200Sync:|r   syncmode <automatic|manual|off>  |  sync")
+    Print("|cffffd200Sync:|r   syncmode <automatic|manual|off>  |  sync  |  syncdirect <on|off>")
     Print("|cffffd200Limits:|r synclimits <on|off>  |  synclimits <D/L top> <D/L class> <avg top> <avg class> <other> <author>")
     Print("|cffffd200Run:|r    auto  |  panel  |  status  |  wishlist  |  progress")
     Print("|cffffd200Data:|r   log  |  perf  |  perf reset  |  dps  |  nameplate  |  logclear")
@@ -3648,6 +3716,7 @@ local CommandRouter = assert(Nexus.CommandRouter, "CommandRouter required").New(
     patterns={
         {pattern="^probe%s+",handler=CommandProbe},
         {pattern="^syncmode",handler=CommandSyncMode},
+        {pattern="^syncdirect",handler=CommandSyncDirect},
         {pattern="^synclimits",handler=CommandSyncLimits},
         {pattern="^anchor",handler=CommandAnchor},
     },
