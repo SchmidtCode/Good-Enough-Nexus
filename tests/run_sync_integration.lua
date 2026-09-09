@@ -17,6 +17,11 @@ dofile("ui/Readout.lua")
 dofile("ui/Panel.lua")
 Nexus.LogViewer = { Init = function() end }
 dofile("ui/CommunityBuilds.lua")
+local chatFilters = {}
+ChatFrame_AddMessageEventFilter = function(event, callback)
+    chatFilters[event] = chatFilters[event] or {}
+    chatFilters[event][#chatFilters[event] + 1] = callback
+end
 dofile("core/Main.lua")
 
 NexusDB = {}
@@ -33,6 +38,38 @@ H.Advance(2)
 
 assert(Nexus.Sync.IsConnected(), "sync channel should be connected after PLAYER_ENTERING_WORLD")
 print("sync channel connects automatically on login -- OK")
+
+local directWire = "WLD2|Alice|direct-filter|1/1|QQ=="
+local escapedDirectWire = directWire:gsub("|", "||")
+local incomingFilter = chatFilters.CHAT_MSG_WHISPER
+    and chatFilters.CHAT_MSG_WHISPER[1]
+local outgoingFilter = chatFilters.CHAT_MSG_WHISPER_INFORM
+    and chatFilters.CHAT_MSG_WHISPER_INFORM[1]
+assert(incomingFilter and outgoingFilter,
+    "direct bulk filters were not installed for both whisper directions")
+assert(incomingFilter(nil, "CHAT_MSG_WHISPER", escapedDirectWire, "Alice"),
+    "incoming escaped Nexus bulk whisper remained visible")
+assert(outgoingFilter(nil, "CHAT_MSG_WHISPER_INFORM",
+    escapedDirectWire, "Daradorla"),
+    "outgoing Nexus bulk whisper remained visible")
+assert(not incomingFilter(nil, "CHAT_MSG_WHISPER", "hello", "Alice"),
+    "ordinary incoming whisper was hidden")
+assert(not outgoingFilter(nil, "CHAT_MSG_WHISPER_INFORM", "hello", "Daradorla"),
+    "ordinary outgoing whisper was hidden")
+print("direct bulk whispers are hidden without filtering ordinary chat -- OK")
+
+Nexus.Sync._diagnostic={peer="Daradorla",id="lab-1-1",pipeFree=true}
+local labWire=Nexus.Sync._EncodeLabBulk(directWire)
+assert(outgoingFilter(nil,"CHAT_MSG_WHISPER_INFORM",labWire,"Daradorla"),
+    "outgoing CW2 lab envelope remained visible")
+local peerWire=Nexus.Sync._EncodeLabBulk("WLD2|Daradorla|record|1/1|QQ==")
+assert(incomingFilter(nil,"CHAT_MSG_WHISPER",peerWire,"Daradorla"))
+assert(not outgoingFilter(nil,"CHAT_MSG_WHISPER_INFORM",peerWire,"Daradorla"),
+    "outgoing filter accepted another claimed sender")
+assert(not outgoingFilter(nil,"CHAT_MSG_WHISPER_INFORM","WLTB:hello","Daradorla"))
+Nexus.Sync._diagnostic=nil
+assert(not outgoingFilter(nil,"CHAT_MSG_WHISPER_INFORM",labWire,"Daradorla"),
+    "unarmed lab-like chat was hidden")
 
 -- Post through the real UI-facing function
 local CB = Nexus.CommunityBuilds

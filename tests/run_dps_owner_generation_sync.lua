@@ -58,7 +58,9 @@ assert(DPS.ReceiveRecord(record(31000000, 100), "Owner"),
     "downstream stale owner snapshot was rejected")
 assert(DPS.ReceiveRecord(record(30000000, 200), nil, "legacy-relay"),
     "newer relayed owner generation did not replace stale direct evidence")
-assert(not DPS.ReceiveRecord(record(32000000, 150), nil, "legacy-relay"),
+local staleAccepted, staleReason = DPS.ReceiveRecord(
+    record(32000000, 150), nil, "legacy-relay")
+assert(not staleAccepted and staleReason == "not-better-than-existing",
     "older relayed generation rolled back newer owner state")
 local downstream = DPS.GetDpsBoard("dummy")
 assert(downstream[1].dps == 30000000

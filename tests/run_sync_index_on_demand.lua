@@ -69,4 +69,70 @@ assert(not sentRetry and retryReason=='queued for background recovery',
 assert(Sync.WorkState().recovery==recoveryLimit,
     'immediate recovery retry did not enter the released slot')
 
+-- Exact-build recovery is control-plane work: it must make progress even
+-- while a large channel response is draining, otherwise compact DPS records
+-- can expire before their required loadout is requested.
+NexusDB={communityBuilds={},syncTombstones={},dpsCapture={}}
+Sync.Init(Nexus.Codec,{})
+H.sentChatMessages={}
+local recoveryQueued,recoveryWhy=Sync.RequestLoadout('priority-recovery')
+assert(not recoveryQueued and recoveryWhy=='queued for background recovery',
+    'priority recovery fixture was not queued')
+local bulkBacklog={}
+for i=1,12 do
+    bulkBacklog[i]='WLRB|Receiver|bulk-'..i..'|20|1/1|QQ=='
+end
+assert(Sync.EnqueueLogicalTransfer(bulkBacklog),
+    'could not create saturated channel bulk fixture')
+assert(Sync.WorkState().sending>8,
+    'channel bulk fixture did not exceed the old recovery threshold')
+Sync.OnUpdate(1.6)
+local recoverySent=false
+for _,message in ipairs(H.sentChatMessages) do
+    if message.text:gsub('||','|')=='WLLQ|Receiver|priority-recovery' then
+        recoverySent=true
+    end
+end
+assert(recoverySent,
+    'exact-build recovery was starved behind channel bulk backlog')
+
+-- The legacy-compatible WLLQ response still uses channel WLRB packets, but
+-- those packets must not sit behind an unrelated multi-minute bulk backlog.
+-- It is a correctness dependency for deferred compact DPS evidence.
+who='Source'
+local requestedBuild={id='requested-exact',title='Requested exact',
+    author='Source',class='MAGE',echoes=echoes,postedAt=30,lastModified=30}
+NexusDB={communityBuilds={[requestedBuild.id]=requestedBuild},
+    syncTombstones={},dpsCapture={},
+    settings={syncDirectExperimental=true}}
+Sync.Init(Nexus.Codec,{})
+H.sentChatMessages={}
+local ordinaryBacklog={}
+for i=1,20 do
+    ordinaryBacklog[i]='WLRB|Source|ordinary-'..i..'|30|1/1|QQ=='
+end
+assert(Sync.EnqueueLogicalTransfer(ordinaryBacklog),
+    'could not queue ordinary channel backlog')
+local directBacklog={}
+for i=1,6 do
+    directBacklog[i]='WLRB|Source|direct-backlog|30|'..i..'/6|QQ=='
+end
+assert(Sync.EnqueueLogicalTransfer(directBacklog,
+    {requester='Receiver',requestId='req-priority',chatWhisper=true}),
+    'could not queue direct bulk backlog')
+assert(Sync.HandleIncoming('WLLQ|Receiver|requested-exact','Receiver'),
+    'valid exact-build request was rejected')
+Pump(30)
+local requestedResponse=false
+for _,message in ipairs(H.sentChatMessages) do
+    local wire=message.text:gsub('||','|')
+    if wire:find('^WLRB|Source|requested%-exact|') then
+        requestedResponse=true
+    end
+end
+assert(requestedResponse,
+    'requested exact build remained behind ordinary channel bulk backlog')
+assert(Sync.WorkState().directSending>0,
+    'exact-build response did not overtake the direct dependency backlog')
+
 print('complete current sync, legacy recovery, and cooldown admission -- OK')

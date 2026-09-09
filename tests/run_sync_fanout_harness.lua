@@ -67,18 +67,97 @@ assert(Sync.WorkState().sending >= 200
 
 Sync.Init(Nexus.Codec, {})
 NexusDB.settings.syncDirectExperimental = true
-for i = 1, 9 do
+for i = 1, 40 do
+    assert(Sync.EnqueueLogicalTransfer({string.format(
+        "WLRB|FanoutSender|channel-backlog-%d|1|1/1|QQ==", i)}))
+end
+assert(Sync.EnqueueLogicalTransfer({
+    "WLRB|FanoutSender|priority-direct|1|1/1|QQ=="},
+    {requester="PriorityTarget", requestId="priority-direct",
+        chatWhisper=true}))
+H.sentChatMessages = {}
+H.now = H.now + 1.2
+Sync.OnUpdate(1.2)
+assert(H.sentChatMessages[1] and H.sentChatMessages[1].kind == "WHISPER",
+    "accepted direct work was starved behind channel bulk")
+
+Sync.Init(Nexus.Codec, {})
+NexusDB.settings.syncDirectExperimental = true
+H.sentChatMessages = {}
+Nexus.DpsCapture = {
+    GetLegacySyncHash=function() return "1,1,1,1,1,1,1,1" end,
+    GetEnhancedSyncHash=function() return "1,1,1,1,1,1,1,1" end,
+    SyncBucketClaimable=function() return true end,
+    BroadcastAllBuildBests=function()
+        return 0, true, true
+    end,
+}
+local fairnessBuildHash = Sync.GetCompatibilityHashes()
+for i = 1, 16 do
+    local peer = "ControlPeer" .. i
+    assert(Sync.HandleIncoming("WLRQ|" .. peer .. "|"
+        .. fairnessBuildHash .. "|0|control-" .. i .. "|1.19.5", peer),
+        "could not schedule a control-producing response")
+end
+for _ = 1, 200 do
+    H.now = H.now + 0.1
+    Sync.OnUpdate(0.1)
+end
+assert(Sync.WorkState().control >= 10,
+    "could not build a sustained control-plane backlog")
+assert(Sync.EnqueueLogicalTransfer({
+    "WLRB|FanoutSender|control-fairness|1|1/1|QQ=="},
+    {requester="FairnessTarget", requestId="control-fairness",
+        chatWhisper=true}))
+for _ = 1, 6 do
+    H.now = H.now + 1.2
+    Sync.OnUpdate(1.2)
+end
+local fairnessDirectSent = false
+for _, message in ipairs(H.sentChatMessages) do
+    local wire = message.text:gsub("||", "|")
+    if message.kind == "WHISPER"
+        and message.target == "FairnessTarget"
+        and wire:find("^WLRB|FanoutSender|control%-fairness|") then
+        fairnessDirectSent = true
+    end
+end
+assert(fairnessDirectSent,
+    "direct work was indefinitely starved by control-plane backlog")
+Nexus.DpsCapture = nil
+
+Sync.Init(Nexus.Codec, {})
+NexusDB.settings.syncDirectExperimental = true
+for i = 1, 8 do
     assert(Sync.EnqueueLogicalTransfer({string.format(
         "WLRB|FanoutSender|peer-cap-%d|1|1/1|QQ==", i)},
         {requester="BoundedTarget", requestId="peer-cap-" .. i,
             chatWhisper=true}))
 end
+local ninth, ninthWhy = Sync.EnqueueLogicalTransfer({
+    "WLRB|FanoutSender|peer-cap-9|1|1/1|QQ=="},
+    {requester="BoundedTarget", requestId="peer-cap-9",
+        chatWhisper=true})
+assert(not ninth and ninthWhy == "sync queue full",
+    "full direct state silently leaked the ninth object onto the channel")
 local directStateCount = 0
 for _ in pairs(Sync._directTransfers) do
     directStateCount = directStateCount + 1
 end
 assert(directStateCount == 8,
     "per-peer direct logical-transfer bound changed")
+H.now = H.now + 1.2
+Sync.OnUpdate(1.2)
+assert(H.sentChatMessages[#H.sentChatMessages].kind == "WHISPER",
+    "bounded direct queue did not begin draining")
+assert(Sync.HandleIncoming(
+    "WLAK|BoundedTarget|peer-cap-1|B|peer-cap-1", "BoundedTarget"),
+    "logical ACK did not free a bounded direct slot")
+assert(Sync.EnqueueLogicalTransfer({
+    "WLRB|FanoutSender|peer-cap-9|1|1/1|QQ=="},
+    {requester="BoundedTarget", requestId="peer-cap-9",
+        chatWhisper=true}),
+    "direct response did not resume after an ACK freed capacity")
 
 NexusDB.settings.syncDirectExperimental = false
 Sync.Init(Nexus.Codec, {})

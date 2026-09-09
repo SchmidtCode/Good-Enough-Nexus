@@ -2676,6 +2676,7 @@ local function LogText_State()
 end
 
 local function LogText_Sync()
+    if Nexus.SyncLab and Nexus.SyncLab.showReport then return Nexus.SyncLab.Report() end
     local s = Nexus.Sync
     if not s then return "sync module not loaded" end
     local out = {}
@@ -2710,7 +2711,7 @@ local function LogText_Sync()
     Add("")
 
     Add("-- reconciliation transport --")
-    Add("experimental CW1       : %s",
+    Add("experimental CW1/CW2   : %s",
         tostring(s.DirectTransportEnabled and s.DirectTransportEnabled()))
     Add("channel control TX/RX  : %d / %d",
         st.channelControlTx or 0, st.channelControlRx or 0)
@@ -2721,11 +2722,14 @@ local function LogText_Sync()
     Add("uninvolved bulk RX     : %d", st.uninvolvedBulkRx or 0)
     Add("direct attempt/ACK     : %d / %d",
         st.directAttempt or 0, st.directAckSuccess or 0)
+    Add("content-matched ACK    : %d", st.directContentAck or 0)
     Add("timeout/API fail/fallback: %d / %d / %d",
         st.directTimeout or 0, st.directImmediateFailure or 0,
         st.directFallback or 0)
     Add("request legacy/enhanced: %d / %d",
         st.legacyRequests or 0, st.enhancedRequests or 0)
+    Add("request control TX ext/base: %d / %d",
+        st.requestExtensionTx or 0, st.requestBaseTx or 0)
     Add("extensions seen/expired: %d / %d",
         st.requestExtensionsSeen or 0, st.requestExtensionsExpired or 0)
     Add("queued bytes/max depth : %d / %d",
@@ -2737,6 +2741,7 @@ local function LogText_Sync()
         st.directTransferDurationMax or 0)
     Add("pending ACK/fallback   : %d / %d",
         work.directAckPending or 0, work.directFallbackPending or 0)
+    Add("active CW2 responders  : %d", work.cw2ReceivePeers or 0)
     Add("")
 
     local dps = Nexus and Nexus.DpsCapture
@@ -2759,10 +2764,14 @@ local function LogText_Sync()
         st.dpsChunksReceived or 0, st.dpsTransfersCompleted or 0)
     Add("WLD2 accepted direct   : %d", st.dpsDirectAccepted or 0)
     Add("WLD2 accepted relayed  : %d", st.dpsRelayAccepted or 0)
+    Add("WLD2 idempotent no-op  : %d", st.dpsIdempotentAccepted or 0)
     Add("WLD2 rejected owner    : %d", st.dpsOwnerRejected or 0)
     Add("WLD2 rejected capture  : %d", st.dpsRecordRejected or 0)
     Add("last capture rejection : %s",
         tostring(st.lastDpsRejectReason or "none"))
+    Add("WLD2 deferred/accepted/expired: %d / %d / %d (waiting %d)",
+        st.dpsDeferredQueued or 0, st.dpsDeferredAccepted or 0,
+        st.dpsDeferredExpired or 0, work.dpsDeferred or 0)
     Add("outbound owner/relay   : %d / %d records",
         st.dpsOwnerQueued or 0, st.dpsRelayQueued or 0)
     Add("compact relay records  : %d", st.dpsRelayCompactQueued or 0)
@@ -3222,14 +3231,23 @@ EH:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4,
 end)
 EH:RegisterEvent("CHAT_MSG_WHISPER")
 if ChatFrame_AddMessageEventFilter then
+    local function FilterDirectBulkWhisper(_, event, text, sender, ...)
+        -- WHISPER_INFORM's sender argument is the recipient, not the author
+        -- of the outgoing packet. CW2 needs the actual local author identity.
+        local transportSender = event == "CHAT_MSG_WHISPER" and sender
+            or UnitName("player")
+        if initialized and Nexus.Sync and Nexus.Sync.IsDirectBulkWhisper
+            and Nexus.Sync.IsDirectBulkWhisper(text, transportSender) then
+            return true
+        end
+        return false, text, sender, ...
+    end
     pcall(ChatFrame_AddMessageEventFilter, "CHAT_MSG_WHISPER",
-        function(_, _, text, sender, ...)
-            if initialized and Nexus.Sync and Nexus.Sync.IsDirectBulkWhisper
-                and Nexus.Sync.IsDirectBulkWhisper(text, sender) then
-                return true
-            end
-            return false, text, sender, ...
-        end)
+        FilterDirectBulkWhisper)
+    -- Sent regular-chat whispers use a separate event. Filter only packets
+    -- that pass the strict direct bulk classifier, leaving normal chat alone.
+    pcall(ChatFrame_AddMessageEventFilter, "CHAT_MSG_WHISPER_INFORM",
+        FilterDirectBulkWhisper)
 end
 EH:SetScript("OnUpdate", function(_, elapsed)
     -- Detect unusually long frame stalls. On 3.3.5 these are common during
@@ -3621,8 +3639,10 @@ end
 
 local function CommandSync()
     if not Nexus.Sync then Print("sync unavailable"); return end
-    local ok, err = Nexus.Sync.RequestSync()
-    if ok then
+    local ok, err = Nexus.Sync.RequestSync(true)
+    if ok and err == "waiting for sync channel" then
+        Print("joining the sync channel; your request will start automatically")
+    elseif ok then
         Print("asking other players for their builds -- results appear in /nexus builds")
     else
         Print(tostring(err))

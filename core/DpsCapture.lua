@@ -1631,6 +1631,36 @@ function DPS.BroadcastBestForBuild(buildId)
     return sent
 end
 
+-- Shared record construction for mesh selection and the explicit sync lab.
+function DPS.SyncRecord(row, category)
+    return {
+        protocolVersion=PROTOCOL_VERSION, fingerprint=row.fingerprint,
+        loadoutHash=row.loadoutHash or EchoHashFromKey(row.fingerprint or ""),
+        category=category, dps=math.floor(tonumber(row.dps) or 0),
+        duration=tonumber(row.duration) or 0, ts=tonumber(row.ts) or 0,
+        player=row.player or "?", level=tonumber(row.level) or 0,
+        buildId=row.buildId, class=row.class, ownerKey=row.ownerKey,
+        realm=row.realm, generationAt=GenerationAt(row),
+        echoes=StoredEchoes(row, false), lockedEchoes=StoredEchoes(row, true),
+    }
+end
+
+function DPS.DiagnosticRecords()
+    PrepareDpsHashRead()
+    local out = {}
+    for _, category in ipairs({"dummy", "lk"}) do
+        for _, row in pairs(CharacterBestStore()[category] or {}) do
+            if #out >= 500 then return out end
+            out[#out + 1] = DPS.SyncRecord(row, category)
+        end
+    end
+    table.sort(out, function(a,b)
+        if a.dps ~= b.dps then return a.dps > b.dps end
+        return a.category .. a.player < b.category .. b.player
+    end)
+    return out
+end
+
 function DPS.BroadcastAllBuildBests(peerHash, onlyBucket, progress, maxItems,
                                     localOnly, digestMode, routeContext)
     digestMode = digestMode == "legacy" and "legacy" or "enhanced"
@@ -1706,22 +1736,7 @@ function DPS.BroadcastAllBuildBests(peerHash, onlyBucket, progress, maxItems,
                         local key = table.concat(keyParts, "|")
                         state.candidates[#state.candidates + 1] = {
                             key=key,
-                            record={
-                                protocolVersion=PROTOCOL_VERSION,
-                                fingerprint=row.fingerprint,
-                                loadoutHash=loadoutHash,
-                                category=category,
-                                dps=math.floor(tonumber(row.dps) or 0),
-                                duration=tonumber(row.duration) or 0,
-                                ts=tonumber(row.ts) or 0,
-                                player=row.player or "?",
-                                level=tonumber(row.level) or 0,
-                                buildId=row.buildId, class=row.class,
-                                ownerKey=row.ownerKey, realm=row.realm,
-                                generationAt=GenerationAt(row),
-                                echoes=StoredEchoes(row, false),
-                                lockedEchoes=StoredEchoes(row, true),
-                            },
+                            record=DPS.SyncRecord(row, category),
                         }
                     end
                 end
@@ -2374,7 +2389,7 @@ function DPS.ReceiveRecord(record, transportSender, source)
                 return true
             end
         end
-        return false
+        return Reject("not-better-than-existing")
     end
     -- A DPS row must always lead to a viewable/copyable exact loadout, even
     -- when the DPS chunks arrive before the corresponding build broadcast.

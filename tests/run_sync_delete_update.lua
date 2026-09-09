@@ -45,7 +45,11 @@ local function Deliver(msgs, fromName)
     end
 end
 local function Drain()
-    H.Advance(4)
+    -- A request may leave its WLXQ/WLRQ pair and one exact-build recovery
+    -- packet ahead of this synthetic client persona's next publication.
+    -- Allow the conservative 1.10-second sender to drain those bounded
+    -- control packets plus the complete build before replaying the capture.
+    H.Advance(12)
     local m = {}
     for _, x in ipairs(H.sentChatMessages) do m[#m + 1] = x end
     H.sentChatMessages = {}

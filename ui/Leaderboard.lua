@@ -84,6 +84,19 @@ local function DurationText(v)
     return string.format("%d:%02d", math.floor(v / 60), math.floor(v % 60))
 end
 
+local function CaptureDateText(stamp, includeTime)
+    stamp = tonumber(stamp)
+    if not stamp or stamp < 946684800 or type(date) ~= "function" then
+        return includeTime and "Capture date unavailable" or "Date unavailable"
+    end
+    local ok, value = pcall(date,
+        includeTime and "%Y-%m-%d %H:%M" or "%Y-%m-%d", math.floor(stamp))
+    if not ok or type(value) ~= "string" or value == "" then
+        return includeTime and "Capture date unavailable" or "Date unavailable"
+    end
+    return includeTime and ("Captured " .. value) or value
+end
+
 local function RecordKey(row)
     return Ranking.RecordKey(row)
 end
@@ -278,10 +291,10 @@ local function RenderDetailMeasured(row)
     local b=row.build or {}; local c=CLASS_COLOR[tostring(b.class or ""):upper()] or {1,1,1}
     detail.title:SetText(b.title or "Record Loadout"); detail.title:SetTextColor(c[1],c[2],c[3]); detail.owner:SetText("by "..tostring(b.author or row.player or "?")..(row.evidence=="relay" and "  |cffffcc55Relayed • Unverified|r" or ""))
     if row.category=="combined" then
-        detail.record:SetText("|cff4dff80Average "..DpsText(row.average).." DPS|r\nDummy "..DpsText(row.dummyDps).."  •  Lich King "..DpsText(row.lkDps))
+        detail.record:SetText("|cff4dff80Average "..DpsText(row.average).." DPS|r\nDummy "..DpsText(row.dummyDps).."  •  Lich King "..DpsText(row.lkDps).."\n"..CaptureDateText(row.ts, true))
     else
         local label=row.category=="lk" and "Lich King" or "Training Dummy"
-        detail.record:SetText("|cff4dff80"..DpsText(row.dps).." DPS|r  •  "..label.."\n"..DurationText(row.duration).."  •  Level "..tostring(tonumber(row.level) or 0))
+        detail.record:SetText("|cff4dff80"..DpsText(row.dps).." DPS|r  •  "..label.."\n"..DurationText(row.duration).."  •  Level "..tostring(tonumber(row.level) or 0).."\n"..CaptureDateText(row.ts, true))
     end
     detail.desc:SetText((b.description and b.description~="") and b.description or "No build description provided.")
     local locked=ResolveLockedEchoes(row)
@@ -336,7 +349,9 @@ local function BindRowsMeasured(reason)
                 r.extra:SetText("Dummy "..DpsText(row.dummyDps).."  •  LK "..DpsText(row.lkDps)..(row.evidence=="relay" and "  |cffffcc55• Relayed|r" or ""))
             else
                 r.dps:SetText("|cff4dff80"..DpsText(row.dps).." DPS|r")
-                r.extra:SetText(DurationText(row.duration)..(row.evidence=="relay" and "  |cffffcc55• Relayed|r" or ""))
+                r.extra:SetText(DurationText(row.duration).."  •  "
+                    ..CaptureDateText(row.ts, false)
+                    ..(row.evidence=="relay" and "  |cffffcc55• Relayed|r" or ""))
             end
             if RecordKey(row)==selectedKey then r.sel:Show() else r.sel:Hide() end
         end
@@ -445,8 +460,9 @@ local function EnsureFrameMeasured()
         classMenu:Hide()
         local S=Nexus.Sync
         if not (S and S.RequestSync) then return end
-        local ok,err=S.RequestSync()
-        if ok then print("|cff7fd5ffNexus:|r asking other players for builds and DPS records...")
+        local ok,err=S.RequestSync(true)
+        if ok and err=="waiting for sync channel" then print("|cff7fd5ffNexus:|r joining the sync channel; sync will start automatically...")
+        elseif ok then print("|cff7fd5ffNexus:|r asking other players for builds and DPS records...")
         else print("|cffff6060Nexus:|r "..tostring(err)) end
         M.RefreshStatus()
     end)

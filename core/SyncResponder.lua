@@ -72,7 +72,9 @@ function SyncResponder.New(options)
         now = tonumber(now) or 0
         local createdAt = tonumber(entry and entry.createdAt) or now
         local lastActiveAt = tonumber(entry and entry.lastActiveAt) or createdAt
-        return now - createdAt > engine.pendingMaxAge
+        local maxAge = tonumber(entry and entry.pendingMaxAge)
+            or engine.pendingMaxAge
+        return now - createdAt > maxAge
             or now - lastActiveAt > engine.pendingTtl
     end
 
@@ -126,30 +128,39 @@ function SyncResponder.New(options)
         return selected
     end
 
-    function engine.NextUnit()
+    function engine.NextUnit(eligible)
         local units = {}
         for key, entry in pairs(engine.responses) do
             if not entry.prepared then
                 if (tonumber(entry.remaining) or 0) <= 0 then
-                    units[#units + 1] = {
+                    local unit = {
                         key="R|" .. key, type="prepare", entryKey=key, entry=entry,
                     }
+                    if not eligible or eligible(unit) then
+                        units[#units + 1] = unit
+                    end
                 end
             else
                 local id, bucketState, ordinal = engine.NextReadyBucket(entry)
                 if id then
-                    units[#units + 1] = {
+                    local unit = {
                         key="R|" .. key, type="bucket", entryKey=key,
                         entry=entry, id=id, bucketState=bucketState, ordinal=ordinal,
                     }
+                    if not eligible or eligible(unit) then
+                        units[#units + 1] = unit
+                    end
                 end
             end
         end
         for key, entry in pairs(engine.loadouts) do
             if (tonumber(entry.remaining) or 0) <= 0 then
-                units[#units + 1] = {
+                local unit = {
                     key="L|" .. key, type="loadout", entryKey=key, entry=entry,
                 }
+                if not eligible or eligible(unit) then
+                    units[#units + 1] = unit
+                end
             end
         end
         return engine.SelectFairUnit(units)

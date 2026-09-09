@@ -87,6 +87,20 @@ local function Measure(name, callback, ...)
     return callback(...)
 end
 
+local function BuildDateText(build)
+    local modified = tonumber(build and build.lastModified)
+    local posted = tonumber(build and build.postedAt)
+    local stamp = modified or posted
+    if not stamp or stamp < 946684800 or type(date) ~= "function" then
+        return "Build date unavailable"
+    end
+    local ok, value = pcall(date, "%Y-%m-%d %H:%M", math.floor(stamp))
+    if not ok or type(value) ~= "string" or value == "" then
+        return "Build date unavailable"
+    end
+    return (modified and "Updated " or "Posted ") .. value
+end
+
 ------------------------------------------------------------------------
 -- Saved-variable helpers
 ------------------------------------------------------------------------
@@ -819,7 +833,8 @@ local function RefreshDetailPanel(build)
     end
     local accountReference = IsAccountBuild(build) and not IsOwnBuild(build)
     detailPanel.author:SetText("by "..(build.author or "?")
-        .. (accountReference and "  |cff66ccff(Account reference)|r" or ""))
+        .. (accountReference and "  |cff66ccff(Account reference)|r" or "")
+        .. "  |cff888888• " .. BuildDateText(build) .. "|r")
     detailPanel.desc:SetText((build.description ~= "" and build.description) or "|cff666666(no description)|r")
 
     -- Link field: always show the box so anyone can copy; only show Save
@@ -1660,8 +1675,10 @@ local function EnsureFrame()
     syncBtn:SetScript("OnClick",function()
         CloseDropdowns()
         if not Nexus.Sync then return end
-        local ok, err = Nexus.Sync.RequestSync()
-        if ok then print("|cff7fd5ffNexus:|r asking other players for their builds...")
+        local ok, err = Nexus.Sync.RequestSync(true)
+        if ok and err == "waiting for sync channel" then
+            print("|cff7fd5ffNexus:|r joining the sync channel; sync will start automatically...")
+        elseif ok then print("|cff7fd5ffNexus:|r asking other players for their builds...")
         else print("|cffff6060Nexus:|r "..tostring(err)) end
     end)
     syncBtn:SetScript("OnEnter",function(self)
@@ -2013,14 +2030,14 @@ function M.Refresh()
         end
         if b.importedSavedBuild then
             if b.destinationWishlistName then
-                card.destination:SetText(string.format("|cffffd200Destination:|r %s  |cff66ff99%d/%d in progress|r", b.destinationWishlistName, tonumber(b.destinationProgress) or 0, tonumber(b.destinationTotal) or 79))
+                card.destination:SetText(string.format("|cffffd200Destination:|r %s  |cff66ff99%d/%d in progress|r  |cff888888• %s|r", b.destinationWishlistName, tonumber(b.destinationProgress) or 0, tonumber(b.destinationTotal) or 79, BuildDateText(b)))
             else
-                card.destination:SetText("|cff999999No destination wishlist associated|r")
+                card.destination:SetText("|cff999999No destination wishlist associated  • "..BuildDateText(b).."|r")
             end
             card.destination:Show()
         else
-            card.destination:SetText("")
-            card.destination:Hide()
+            card.destination:SetText("|cff888888"..BuildDateText(b).."|r")
+            card.destination:Show()
         end
 
         -- Echo icons

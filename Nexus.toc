@@ -36,6 +36,7 @@ core\DpsWireValidator.lua
 core\SyncResponder.lua
 core\Sync.lua
 core\DpsCapture.lua
+core\SyncLab.lua
 core\ViewProjections.lua
 core\GameAdapter.lua
 core\AccountBuildWorkspace.lua

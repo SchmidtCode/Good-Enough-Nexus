@@ -48,6 +48,35 @@ assert(#extensionFields == 6 and extensionFields[4] == "1"
 assert(requestFields[5] == extensionFields[3],
     "WLXQ was not scoped to its WLRQ request id")
 
+-- A live, busy mesh can already have thousands of bulk chunks queued. The
+-- request extension and its matching WLRQ must remain adjacent control-plane
+-- work or the short-lived extension expires before responders see WLRQ.
+NexusDB.settings.syncDirectExperimental = true
+Sync.Init(Nexus.Codec, {})
+Sync.EnsureChannel()
+H.now = H.now + 1.2
+Sync.OnUpdate(1.2)
+H.sentChatMessages = {}
+for index = 1, 40 do
+    assert(Sync.EnqueueLogicalTransfer({
+        "WLRB|Local|backlog-" .. tostring(index) .. "|1|1/1|QQ==",
+    }))
+end
+assert(Sync.RequestSync())
+for _ = 1, 2 do
+    H.now = H.now + 1.2
+    Sync.OnUpdate(1.2)
+end
+local first = H.sentChatMessages[1]
+    and H.sentChatMessages[1].text:gsub("||", "|") or ""
+local second = H.sentChatMessages[2]
+    and H.sentChatMessages[2].text:gsub("||", "|") or ""
+assert(first:find("^WLXQ|") and second:find("^WLRQ|"),
+    "busy bulk queue separated WLXQ from its matching WLRQ")
+
+NexusDB = {communityBuilds={}, syncTombstones={}, dpsCapture={}, settings={}}
+Sync.Init(Nexus.Codec, {})
+
 assert(Sync.HandleIncoming("WLXQ|EnhancedPeer|enh-1|1|CW1|222",
     "EnhancedPeer"))
 assert(Sync.HandleIncoming("WLRQ|EnhancedPeer|0|111|enh-1|1.19.5",
@@ -56,6 +85,26 @@ local enhanced = Sync.RequestDiagnostics("EnhancedPeer", "enh-1")
 assert(enhanced.pending and enhanced.extension
     and enhanced.digestMode == "enhanced" and enhanced.directCapable,
     "extension-before-request did not select enhanced reconciliation")
+
+NexusDB.settings.syncDirectExperimental = true
+assert(Sync.HandleIncoming("WLXQ|LongPeer|long-1|1|CW2|222",
+    "LongPeer"))
+assert(Sync.HandleIncoming("WLRQ|LongPeer|0|111|long-1|1.19.5",
+    "LongPeer"))
+local longResponse = Sync.RequestDiagnostics("LongPeer", "long-1")
+assert(longResponse.pendingMaxAge == Sync._enhanced.cw2ResponseTtl
+    and longResponse.pendingMaxAge > 300,
+    "CW2 response retained the five-minute responder cutoff")
+
+local expiryEngine = Nexus.SyncResponder.New({
+    pendingTtl=30, pendingMaxAge=300,
+})
+local longEntry = {createdAt=0, lastActiveAt=300, pendingMaxAge=14400}
+assert(not expiryEngine.PendingExpired(longEntry, 301),
+    "active response ignored its request-scoped maximum age")
+assert(expiryEngine.PendingExpired(longEntry, 14401),
+    "request-scoped maximum age did not remain bounded")
+NexusDB.settings.syncDirectExperimental = false
 
 assert(Sync.HandleIncoming("WLXQ|DisabledPeer|disabled-1|1|C0|222",
     "DisabledPeer"))
@@ -83,7 +132,7 @@ assert(reordered.pending and reordered.extension
     "request-before-extension ordering did not upgrade pending reconciliation")
 
 local stats = Sync.Stats()
-assert(stats.enhancedRequests == 2 and stats.legacyRequests == 2,
+assert(stats.enhancedRequests == 3 and stats.legacyRequests == 2,
     "legacy/enhanced request instrumentation is wrong: "
         .. tostring(stats.legacyRequests) .. "/"
         .. tostring(stats.enhancedRequests))
@@ -154,5 +203,105 @@ end
 assert(not Sync.HandleIncoming(
     "WLXQ|GlobalOverflow|global-overflow|1|C0|222", "GlobalOverflow"),
     "global request-extension bound was exceeded")
+
+-- When both large build and DPS deltas exist, filling the bounded direct
+-- transfer window with builds first can make the leaderboard appear empty for
+-- minutes. Current direct reconciliation should visit DPS before build bulk;
+-- pacing and all queue bounds remain unchanged.
+NexusDB = {communityBuilds={}, syncTombstones={}, dpsCapture={},
+    settings={syncDirectExperimental=true}}
+Nexus.DpsCapture = {
+    GetLegacySyncHash=function() return "1,1,1,1,1,1,1,1" end,
+    GetEnhancedSyncHash=function() return "1,1,1,1,1,1,1,1" end,
+    SyncBucketClaimable=function() return false end,
+    BroadcastAllBuildBests=function() return 0, true, true end,
+}
+Sync.Init(Nexus.Codec, {})
+assert(Sync.HandleIncoming(
+    "WLXQ|PriorityPeer|priority-history|1|CW1|0,0,0,0,0,0,0,0",
+    "PriorityPeer"))
+assert(Sync.HandleIncoming(
+    "WLRQ|PriorityPeer|0|0|priority-history|1.96.5", "PriorityPeer"))
+H.now = H.now + 2
+Sync.OnUpdate(2) -- prepare the response
+H.now = H.now + 2
+Sync.OnUpdate(2) -- select its first ready bucket
+assert(tostring(Sync.ResponseStats().lastBucket):find("^D"),
+    "large direct response put build bulk ahead of leaderboard records: "
+        .. tostring(Sync.ResponseStats().lastBucket))
+
+-- A real established client can hold more than 200 leaderboard rows. Scan a
+-- bounded group per responder turn so eight bucket scans reach transport in a
+-- few seconds instead of leaving a new requester apparently idle for minutes.
+NexusDB = {communityBuilds={}, syncTombstones={}, dpsCapture={},
+    settings={syncDirectExperimental=true}}
+local localHash = "1,1,1,1,1,1,1,1"
+Nexus.DpsCapture = {
+    GetLegacySyncHash=function() return localHash end,
+    GetEnhancedSyncHash=function() return localHash end,
+    SyncBucketClaimable=function() return false end,
+    BroadcastAllBuildBests=function(_, bucket, progress, maxItems, _, _, route)
+        progress.scanned = (progress.scanned or 0) + (tonumber(maxItems) or 0)
+        if progress.scanned < 221 then return 0, false, true end
+        if progress.sent then return 0, true, false end
+        progress.sent = true
+        assert(Sync.EnqueueLogicalTransfer({string.format(
+            "WLD2|Local|scan-%d|1/1|e30=", bucket)}, route))
+        return 1, true, true
+    end,
+}
+Sync.Init(Nexus.Codec, {})
+assert(Sync.HandleIncoming(
+    "WLXQ|LargePeer|large-history|1|CW1|0,0,0,0,0,0,0,0", "LargePeer"))
+assert(Sync.HandleIncoming(
+    "WLRQ|LargePeer|0|0|large-history|1.96.5", "LargePeer"))
+for _ = 1, 500 do
+    H.now = H.now + 0.05
+    Sync.OnUpdate(0.05)
+end
+assert(Sync.Stats().directAttempt > 0,
+    "large leaderboard scan did not reach direct transport promptly")
+
+-- Channel congestion belongs to the channel transport lane. It must not stop
+-- a negotiated direct response from using its independently bounded queue.
+-- This mirrors a live mesh where thousands of public build chunks were
+-- retained for retry while a fresh CW1 leaderboard request expired idle.
+NexusDB = {communityBuilds={}, syncTombstones={}, dpsCapture={},
+    settings={syncDirectExperimental=true}}
+local saturatedHash = "1,1,1,1,1,1,1,1"
+Nexus.DpsCapture = {
+    GetLegacySyncHash=function() return saturatedHash end,
+    GetEnhancedSyncHash=function() return saturatedHash end,
+    SyncBucketClaimable=function() return false end,
+    BroadcastAllBuildBests=function(_, bucket, progress, _, _, _, route)
+        if progress.sent then return 0, true, false end
+        progress.sent = true
+        assert(route and route.chatWhisper,
+            "saturated enhanced response lost its direct route")
+        assert(Sync.EnqueueLogicalTransfer({string.format(
+            "WLD2|Local|saturated-%d|1/1|e30=", bucket)}, route))
+        return 1, true, true
+    end,
+}
+Sync.Init(Nexus.Codec, {})
+local queueLimit = Sync.WorkState().maxOutboundQueue
+for index = 1, queueLimit - 2 do
+    assert(Sync.BroadcastDps("saturated-fill-" .. tostring(index), "Local",
+        100000 + index, 80, "dummy"))
+end
+assert(Sync.WorkState().sending == queueLimit - 2,
+    "direct-lane saturation fixture did not fill the channel lane")
+assert(Sync.HandleIncoming(
+    "WLXQ|SaturatedPeer|saturated-history|1|CW1|0,0,0,0,0,0,0,0",
+    "SaturatedPeer"))
+assert(Sync.HandleIncoming(
+    "WLRQ|SaturatedPeer|0|0|saturated-history|1.96.5",
+    "SaturatedPeer"))
+for _ = 1, 100 do
+    H.now = H.now + 0.05
+    Sync.OnUpdate(0.05)
+end
+assert(Sync.Stats().directAttempt > 0,
+    "saturated channel lane blocked independent direct reconciliation")
 
 print("request-scoped WLXQ negotiation and legacy WLRQ compatibility: OK")

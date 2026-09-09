@@ -3,6 +3,40 @@
 Direct bulk responses are experimental and default off. Enable them per client
 with `/nexus syncdirect on`; disable them with `/nexus syncdirect off`.
 
+## CW2 normal reconciliation candidate
+
+Enabled clients now advertise `CW2` in the existing six-field WLXQ extension.
+CW2 accepts the pipe-free `WLTB:` envelope tested in NexusLab. Literal tildes
+become `~0`, pipes become `~1`. Decoding reconstructs the original WLRB/WLD2
+before normal sender, evidence and chunk validation. An active CW2 request
+is required to admit a responder. Once that responder delivers a canonical,
+sender-matched CW2 packet, a bounded continuation lease keeps a long response
+admitted for up to four hours, expiring after 30 seconds idle. The lease
+retains the original request ID for ACK correlation and cannot be created or
+refreshed by malformed, unsolicited, CW1, or legacy packets.
+
+The responder keeps active CW2 reconciliation work under the same four-hour
+hard limit. This prevents the legacy five-minute pending-work cutoff from
+restarting a large mismatched bucket before its later records are reached.
+CW1, C0, unknown, and legacy requests retain the five-minute limit. All routes
+retain the existing 30-second inactivity expiry and transport pacing.
+CW2 responders send full exact evidence for relayed DPS, so a removed catalog
+build does not by itself prevent acceptance. Missing evidence is still rejected.
+
+Envelope selection is retained on each queued transfer and channel fallback;
+it does not affect concurrent legacy packets. ACKs hash canonical packet bodies.
+Control, discovery, claims, ACKs and spontaneous owner publication remain on
+their unchanged legacy paths. CW1 requests still select CW1; unknown clients
+ignore CW2 and process unchanged WLRQ. Both senders and receivers must opt in
+for normal CW2 direct delivery. This remains experimental, not a release.
+
+For the next paired test: reload both clients, set manual mode and direct on
+on both, then run `/nexus sync` on the recipient. Stay resting. After ten
+minutes export `/nexus syncdebug` from both, using `/nexuslab normal` first if
+the log viewer is still showing the saved lab report. Do not clear records.
+The full catalog may take longer than ten minutes at unchanged pacing; this
+is a progress sample, not a promised completion deadline.
+
 Live checks still required:
 
 - Run same-faction first, then cross-faction if Ebonhold permits it. Repeat with
@@ -42,3 +76,23 @@ Live checks still required:
 - Capture `Nexus.Sync.Stats()` after successful, timed-out, failed, and fallback
   transfers and compare channel/direct TX/RX, ACK, fallback, queue-depth, and
   transfer-duration counters with the observed traffic.
+# Content-bound acknowledgments
+
+Current receivers send the optional channel control packet
+`WLA2|sender|requestId|B-or-D|logicalId|contentDigest` after complete validation
+and acceptance, including validated idempotent merges. The digest covers the
+original encoded object and build revision. It is a correlation checksum, not
+authentication or proof of DPS. Sender identity still comes from the actual
+transport sender.
+
+WLA2 matches an outstanding completed send by recipient, kind, logical ID and
+content, allowing the requester to start a later reconciliation pass before an
+earlier transfer finishes. Original WLAK acknowledgments still require their
+original request ID. Existing legacy packet formats remain unchanged. Earlier
+experimental CW1 clients that ignore WLA2 retain timeout/channel fallback.
+
+For the next live test, reload both clients, start one sync on each, and inspect
+`content-matched ACK` alongside attempts, timeouts and deferred records. Verify
+that ACKs continue succeeding when a later convergence pass starts. Full
+historical convergence and heavy-control-traffic timeout behavior remain live
+validation items.
