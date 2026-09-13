@@ -1,148 +1,165 @@
-# Two-character leaderboard diagnostic test
+# Sync lab and release validation
 
-Purpose: determine which of a peer's historical DPS records can be relayed,
-which fail outbound validation, and which arrive but fail dependency recovery
-or receiver validation. This is an explicit development tool, not a faster
-production sync mode.
+The player package excludes `core/SyncLab.lua`. Normal synchronization and
+its diagnostics remain available through `/nexus sync` and `/nexus log`.
+The lab source and its automated tests remain in the development repository.
 
-Reports marked `diagnostics=3 transport=CW2` use a pipe-free bulk envelope.
-The lab requests `WLTQ|sender|target|lab-id|count|CW2`, acknowledged by the
-unchanged four-field `WLTR`. Older lab receivers reject CW2 and time out safely.
-Both clients must load this update. Normal production capabilities are unchanged.
+## Developer lab
 
-The envelope is `WLTB:` followed by the canonical WLRB/WLD2 packet with
-literal `~` encoded as `~0` and each pipe encoded as `~1`. Both direct and
-channel-fallback bulk use it only during an explicitly negotiated lab session.
-The decoder enforces the packet limit, peer, escape grammar and bulk-only scope;
-the reconstructed packet still goes through normal validation. Chat filters
-recognize these envelopes only in the armed lab. Chunk budgeting includes the
-envelope overhead. ACKs still correlate the unchanged canonical bytes.
-Control/handshake/ACK messages stay on the existing channel in their old formats.
-Unknown clients ignore the new envelope. This does not bypass evidence checks
-or deletion floors, and is not enabled for normal reconciliation.
+To use the lab in a development installation, add `core\SyncLab.lua` to the
+local development TOC after `core\DpsCapture.lua`, then restart both clients.
+Do not include that TOC edit in a player package.
 
-Reports retain send exceptions, transport, chunk number,
-and escaped byte length separately from the rolling events. After three
-failures of the same channel packet, the lab stops and saves the report.
-This is a failed test, not successful delivery. Normal sync retry behavior is
-unchanged. If the lab stops this way, stop the other client too and export both
-reports. Do not clear leaderboards or repeat the run before examining the error.
-Updating an already installed lab to diagnostics 3 needs `/reload` on both
-clients, not a full restart.
-
-## Run once on Wrand and Daradorla
-
-Restart both game clients after installing this build, which adds a new Lua
-module. Stay resting in a city and out of combat. Do not run ordinary sync or
-fight a dummy during this test.
-
-On **Daradorla** first:
+Both characters must be resting and out of combat. Replace SourcePlayer and
+ReceiverPlayer with their actual names. On the receiver:
 
 ```text
 /nexus syncmode manual
-/nexuslab receive Wrand
+/nexuslab receive SourcePlayer
 ```
 
-On **Wrand** next, within about a minute:
+On the source within one minute:
 
 ```text
 /nexus syncmode manual
-/nexuslab send Daradorla 5
+/nexuslab send ReceiverPlayer 5
 ```
 
-The request and reply require both endpoints to be locally armed. The test
-temporarily enables direct sync, cancels queued normal sync work, and ignores
-normal mesh requests. Stored builds and DPS records are retained. Each client
-continues using the existing channel and normal 1.10-second sender pacing.
-The test stops after ten minutes, on unsafe gameplay context, or on
-`/nexuslab stop`. Direct transport is enabled only for the runtime lab session;
-the saved direct setting is untouched. Reloading also ends the lab session.
+The lab pauses normal mesh work, uses the existing 1.10-second pace, and
+selects up to five eligible historical third-party records. It compares compact
+and full evidence, build dependencies, replay, and channel delivery. It never
+turns invalid evidence into valid evidence or promotes a relay to owner status.
+A ten-minute deadline, gameplay-context checks, and `/nexuslab stop` bound it.
 
-After the sender says its steps completed, or after ten minutes, run this on
-each client:
+Use `/nexuslab log` on each client after completion. Bounded reports survive
+logout in `NexusDB.syncLabReport`. Keep detailed reports in local ignored notes.
+`/nexuslab normal` returns the log view to normal diagnostics.
 
-```text
-/nexuslab log
-```
+## Wire behavior
 
-Copy the full report from the log window. Send Daradorla's report first and
-Wrand's second. The bounded report is saved in `NexusDB.syncLabReport`, so it
-survives normal logout/reload. `/nexuslab normal` switches the Sync log view
-back to ordinary diagnostics.
+The lab uses `WLTQ|sender|target|lab-id|count|CW2` and
+`WLTR|sender|target|lab-id` on the channel. Ordinary current-client negotiation
+uses WLXQ and WLRQ. Unknown clients safely ignore the optional lab codes.
 
-## What it tests
+Direct bulk wraps canonical WLRB/WLD2 in `WLTB:`, escaping tilde as `~0` and
+pipe as `~1`. Channel fallback replays canonical WLRB/WLD2 with the established
+channel escaping. ACK digests refer to canonical contents, independent of route.
+Full exact Echo evidence is available to enhanced channel and whisper requests.
 
-Wrand inventories up to 500 raw stored character-best rows using the same
-record construction as normal reconciliation. It groups validation failures,
-with twenty examples including class, duration, timestamp, level and Echo
-availability. It selects up to five eligible third-party records, alternating
-Dummy and Lich King when possible. Selection does not imply these records are
-missing on Daradorla; an idempotent result is valuable evidence.
+Three repeated failures of a channel packet stop the lab and retain the error.
+This means delivery failed. Normal reconciliation retains failed channel sends
+for paced retry.
 
-For each selected record, sequentially:
+## Recorded live evidence
 
-1. Send the normal compact relay directly, before providing its build.
-2. Send the catalog build referenced by that record directly, if available.
-3. Send the compact relay again.
-4. Send the fully validated relay with its exact Echo evidence directly.
-5. Repeat that full relay to test idempotent acceptance.
-6. Send the compact relay over the channel as a compatibility comparison.
+A same-faction normal reconciliation run on 2026-09-08 delivered 375 of 375
+direct bulk chunks and received 19 of 19 content ACKs. Neither endpoint reported
+a direct timeout, API failure, or fallback in that sample. The receiver gained
+18 leaderboard rows. Transfer duration averaged 158.4 seconds and peaked at
+210.0 seconds. This proves successful delivery in that sample, not complete
+historical convergence or the behavior of failed transfers.
 
-Full-evidence serialization is diagnostic-only. It keeps the existing v6 relay
-shape and strict validation. Received relay evidence remains unverified. No
-record is made valid by the test. New request codes `WLTQ` and `WLTR` are
-optional channel control messages; old clients ignore them. Legacy packet
-counts and formats remain unchanged.
+The later level-80 orb retest confirmed that selecting an unwanted Echo updated
+To Shed automatically. Saved Build safety, the matching Still Needed update,
+and the remaining native transport cases require separate observations.
 
-The inventory can show why a visible stored row cannot be sent. `STEP` and
-`ADMIT` identify outgoing tests. `RESULT` gives receiver acceptance or its
-rejection reason. `ACK`, timeouts and fallbacks show delivery outcomes.
-`PROGRESS` records queue and deferred counts every fifteen seconds. The most
-recent 240 bounded event lines are retained; `dropped` reports overwritten
-events. Encoded build bodies are excluded.
+## Offline coverage
 
-## Offline verification
+`luajit tests/run_sync_lab.lua` uses independent client environments and the
+real sync, validation, and DPS modules. It exercises five historical records,
+a deleted-build floor, a 63-Echo record, lost ACK, idempotent replay, bounds,
+normal CW2 reconciliation, and default-off enhanced channel reconciliation.
 
-`luajit tests/run_sync_lab.lua` runs two independent client environments with
-the real sync, validation and capture modules. Five third-party historical
-records reach the receiver as relayed evidence. A deliberately lost ACK causes
-fallback. The test also checks duplicate acceptance, pacing, packet size,
-wrong-peer/unarmed rejection, no-peer timeout, unsafe-context stop and retained
-reports. It does not establish live Ebonhold convergence or bulk-whisper safety.
-The receiver has a deletion floor that excludes the transmitted catalog builds;
-full evidence still delivers all five records. One record has 63 Echoes. The
-chat stub rejects legacy pipe-bearing bulk to exercise the negotiated envelope.
+`luajit tests/run_sync_v1_19_5_fixture.lua` checks frozen legacy packet and
+digest facts, actual outgoing owner WLD2 chunks, and repeated quiet passes over
+real saved state whose generation/provenance differs.
 
-## Live test journal
+Current release status and remaining manual checks are maintained in
+[pre-release-validation.md](pre-release-validation.md) and
+[sync-direct-ebonhold-validation.md](sync-direct-ebonhold-validation.md).
+# Live channel failure follow-up, 2026-09-11
 
-This section records paired Ebonhold results so later work does not depend on
-chat history. Detailed implementation decisions remain in
-`tmp/sync-architecture-implementation-notes.md`. The production validation
-checklist remains in `docs/sync-direct-ebonhold-validation.md`.
+## Confirmed trigger and candidate fix
 
-### 2026-09-08, normal CW2 reconciliation after long-response fixes
+Probe v2 isolated lowercase `n` immediately after the final pipe separator:
+firstByte=110, Base64 alphabet valid, first-only failed, replacing the first
+byte or shifting the body passed. Removing the final separator also passed.
+The candidate now shifts chunk boundaries backwards to avoid leading `n`, for
+both WLRB and WLD2. It does not replace any data bytes, append fields, wrap
+channel packets, increase pacing, or change validation. Direct transfers use
+the same chunk plan so their canonical channel fallback remains safe.
+An input that cannot be safely partitioned under existing limits fails closed.
 
-- Sender: Wrand. Recipient: Daradorla. Both reported Nexus v1.96.5 with CW2
-  enabled. This was normal reconciliation, not the five-record lab script.
-- Wrand transmitted 375 direct bulk chunks and Daradorla received 375. Wrand
-  completed 19 logical transfers and received 19 content-matched ACKs. Neither
-  endpoint recorded a direct timeout, API failure, or channel fallback.
-- Transfer duration averaged 158.4 seconds and peaked at 210.0 seconds. The
-  queue and send cadence remained at the existing conservative limits.
-- Daradorla's board grew from the previous 70 Dummy and 40 Lich King rows to
-  80 Dummy and 48 Lich King rows. The 18-row gain is close to the 19 completed
-  logical transfers. Sixteen received relay records were accepted, one direct
-  record was accepted, and 22 equivalent or weaker records were safe no-ops.
-- No partial DPS transfer remained at capture time. The cumulative partial
-  expiry counter was three on Daradorla and six on Wrand, so a clean before and
-  after sample is still needed to attribute any new expiry to this run.
-- Daradorla still had 46 deferred records waiting on exact-build recovery.
-  Its last rejection was `legacy-build-hash-mismatch`. Wrand reported 543
-  outbound validation failures and 1,869 queue-admission failures across all
-  mesh work. These counters are cumulative and include requests from other
-  peers, but they explain why Wrand's 256 visible rows are not all eligible for
-  this direct response.
-- Conclusion: CW2 delivery, reconstruction, idempotence, and ACK correlation
-  worked for this sample. The remaining board-count gap is now primarily an
-  evidence eligibility and dependency-recovery question, not observed direct
-  packet loss. Do not weaken validation to force old rows through.
+Retest on both clients: reload, set manual mode and direct off, run sync once.
+Do not arm the diagnostic probe. After five minutes export both syncdebug logs.
+Expect zero channel send failures and check accepted DPS/partial-transfer
+progress. Full convergence is not yet proven, especially with large queues.
+SavedVariables must not be cleared. Native validation passed: both clients had
+zero send failures, completed WLD2 transfers, and accepted new relayed rows.
+The temporary probe was then removed from production code.
+
+## Direct success after boundary fix
+
+Two current clients ran manual sync with CW1/CW2 enabled for about five minutes.
+They exchanged 384 direct bulk messages and completed 17 content-matched ACKs.
+There were zero direct timeouts, immediate API failures, fallbacks, channel send
+failures, and pending fallbacks. Direct transfer durations averaged 126.8s on
+one client and 115.4s on the other, with maxima near 206s. The smaller library
+accepted five relayed DPS records and moved from 78/49 to 79/51 Dummy/LK.
+
+The high `outbound validation/queue fail` queue component reflected repeated
+bounded backpressure retries while logical transfers occupied the direct lane.
+Responder bucket work remained pending and the event log showed later records
+starting after content ACKs freed slots. It did not demonstrate dropped state.
+Full historical convergence still needs a longer quiet run. Ordinary chat
+WHISPER payloads remain visible on this server, so direct stays default off.
+
+Next live case: reload the receiver during an active direct WLD2 transfer. The
+sender must record an ACK timeout and a channel fallback for that logical object;
+the receiver must accept the canonical fallback idempotently after reconnecting.
+Do not use visible chat whispers as the trigger. A later attempt showed active
+direct TX/RX and content ACKs while no protocol whispers appeared in chat. On
+the receiver, poll `Nexus.Sync.Stats().directBulkRx`; reload after it rises by at
+least five packets. Hidden protocol chat is desirable and may depend on the
+client's chat filters or event handling.
+
+The live reload case produced 3 ACK timeouts and 3 fallbacks on the sender,
+zero API/channel failures, zero pending ACK/fallback entries, and continued
+idempotent processing on the receiver. It also exposed scheduler ordering:
+after the receiver opened a new request, fresh direct packets could run before
+canonical fallback packets already moved to the ordinary channel queue. The
+fix sends fallback batches through the existing bounded priority-channel queue.
+This changes scheduling only. Canonical WLRB/WLD2 bytes, channel escaping,
+validation, pacing, and all queue limits remain unchanged.
+
+The post-fix reload retest passed. The sender recorded 2 ACK timeouts and 2
+fallbacks, sent 77 channel bulk packets and 130 direct packets, and ended with
+zero pending ACK/fallback work and zero channel/API send failures. Event order
+showed canonical channel WLRB recovery chunks completing before direct WLD2
+traffic resumed. The receiver recorded 44 idempotent WLD2 no-ops, completed
+fallback build transfers, and produced no duplicate public rows. Reloading
+earlier while direct whispers were active gave a clean lost-chunk test.
+
+Subsequent logs identified `Invalid escape code in chat message` for a WLD2
+packet with 236 raw / 240 escaped bytes. Manual short and 240-byte probes with
+`A` or `H` following a doubled pipe all returned success. These do not reproduce
+the failed packet and do not establish that channel encoding is generally safe.
+
+The temporary probe used unknown-code NXEP messages to isolate the native
+failure without creating replicated records. It reported only lengths and byte
+classes, never payload bodies. It was removed after the candidate fix passed
+the native retest.
+
+Both current clients connected with direct transport off, but neither accepted
+new DPS records. Receiver remained at 74 Dummy / 48 Lich King. Both repeatedly
+reported channel SendChatMessage failure and retained the queue head; queue peaks
+were 8,185 and 8,192 packets. This is not a passing convergence result.
+
+Added bounded normal-mode failure diagnostics with exception/refusal, packet
+type, queue lane, raw/wire lengths, and sanitized error text. Pacing, queue
+retention, validation, and transport selection are unchanged. The API cause is
+still unknown until a live retest. Regression covers false return and exception.
+
+Next live check: reload both, set manual mode and direct off, then run sync on
+both. Manual idle may be disconnected before the sync command. After 30-60
+seconds export syncdebug from both, including `last channel failure`.

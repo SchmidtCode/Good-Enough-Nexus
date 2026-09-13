@@ -17,6 +17,8 @@ assert.ok(runtimeFiles.includes("core/Main.lua")
 "packager should include runtime files from Nexus.toc");
 assert.ok(runtimeFiles.every((file) => !/^(tests|benchmarks|tools)\//.test(file)),
     "packager should exclude development files");
+assert.ok(!runtimeFiles.includes("core/SyncLab.lua"),
+    "player package must not load the development sync lab");
 assert.deepStrictEqual(Packager.validateIdentity("v1.96.5",
     "SchmidtCode/Good-Enough-Nexus", toc, release).version, "1.96.5");
 Packager.validateRuntimeIdentity("1.96.5",

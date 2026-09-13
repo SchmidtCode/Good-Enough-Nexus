@@ -47,9 +47,14 @@ Pump(30) -- intentionally no ACK: exact CW2 object must fall back
 local directCW2,channelCW2,channelLegacy=false,false,false
 for _,m in ipairs(H.sentChatMessages) do
     if m.text:find('cw2-object',1,true) then
-        assert(m.text:find('^WLTB:') and not m.text:find('|',1,true),
-            'CW2 route lost on direct/fallback queue')
-        if m.kind=='WHISPER' then directCW2=true else channelCW2=true end
+        if m.kind=='WHISPER' then
+            assert(m.text:find('^WLTB:') and not m.text:find('|',1,true))
+            directCW2=true
+        else
+            assert(m.text:gsub('||','|') == Single('cw2-object')[1],
+                'CW2 fallback must use canonical legacy channel bytes')
+            channelCW2=true
+        end
     elseif m.text:find('legacy-object',1,true) then
         assert(not m.text:find('^WLTB:'),'legacy queue was wrapped by CW2 state')
         channelLegacy=m.kind=='CHANNEL'
@@ -63,6 +68,73 @@ assert(not Sync.IsDirectBulkWhisper(envelope,'Forged'),'CW2 sender mismatch acce
 Sync._outgoingRequest.createdAt=H.now-100000
 assert(not Sync.IsDirectBulkWhisper(envelope,'Peer'),'expired CW2 request accepted envelope')
 print('mixed CW2/legacy queues, lost ACK fallback and request expiry: OK')
+
+for _, code in ipairs({'WLRB', 'WLD2'}) do
+    Reset(true)
+    local id = 'cw2-failed-' .. code
+    local prefix = code .. '|Local|' .. id .. '|'
+    if code == 'WLRB' then prefix = prefix .. '1|' end
+    local packets = {prefix .. '1/2|QQ==', prefix .. '2/2|Qg=='}
+    local route = Route(id)
+    route.pipeFree = true
+    local calls = 0
+    SendChatMessage = function(text, kind, language, target)
+        if kind == 'WHISPER' then
+            calls = calls + 1
+            if calls == 2 then error('simulated CW2 disconnect') end
+        end
+        return originalSend(text, kind, language, target)
+    end
+    assert(Sync.EnqueueLogicalTransfer(packets, route))
+    Pump(5)
+    local replay = {}
+    for _, sent in ipairs(H.sentChatMessages) do
+        if sent.kind == 'CHANNEL' then
+            replay[#replay + 1] = sent.text:gsub('||', '|')
+        end
+    end
+    assert(#replay == 2 and replay[1] == packets[1] and replay[2] == packets[2],
+        code .. ' partial CW2 failure did not replay the entire canonical object')
+    assert(Sync.Stats().directFallback == 1)
+end
+
+-- A refused channel send must retain the complete fallback, even in normal
+-- operation. Lab mode cannot define a different success contract.
+Reset(true)
+local refusedRoute = Route('cw2-refused')
+refusedRoute.pipeFree = true
+assert(Sync.EnqueueLogicalTransfer(Single('refused-fallback'), refusedRoute))
+Pump(1)
+H.now = H.now + 13
+Sync.OnUpdate(0)
+SendChatMessage = function() return false end
+Pump(1)
+assert(Sync.WorkState().outbound == 1,
+    'false channel return discarded the fallback')
+assert(Sync.Stats().channelSendFailures == 1)
+assert(Sync.Stats().lastChannelSendFailure:find('returned false', 1, true))
+SendChatMessage = function() error('Invalid escape |cFFFF00\nmessage') end
+Pump(2)
+assert(Sync.WorkState().outbound == 1, 'exception discarded queued fallback')
+local failure = Sync.Stats().lastChannelSendFailure
+assert(failure:find('exception', 1, true) and failure:find('Invalid escape', 1, true))
+assert(failure:find('WLRB', 1, true) and failure:find('wire=', 1, true))
+assert(not failure:find('|', 1, true) and not failure:find('\n', 1, true))
+assert(not failure:find('QQ==', 1, true), 'diagnostics leaked bulk content')
+SendChatMessage = originalSend
+Pump(2) -- respect the existing two-second failure backoff
+assert(Sync.WorkState().outbound == 0)
+assert(H.sentChatMessages[#H.sentChatMessages].text:gsub('||','|')
+    == Single('refused-fallback')[1], 'retained fallback changed wire bytes')
+
+-- Retained fallback work also discards the original whisper encoding flag.
+Reset(true)
+Sync._fallbackTransfers.retained = {payloads=Single('retained-fallback'),pipeFree=true}
+Sync._PumpDirectFallbacks()
+Pump(1)
+assert(not next(Sync._fallbackTransfers))
+assert(H.sentChatMessages[1].text:gsub('||','|') == Single('retained-fallback')[1],
+    'deferred fallback used whisper encoding')
 
 Reset(false)
 assert(Sync.EnqueueLogicalTransfer(Single("disabled"), Route("req-disabled")))
@@ -168,6 +240,71 @@ Pump(1)
 assert(H.sentChatMessages[1]
     and H.sentChatMessages[1].kind == "CHANNEL",
     "expired direct state did not retain the legacy correctness path")
+
+-- The transfer TTL is an inactivity bound, not a wall-clock deadline for a
+-- healthy logical object. A conservative queue can legitimately take longer
+-- than ten minutes while individual chunks continue to make progress.
+Reset(true)
+assert(Sync.EnqueueLogicalTransfer({
+    "WLRB|Local|slow-progress|1|1/2|QQ==",
+    "WLRB|Local|slow-progress|1|2/2|Qg==",
+}, Route("req-slow-progress")))
+Pump(1)
+local progressing = next(Sync._directTransfers)
+assert(progressing, "slow-progress transfer disappeared after its first chunk")
+H.now = H.now + 599
+Sync.PruneTransientState(H.now)
+assert(Sync._directTransfers[progressing]
+    and not next(Sync._fallbackTransfers),
+    "healthy progressing transfer expired from its original admission time")
+Sync.OnUpdate(1.2)
+local slowWhispers = 0
+for _, sent in ipairs(H.sentChatMessages) do
+    if sent.kind == "WHISPER"
+        and sent.text:find("slow%-progress") then
+        slowWhispers = slowWhispers + 1
+    end
+end
+assert(slowWhispers == 2,
+    "healthy long-running transfer did not finish on its direct route")
+
+-- Saturated channel fallbacks count against the same global/per-peer logical
+-- transfer admission bounds. Otherwise repeated failures could grow the
+-- retained fallback table without limit while the channel remained full.
+Reset(true)
+for i = 1, Sync.WorkState().maxFallbackTransfersPerPeer do
+    Sync._fallbackTransfers["bounded-fallback-" .. i] = {
+        key="bounded-fallback-" .. i, target="Peer",
+        requestId="old-" .. i, kind="B", logicalId="old-" .. i,
+        payloads=Single("old-" .. i), fallback=true,
+        fallbackAt=H.now,
+    }
+end
+local bounded, boundedWhy = Sync.EnqueueLogicalTransfer(
+    Single("fallback-overflow"), Route("req-fallback-overflow"))
+assert(not bounded and boundedWhy == "sync queue full",
+    "retained fallbacks did not enforce the per-peer admission bound")
+assert(Sync.WorkState().directFallbackPending
+        == Sync.WorkState().maxFallbackTransfersPerPeer,
+    "fallback admission test changed the bounded retained set")
+
+-- Recovery must not sit behind fresh direct work after a receiver reconnects
+-- and issues another request. The fallback stays canonical channel WLRB/WLD2.
+Reset(true)
+local recovery = {
+    key="priority-recovery", target="Peer", requestId="old-request",
+    kind="B", logicalId="priority-recovery",
+    payloads=Single("priority-recovery"), queuedAt=H.now,
+}
+Sync._directTransfers[recovery.key] = recovery
+assert(Sync._FallbackDirectTransfer(recovery, "simulated lost ACK"))
+assert(Sync.EnqueueLogicalTransfer(Single("fresh-direct"), Route("fresh-request")))
+Pump(1)
+assert(H.sentChatMessages[1] and H.sentChatMessages[1].kind == "CHANNEL"
+    and H.sentChatMessages[1].text:find("priority%-recovery"),
+    "fresh direct work starved canonical channel recovery")
+assert(H.sentChatMessages[1].text:gsub("||", "|")
+    == Single("priority-recovery")[1], "priority recovery changed legacy bytes")
 
 Reset(true)
 assert(Sync.EnqueueLogicalTransfer(Single("redirect"),

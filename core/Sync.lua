@@ -58,6 +58,7 @@ local CODE_PRESENCE   = "WLNP" -- lightweight Nexus peer/version presence
 Sync._enhanced = {extension="WLXQ", ack="WLAK", maxExtensions=256,
     maxExtensionsPerSender=8, extensionTtl=30, maxDirectTransfers=128,
     maxDirectTransfersPerPeer=8, maxDirectQueue=1024, directTransferTtl=600,
+    maxFallbackTransfers=128, maxFallbackTransfersPerPeer=8,
     directFallbackTtl=3600, maxControlBurst=4, maxDeferredDps=128,
     deferredDpsTtl=300, maxCw2ReceivePeers=16,
     cw2ReceiveIdleTtl=30, cw2ReceiveTtl=14400, cw2ResponseTtl=14400}
@@ -487,6 +488,9 @@ function Sync.WorkState()
         maxKnownPeers=MAX_KNOWN_PEERS,
         maxDirectTransfers=Sync._enhanced.maxDirectTransfers,
         maxDirectTransfersPerPeer=Sync._enhanced.maxDirectTransfersPerPeer,
+        maxFallbackTransfers=Sync._enhanced.maxFallbackTransfers,
+        maxFallbackTransfersPerPeer=
+            Sync._enhanced.maxFallbackTransfersPerPeer,
         responseHeadroom=RESPONSE_QUEUE_HEADROOM,
     }
 end
@@ -1135,11 +1139,23 @@ local function EnqueueBatch(payloads, routeContext)
                 total = total + 1
                 if SamePeer(active.target, target) then perTarget = perTarget + 1 end
             end
+            local fallbackTotal, fallbackPerTarget = 0, 0
+            for _, fallback in pairs(Sync._fallbackTransfers) do
+                fallbackTotal = fallbackTotal + 1
+                if SamePeer(fallback.target, target) then
+                    fallbackPerTarget = fallbackPerTarget + 1
+                end
+            end
             local key = table.concat({NormalizePeerName(target), requestId,
                 kind, logicalId}, "|")
-            if total >= Sync._enhanced.maxDirectTransfers
-                or perTarget >= Sync._enhanced.maxDirectTransfersPerPeer
-                or Sync._directTransfers[key] then
+            if total + fallbackTotal >= Sync._enhanced.maxDirectTransfers
+                or perTarget + fallbackPerTarget
+                    >= Sync._enhanced.maxDirectTransfersPerPeer
+                or fallbackTotal >= Sync._enhanced.maxFallbackTransfers
+                or fallbackPerTarget
+                    >= Sync._enhanced.maxFallbackTransfersPerPeer
+                or Sync._directTransfers[key]
+                or Sync._fallbackTransfers[key] then
                 -- Keep negotiated bulk on its selected route. The responder
                 -- retries after an ACK frees a slot instead of silently
                 -- flooding the shared channel because local direct state is
@@ -1148,7 +1164,8 @@ local function EnqueueBatch(payloads, routeContext)
             else
                 transfer = {key=key, target=target, requestId=requestId,
                     kind=kind, logicalId=logicalId, payloads=payloads,
-                    remaining=#payloads, queuedAt=Now(), fallback=false,
+                    remaining=#payloads, queuedAt=Now(),
+                    lastProgressAt=Now(), fallback=false,
                     pipeFree=routeContext.pipeFree == true}
             end
         end
@@ -1175,12 +1192,10 @@ local function EnqueueBatch(payloads, routeContext)
                 transport="WHISPER", target=transfer.target, transfer=transfer}
         elseif channelPriority then
             Sync._priorityQueue.tail = Sync._priorityQueue.tail + 1
-            Sync._priorityQueue.items[Sync._priorityQueue.tail] = routeContext.pipeFree
-                and {payload=payloads[i],pipeFree=true} or payloads[i]
+            Sync._priorityQueue.items[Sync._priorityQueue.tail] = payloads[i]
         else
             sendQueueTail = sendQueueTail + 1
-            sendQueue[sendQueueTail] = routeContext and routeContext.pipeFree
-                and {payload=payloads[i],pipeFree=true} or payloads[i]
+            sendQueue[sendQueueTail] = payloads[i]
         end
     end
     for i = 1, #payloads do
@@ -1304,7 +1319,10 @@ function Sync._FallbackDirectTransfer(transfer, reason)
         end
     end
     Sync._directQueue = {items=retained, head=1, tail=#retained}
-    local queued = EnqueueBatch(transfer.payloads, {pipeFree=transfer.pipeFree})
+    -- Recovery must beat fresh direct work after a receiver reconnects and
+    -- opens another request. This is still the canonical channel encoding;
+    -- channelPriority changes only which bounded queue drains first.
+    local queued = EnqueueBatch(transfer.payloads, {channelPriority=true})
     if not queued then Sync._fallbackTransfers[transfer.key] = transfer end
     stats.directFallback = (stats.directFallback or 0) + 1
     LogEvent("TX", "direct %s transfer %s fell back to channel: %s",
@@ -1317,7 +1335,8 @@ function Sync._PruneDirectState(now)
     now = tonumber(now) or Now()
     for _, transfer in pairs(Sync._directTransfers) do
         if not transfer.fallback
-            and now - (tonumber(transfer.queuedAt) or now)
+            and now - (tonumber(transfer.lastProgressAt)
+                or tonumber(transfer.queuedAt) or now)
                 > Sync._enhanced.directTransferTtl then
             Sync._FallbackDirectTransfer(transfer,
                 "direct transfer state expired")
@@ -1341,7 +1360,7 @@ end
 
 function Sync._PumpDirectFallbacks()
     for key, transfer in pairs(Sync._fallbackTransfers) do
-        local queued = EnqueueBatch(transfer.payloads, {pipeFree=transfer.pipeFree})
+        local queued = EnqueueBatch(transfer.payloads, {channelPriority=true})
         if queued then Sync._fallbackTransfers[key] = nil end
         return
     end
@@ -1438,6 +1457,7 @@ local function PumpQueue(elapsed)
         stats.sent = stats.sent + 1
         stats.directBulkTx = (stats.directBulkTx or 0) + 1
         local transfer = queued.transfer
+        transfer.lastProgressAt = now
         transfer.remaining = math.max(0,
             (tonumber(transfer.remaining) or 1) - 1)
         if transfer.remaining == 0 then
@@ -1454,7 +1474,9 @@ local function PumpQueue(elapsed)
         -- Retain the head packet. Reconnect/revalidation will retry later.
         return
     end
-    local escaped = Sync._EncodeCw2Bulk(payload,type(queued)=="table" and queued.pipeFree)
+    -- Only the whisper adapter uses CW2. Recovery always traverses the same
+    -- canonical channel encoding as a request from an unknown legacy peer.
+    local escaped = payload:gsub("|", "||")
     if #escaped > CHAT_LIMIT then
         LogEvent("TX","DROPPED oversize msg (%d>%d): %s",
             #escaped, CHAT_LIMIT, payload:sub(1,40))
@@ -1465,7 +1487,7 @@ local function PumpQueue(elapsed)
     lastTransportAttempt = now
     local ok, result = pcall(SendChatMessage, escaped, "CHANNEL", nil,
         validatedChannel)
-    if ok and not (Sync._diagnostic and result == false) then
+    if ok and result ~= false then
         PopQueued(queueKind)
         if queueKind == "control" then
             Sync._controlBurst = math.min(Sync._enhanced.maxControlBurst,
@@ -1496,7 +1518,18 @@ local function PumpQueue(elapsed)
             Nexus.SyncLab.SendFailure("CHANNEL",payload,#escaped,result)
         end
         throttlePauseUntil = math.max(throttlePauseUntil or 0, now + 2)
-        LogEvent("TX","SendChatMessage FAILED ch=%s; retained for retry", tostring(channelIndex))
+        -- Keep one bounded summary even if the event ring wraps. Never include
+        -- the bulk payload; strip chat formatting and control bytes from errors.
+        local detail = ok and "returned false" or tostring(result)
+        detail = detail:gsub("[%c|]", " "):sub(1, 180)
+        local code = payload:match("^([A-Z0-9]+)") or "unknown"
+        stats.channelSendFailures = (stats.channelSendFailures or 0) + 1
+        stats.lastChannelSendFailure = string.format(
+            "%s ch=%s lane=%s packet=%s raw=%d wire=%d: %s",
+            ok and "refused" or "exception", tostring(validatedChannel),
+            tostring(queueKind), code:sub(1, 12), #payload, #escaped, detail)
+        LogEvent("TX", "SendChatMessage FAILED; retained for retry: %s",
+            stats.lastChannelSendFailure)
     end
 end
 
@@ -1788,6 +1821,30 @@ end
 
 -- Header-aware chunking: measures the ACTUAL escaped header so no chunk
 -- can ever exceed the hard limit.
+function Sync._SplitChatData(data, budget, maxChunks)
+    if type(data) ~= "string" or data == "" or budget < 1 then
+        return nil, "invalid chunk input"
+    end
+    local chunks, start = {}, 1
+    while start <= #data do
+        -- Ebonhold's native chat parser rejects ||n even after pipe escaping.
+        -- Move the boundary backwards, not the data: legacy receivers already
+        -- concatenate variable-length chunks before Base64 decoding. Use this
+        -- for direct packets too so their canonical fallback is safe unchanged.
+        if data:sub(start,start) == "n" then return nil, "unsafe chat boundary" end
+        local nextStart = math.min(start + budget, #data + 1)
+        while nextStart <= #data and nextStart > start
+            and data:sub(nextStart,nextStart) == "n" do
+            nextStart = nextStart - 1
+        end
+        if nextStart <= start then return nil, "unsafe chat boundary" end
+        if #chunks >= maxChunks then return nil, "too many chunks" end
+        chunks[#chunks+1] = data:sub(start,nextStart-1)
+        start = nextStart
+    end
+    return chunks
+end
+
 function Responder.ChunkBuildMessages(buildId, lastMod, data, responseMode)
     if not ValidIdentifier(tostring(buildId or ""), MAX_BUILD_ID_BYTES)
         or not ValidIntegerText(tostring(lastMod or ""), 0)
@@ -1805,6 +1862,7 @@ function Responder.ChunkBuildMessages(buildId, lastMod, data, responseMode)
 
     local single = string.format("%s|%s|%s|%s|1/1|%s",
         CODE_BUILD, sender, buildId, lastMod, data)
+    if data:sub(1,1) == "n" then return nil, "unsafe chat boundary" end
     if EscapedLen(single) <= CHAT_LIMIT - CHAT_SAFETY - 5 then
         if responseMode then
             Responder.stats.chunkMessagesBuilt =
@@ -1812,14 +1870,14 @@ function Responder.ChunkBuildMessages(buildId, lastMod, data, responseMode)
         end
         return {single}
     end
-    local total = math.ceil(#data / budget)
-    if total > MAX_CHUNKS then return nil, "build too large" end
+    local chunks, why = Sync._SplitChatData(data, budget, MAX_CHUNKS)
+    if not chunks then return nil, why end
+    local total = #chunks
     local messages = {}
     for idx = 1, total do
-        local s = (idx-1)*budget + 1
         messages[#messages + 1] = string.format("%s|%s|%s|%s|%d/%d|%s",
             CODE_BUILD, sender, buildId, lastMod, idx, total,
-            data:sub(s, s+budget-1))
+            chunks[idx])
     end
     if responseMode then
         Responder.stats.chunkMessagesBuilt =
@@ -2241,8 +2299,7 @@ end
 
 function Sync.BroadcastDpsRecord(record, prepared, responseMode, routeContext)
     if type(prepared) ~= "table" then prepared = nil end
-    local fullEvidence=routeContext and (routeContext.pipeFree
-        or (Sync._diagnostic and routeContext.fullEvidence)) or false
+    local fullEvidence = routeContext and routeContext.fullEvidence == true or false
     if prepared and prepared.fullEvidence~=fullEvidence then prepared=nil end
     if responseMode and Responder.Backpressured(routeContext) then
         return false, "sync queue full", prepared
@@ -2326,8 +2383,7 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode, routeContext)
     -- match an exact build already present in its synced catalog. Keeping the
     -- fully validated payload in prepared state preserves retry validation.
     local wirePayload = payload
-    if relayMode and not (routeContext and (routeContext.pipeFree
-        or (Sync._diagnostic and routeContext.fullEvidence))) then
+    if relayMode and not fullEvidence then
         wirePayload = {
             v=6, h=payload.h, c=payload.c, d=payload.d,
             u=payload.u, t=payload.t, g=payload.g,
@@ -2344,11 +2400,12 @@ function Sync.BroadcastDpsRecord(record, prepared, responseMode, routeContext)
     local header = CODE_DPS2 .. "|" .. MyName() .. "|" .. transferId .. "|999/999|"
     local chunkSize = CHAT_LIMIT - CHAT_SAFETY - EscapedLen(header) - 5
     if chunkSize < 24 then return false end
-    local total = math.ceil(#encoded / chunkSize)
-    if total < 1 or total > 999 then return false end
+    local chunks, chunkWhy = Sync._SplitChatData(encoded, chunkSize, 999)
+    if not chunks then return false, chunkWhy end
+    local total = #chunks
     local messages = {}
     for i = 1, total do
-        local data = encoded:sub((i - 1) * chunkSize + 1, i * chunkSize)
+        local data = chunks[i]
         messages[#messages + 1] = string.format("%s|%s|%s|%d/%d|%s",
             CODE_DPS2, MyName(), transferId, i, total, data)
     end
@@ -3059,7 +3116,8 @@ function Sync._HandleRequestExtension(sender, requestId, protocolVersion,
         entry.capabilities = capabilities
         entry.routeContext = {requester=entry.requester,
             requestId=entry.requestId, chatWhisper=extension.chatWhisper,
-            pipeFree=extension.pipeFree and Sync.DirectTransportEnabled()}
+            pipeFree=extension.pipeFree and Sync.DirectTransportEnabled(),
+            fullEvidence=true}
         entry.pendingMaxAge=entry.routeContext.pipeFree
             and Sync._enhanced.cw2ResponseTtl or nil
         if entry.prepared and Responder.ResetResponseEntry then
@@ -3098,7 +3156,8 @@ local function HandleRequest(requester, peerBuildHash, peerDpsHash, requestId)
         capabilities=extension and extension.capabilities or nil,
         routeContext=extension and {requester=requester, requestId=requestId,
             chatWhisper=extension.chatWhisper,
-            pipeFree=extension.pipeFree and Sync.DirectTransportEnabled()} or nil,
+            pipeFree=extension.pipeFree and Sync.DirectTransportEnabled(),
+            fullEvidence=true} or nil,
         createdAt=Now(), lastActiveAt=Now(), prepared=false,
         remaining=StableDelay(key..":prepare:"..MyName()),
         buildProgress={}, dpsProgress={}, bucketCursor=0,

@@ -50,25 +50,25 @@ assert(incomingFilter and outgoingFilter,
 assert(incomingFilter(nil, "CHAT_MSG_WHISPER", escapedDirectWire, "Alice"),
     "incoming escaped Nexus bulk whisper remained visible")
 assert(outgoingFilter(nil, "CHAT_MSG_WHISPER_INFORM",
-    escapedDirectWire, "Daradorla"),
+    escapedDirectWire, "Testreceiver"),
     "outgoing Nexus bulk whisper remained visible")
 assert(not incomingFilter(nil, "CHAT_MSG_WHISPER", "hello", "Alice"),
     "ordinary incoming whisper was hidden")
-assert(not outgoingFilter(nil, "CHAT_MSG_WHISPER_INFORM", "hello", "Daradorla"),
+assert(not outgoingFilter(nil, "CHAT_MSG_WHISPER_INFORM", "hello", "Testreceiver"),
     "ordinary outgoing whisper was hidden")
 print("direct bulk whispers are hidden without filtering ordinary chat -- OK")
 
-Nexus.Sync._diagnostic={peer="Daradorla",id="lab-1-1",pipeFree=true}
+Nexus.Sync._diagnostic={peer="Testreceiver",id="lab-1-1",pipeFree=true}
 local labWire=Nexus.Sync._EncodeLabBulk(directWire)
-assert(outgoingFilter(nil,"CHAT_MSG_WHISPER_INFORM",labWire,"Daradorla"),
+assert(outgoingFilter(nil,"CHAT_MSG_WHISPER_INFORM",labWire,"Testreceiver"),
     "outgoing CW2 lab envelope remained visible")
-local peerWire=Nexus.Sync._EncodeLabBulk("WLD2|Daradorla|record|1/1|QQ==")
-assert(incomingFilter(nil,"CHAT_MSG_WHISPER",peerWire,"Daradorla"))
-assert(not outgoingFilter(nil,"CHAT_MSG_WHISPER_INFORM",peerWire,"Daradorla"),
+local peerWire=Nexus.Sync._EncodeLabBulk("WLD2|Testreceiver|record|1/1|QQ==")
+assert(incomingFilter(nil,"CHAT_MSG_WHISPER",peerWire,"Testreceiver"))
+assert(not outgoingFilter(nil,"CHAT_MSG_WHISPER_INFORM",peerWire,"Testreceiver"),
     "outgoing filter accepted another claimed sender")
-assert(not outgoingFilter(nil,"CHAT_MSG_WHISPER_INFORM","WLTB:hello","Daradorla"))
+assert(not outgoingFilter(nil,"CHAT_MSG_WHISPER_INFORM","WLTB:hello","Testreceiver"))
 Nexus.Sync._diagnostic=nil
-assert(not outgoingFilter(nil,"CHAT_MSG_WHISPER_INFORM",labWire,"Daradorla"),
+assert(not outgoingFilter(nil,"CHAT_MSG_WHISPER_INFORM",labWire,"Testreceiver"),
     "unarmed lab-like chat was hidden")
 
 -- Post through the real UI-facing function

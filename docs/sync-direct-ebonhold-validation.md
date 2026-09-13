@@ -3,6 +3,21 @@
 Direct bulk responses are experimental and default off. Enable them per client
 with `/nexus syncdirect on`; disable them with `/nexus syncdirect off`.
 
+## Offline matrix status, 2026-09-11
+
+The deterministic suite now has one named compatibility matrix covering
+old-to-old, old-to-new, new-to-old, new-to-new with direct disabled, and
+new-to-new with direct enabled. The existing direct suite separately covers an
+API exception, lost ACK, duplicate fallback delivery, disconnect during a
+multi-chunk object, forged ACKs, invalid direct data, and partial receive expiry.
+Equal old/new legacy state and equal enhanced state both become quiet. These are
+protocol tests, not proof of Project Ebonhold chat behavior.
+
+Direct logical transfers use a 600-second sliding inactivity limit. Each sent
+chunk refreshes progress, so a healthy transfer may take longer than ten minutes
+at the unchanged 1.10-second pace. Retained channel fallbacks expire after one
+hour and count against hard 128-global and 8-per-peer logical admission bounds.
+
 ## CW2 normal reconciliation candidate
 
 Enabled clients now advertise `CW2` in the existing six-field WLXQ extension.
@@ -20,20 +35,24 @@ hard limit. This prevents the legacy five-minute pending-work cutoff from
 restarting a large mismatched bucket before its later records are reached.
 CW1, C0, unknown, and legacy requests retain the five-minute limit. All routes
 retain the existing 30-second inactivity expiry and transport pacing.
-CW2 responders send full exact evidence for relayed DPS, so a removed catalog
-build does not by itself prevent acceptance. Missing evidence is still rejected.
+Enhanced responders send full exact evidence for relayed DPS over either route,
+so a removed catalog build does not by itself prevent acceptance. C0, CW1, and
+CW2 request metadata select that evidence independently of the local direct
+setting. Unknown peers retain legacy behavior. Missing evidence is rejected.
 
-Envelope selection is retained on each queued transfer and channel fallback;
-it does not affect concurrent legacy packets. ACKs hash canonical packet bodies.
+Whisper envelope selection is retained only on the direct transfer. Channel
+fallback uses canonical WLRB/WLD2 with normal channel escaping, including after
+queue saturation. An explicit false API result retains the channel packet for
+paced retry. ACKs hash canonical packet bodies.
 Control, discovery, claims, ACKs and spontaneous owner publication remain on
 their unchanged legacy paths. CW1 requests still select CW1; unknown clients
 ignore CW2 and process unchanged WLRQ. Both senders and receivers must opt in
-for normal CW2 direct delivery. This remains experimental, not a release.
+for normal CW2 direct delivery. This remains an experimental opt-in feature.
 
 For the next paired test: reload both clients, set manual mode and direct on
 on both, then run `/nexus sync` on the recipient. Stay resting. After ten
-minutes export `/nexus syncdebug` from both, using `/nexuslab normal` first if
-the log viewer is still showing the saved lab report. Do not clear records.
+minutes export `/nexus syncdebug` from both. The player package does not load
+Sync Lab. Do not clear records.
 The full catalog may take longer than ten minutes at unchanged pacing; this
 is a progress sample, not a promised completion deadline.
 
@@ -44,8 +63,10 @@ Live checks still required:
 - Test ordinary character names and realm-qualified sender/target names. Verify
   an offline target and a target that ignores the sender both cause bounded ACK
   timeout and channel fallback.
-- Verify old to old, old to new, new to old, and new to new convergence using a
-  real Better Nexus v1.19.5 client. Let each pair reach two quiet passes.
+- Verify old/new coexistence using a real Better Nexus v1.19.5 client. Unknown
+  packet codes must be ignored safely, with no error or response flood. Complete
+  receipt of unsupported old data is not required by the maintainer's revised
+  scope. Equivalent legacy state should reach two quiet passes.
 - With direct transport off, confirm every pairing uses `wrbuildssync` and no
   loadout or DPS payload arrives by whisper.
 - With direct transport on for both new clients, request a large build and DPS

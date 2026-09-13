@@ -268,6 +268,6 @@ SlashCmdList.NEXUSLAB = function(message)
         local ok,why=Lab.Start(role,peer,tonumber(count))
         if not ok then Print(why) end
     else
-        Print("/nexuslab receive Wrand | send Daradorla 5 | log | stop | normal")
+        Print("/nexuslab receive Testsender | send Testreceiver 5 | log | stop | normal")
     end
 end
