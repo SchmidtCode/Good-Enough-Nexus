@@ -86,12 +86,13 @@ end
 
 function Validator.Validate(payload, dependencies)
     dependencies = dependencies or {}
-    if not ValidShape(payload) then return false end
-    if payload.c ~= "dummy" and payload.c ~= "lk" then return false end
-    if not ValidMetrics(payload, dependencies) then return false end
-    if not ValidPlayer(payload) then return false end
-    if not ValidIdentity(payload, dependencies) then return false end
-    return ValidLoadout(payload, dependencies)
+    if not ValidShape(payload) then return false, "missing-fingerprint-echoes-or-hash" end
+    if payload.c ~= "dummy" and payload.c ~= "lk" then return false, "category" end
+    if not ValidMetrics(payload, dependencies) then return false, "metrics-duration-time-level" end
+    if not ValidPlayer(payload) then return false, "player-or-class" end
+    if not ValidIdentity(payload, dependencies) then return false, "owner-identity" end
+    if not ValidLoadout(payload, dependencies) then return false, "loadout-fingerprint-or-hash" end
+    return true
 end
 
 return Validator

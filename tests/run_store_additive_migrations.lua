@@ -88,7 +88,7 @@ assert(NexusDB.settingsVersion == Store.SettingsVersion()
 assert(settings.autoPick == false and settings.autoActivate == false
     and settings.updateNotifications == false,
     "existing false preferences were overwritten by defaults")
-assert(settings.autoSave == true and settings.autoBanish == true
+assert(settings.autoSave == false and settings.autoBanish == true
     and settings.anchorNames[1] == "Adaptive Power"
     and settings.syncMode == "automatic"
     and settings.communityRetentionEnabled == false
@@ -183,7 +183,7 @@ NexusDB = {
 }
 Store.Init()
 assert(NexusDB.settingsVersion == 99 and NexusDB.settings.autoPick == false
-    and NexusDB.settings.autoSave == true
+    and NexusDB.settings.autoSave == false
     and NexusDB.settings.futurePreference == "keep"
     and NexusDB.chars.Future.futureSafety == "keep"
     and NexusDB.chars.Future.tomeTogglePending[1] == 55

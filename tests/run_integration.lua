@@ -310,6 +310,7 @@ check(okSave == false, "S12 save refused below level 80")
 ------------------------------------------------------------------------
 -- S13: SAVE at 80 -- domination-guarded save fires once
 ------------------------------------------------------------------------
+NexusDB.settings.autoSave = true -- explicitly opt into the server-save scenario
 H.DeliverSlots({
     [2] = { slot = 2, name = "Main", verified = true, echoes = {
         { spellId = 200100, quality = 3, stacks = 1, locked = false },
@@ -362,6 +363,39 @@ local savesBefore = #H.saveCalls
 H.Advance(8)
 check(#H.saveCalls == savesBefore,
     "S14 non-dominating run (lost coverage, owns filler) never saved")
+
+------------------------------------------------------------------------
+-- S14b: user-visible automatic Saved Build updates control is a hard write
+-- guard. Even a dominating completed run must not touch the active slot.
+------------------------------------------------------------------------
+H.granted = nil
+H.playerLevel = 1
+H.Advance(0.5)
+H.granted = {
+    ["Alpha Strike"] = { { spellId = 200100, stack = 1, maxStack = 1, quality = 3 } },
+    ["Beta Guard"] = { { spellId = 200102, stack = 1, maxStack = 1, quality = 2 } },
+}
+PadGrantedTo79(H.granted, 2)
+A.RequestGranted()
+H.DeliverSlots({
+    [2] = { slot = 2, name = "Main", verified = true, echoes = {
+        { spellId = 200100, quality = 3, stacks = 1, locked = false } } },
+    [3] = { slot = 3, name = "D", verified = false,
+        echoes = DesignedWishlistEchoes() },
+}, 2)
+AssociateSnapshot(2, 3)
+H.buildBusyUntil = -1
+H.playerLevel = 2
+H.DeliverBoard({{spellId=200102,quality=2},{spellId=200202,quality=1}})
+H.Advance(0.3)
+H.playerLevel = 80
+H.Perks.currentChoice = nil
+NexusDB.settings.autoSave = false
+savesBefore = #H.saveCalls
+H.Advance(8)
+check(#H.saveCalls == savesBefore,
+    "S14b auto-save Off allowed a completed run to overwrite a Saved Build")
+NexusDB.settings.autoSave = true
 
 ------------------------------------------------------------------------
 -- S15: advisor mode -- no wishlist, no auto actions

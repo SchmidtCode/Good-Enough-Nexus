@@ -56,7 +56,7 @@ dofile("ui/Panel.lua")
 Nexus.Panel.Init({ ToggleAuto=function() return false end })
 Nexus.Panel.Render({
     progress={
-        wishlistName="Wrand Fury Proc 85",
+        wishlistName="Example Fury Build",
         owned=36,
         total=78,
         missing={"Arcane Cadence", "Archmage's Mark", "Constellations"},

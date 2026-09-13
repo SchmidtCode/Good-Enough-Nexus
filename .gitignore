@@ -27,3 +27,5 @@ Nexus-backup-*/
 # Dependency caches
 node_modules/
 .pnpm-store/
+
+ebonhold.code-workspace

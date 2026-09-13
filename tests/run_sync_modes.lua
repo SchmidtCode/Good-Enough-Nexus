@@ -56,6 +56,9 @@ for _ = 1, 12 do
     H.now = H.now + 1.2
     Sync.OnUpdate(1.2)
 end
+assert((Sync.Stats().requestExtensionTx or 0) >= 1
+    and (Sync.Stats().requestBaseTx or 0) >= 1,
+    "outbound enhanced/base request controls were not instrumented")
 local sentBuild, sentDelete = false, false
 for _, message in ipairs(H.sentChatMessages) do
     sentBuild = sentBuild or message.text:find("WLBI||Boganic||", 1, true) ~= nil
@@ -102,5 +105,47 @@ H.inInstance, H.instanceType = false, "none"
 Sync.ContextChanged("left instance")
 assert(not Sync.IsConnected() and Sync.GetEffectiveState().key == "off",
     "Off resumed after a context transition")
+
+-- Ebonhold may accept JoinTemporaryChannel before GetChannelList exposes its
+-- assigned index. A manual Sync request must survive that asynchronous join.
+H.inCombat, H.inInstance, H.resting = false, false, true
+Sync.SetMode("manual")
+H.joinedChannels = {}
+local delayedJoinVisible = false
+local originalJoinTemporaryChannel = JoinTemporaryChannel
+local originalGetChannelList = GetChannelList
+JoinTemporaryChannel = function() return true end
+GetChannelList = function()
+    if delayedJoinVisible then return 7, Sync.ChannelName() end
+end
+local delayedExtBefore = Sync.Stats().requestExtensionTx or 0
+local delayedBaseBefore = Sync.Stats().requestBaseTx or 0
+local delayedOk, delayedWhy = Sync.RequestSync()
+assert(delayedOk and delayedWhy == "waiting for sync channel"
+    and not Sync.IsConnected() and Sync.WorkState().manualSyncPending,
+    "manual Sync abandoned an accepted asynchronous channel join")
+delayedJoinVisible = true
+-- The live client commonly learns the assigned index from a channel event
+-- before the periodic retry fires.  That path must resume the pending request
+-- too; otherwise the now-connected retry guard skips it forever.
+assert(Sync.EnsureChannel() and Sync.IsConnected(),
+    "channel event path did not expose the delayed channel index")
+H.now = H.now + 10.1
+Sync.OnUpdate(10.1)
+H.now = H.now + 1.2
+Sync.OnUpdate(1.2)
+assert(Sync.IsConnected() and not Sync.WorkState().manualSyncPending
+    and Sync.WorkState().outbound > 0
+    and (Sync.Stats().requestExtensionTx or 0) > delayedExtBefore
+    and (Sync.Stats().requestBaseTx or 0) > delayedBaseBefore,
+    "manual Sync did not resume after the delayed index became visible externally")
+local controlBeforeRefresh = Sync.WorkState().control
+H.now = H.now + 6.1
+local refreshOk, refreshWhy = Sync.RequestSync(true)
+assert(refreshOk and refreshWhy == "sync request refreshed"
+    and Sync.WorkState().control >= controlBeforeRefresh + 2,
+    "explicit Sync became a no-op while global mesh work kept convergence busy")
+JoinTemporaryChannel = originalJoinTemporaryChannel
+GetChannelList = originalGetChannelList
 
 print("Off, Manual, Automatic, resting, combat, and instance Sync policy -- OK")

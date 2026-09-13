@@ -79,6 +79,11 @@ local function Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff7fd5ffNexus:|r " .. tostring(msg))
 end
 
+local function PrintDirectSyncChanged(enabled)
+    Print("Experimental direct sync set to " .. (enabled and "ON" or "OFF")
+        .. ". Channel fallback remains active.")
+end
+
 local function ErrorText(value)
     local errors = Nexus and Nexus.Errors
     if errors and type(errors.SafeText) == "function" then
@@ -338,6 +343,50 @@ local function LockDesignTargetsFor(wishlist)
     return type(bySlot) == "table" and bySlot[key] or nil
 end
 
+-- Allocate owned copies to wishlist targets with the same asymmetric quality
+-- rule used by the picker: a better-quality sibling can fill a lower target,
+-- but a worse-quality sibling cannot fill a higher target. Highest-quality
+-- copies are retained first so a valid upgrade never appears under TO SHED.
+local function QualityQualifiedKeeps(plan, catalog, bySpell)
+    local kept = {}
+    if type(plan) ~= "table" or type(plan.wishedFamilies) ~= "table"
+        or type(bySpell) ~= "table" then return kept end
+    local rows = type(catalog) == "table" and catalog.rows or {}
+    local familyOf = type(catalog) == "table" and catalog.familyOf or {}
+    local candidates = {}
+    for spellId, count in pairs(bySpell) do
+        local id = tonumber(spellId)
+        local row = id and rows[id]
+        local family = id and (familyOf[id] or (row and row.family))
+        count = math.max(0, tonumber(count) or 0)
+        if id and family and plan.wishedFamilies[family] and count > 0 then
+            candidates[#candidates + 1] = {
+                id=id, family=family, quality=tonumber(row and row.quality) or 0,
+                count=count,
+            }
+        end
+    end
+    table.sort(candidates, function(left, right)
+        if left.quality ~= right.quality then return left.quality > right.quality end
+        return left.id < right.id
+    end)
+
+    local simulated = { bySpell={}, byFamily={} }
+    for _, candidate in ipairs(candidates) do
+        for _ = 1, candidate.count do
+            if Model.QualityOfferNeeded(plan, catalog, candidate.family,
+                candidate.quality, simulated) then
+                kept[candidate.id] = (kept[candidate.id] or 0) + 1
+                simulated.bySpell[candidate.id] =
+                    (simulated.bySpell[candidate.id] or 0) + 1
+                simulated.byFamily[candidate.family] =
+                    (simulated.byFamily[candidate.family] or 0) + 1
+            end
+        end
+    end
+    return kept
+end
+
 local function WishlistProgress(plan, owned, catalog, lockOnlyFamilies, wishlist)
     local stackTotal, stackCount, missing, toLock = 0, 0, {}, {}
     if type(plan) ~= "table" or type(plan.wishedFamilies) ~= "table" then
@@ -381,16 +430,15 @@ local function WishlistProgress(plan, owned, catalog, lockOnlyFamilies, wishlist
         end
     end
 
-    -- Coverage is counted per EXACT spellId (Ratchet.WantedExact/ExactCoverage),
-    -- the same identity the save gate uses. Counting by family here made a
-    -- forced Uncommon sibling read as one of the Rare copies the wishlist asked
-    -- for, so STILL NEEDED and the save gate contradicted each other on the
-    -- same run -- see the Ratchet.lua header for the live 2026-08-02 case.
+    local lockedOwned = { byFamily=lockedByFamily, bySpell=lockedBySpell }
+    -- Count with the picker's quality-aware target rule. This remains strict
+    -- against downgrades while allowing a Rare copy to satisfy an Uncommon
+    -- target in Progress and STILL NEEDED.
     for fam in pairs(plan.wishedFamilies) do
         local target = targets[fam]
-        local famExact = Ratchet.TargetExact(target)
-        local have, want = Ratchet.ExactCoverage(famExact, bySpell)
-        local lockedHave = Ratchet.ExactCoverage(famExact, lockedBySpell)
+        local have, want = Model.TargetProgress(plan, catalog, fam, owned)
+        local lockedHave = Model.TargetProgress(
+            plan, catalog, fam, lockedOwned)
         if want <= 0 then
             -- Malformed/absent target: degrade to family granularity rather
             -- than silently dropping the family out of the "N / 79" total.
@@ -676,16 +724,16 @@ local function LoadoutCoverage(activeRow, plan, catalog)
         return {}, nil, {}
     end
     local targets = type(plan.targets) == "table" and plan.targets or {}
-    -- Exact spellId counts, matching WishlistProgress and the save gate: a
-    -- wrong-quality sibling sitting in the loadout is not coverage.
-    local bySpell = {}
+    local bySpell, byFamily = {}, {}
     local locked = {}
     for i = 1, #activeRow.echoes do
         local e = activeRow.echoes[i]
         local fam = e and e.family
         local id = e and tonumber(e.spellId)
         if fam and id and plan.wishedFamilies[fam] then
-            bySpell[id] = (bySpell[id] or 0) + (tonumber(e.stacks) or 1)
+            local count = tonumber(e.stacks) or 1
+            bySpell[id] = (bySpell[id] or 0) + count
+            byFamily[fam] = (byFamily[fam] or 0) + count
             if e.locked then
                 local row = catalog and catalog.rows and catalog.rows[id]
                 locked[#locked + 1] = (row and row.name) or ("spell " .. tostring(id))
@@ -694,10 +742,11 @@ local function LoadoutCoverage(activeRow, plan, catalog)
     end
     local stackTotal, stackCount = 0, 0
     local missing = {}
+    local loadoutOwned = { bySpell=bySpell, byFamily=byFamily }
     for fam in pairs(plan.wishedFamilies) do
         local target = targets[fam]
-        local famExact = Ratchet.TargetExact(target)
-        local have, want = Ratchet.ExactCoverage(famExact, bySpell)
+        local have, want = Model.TargetProgress(
+            plan, catalog, fam, loadoutOwned)
         if want <= 0 then
             want = (type(target) == "table" and tonumber(target.targetStacks)) or 1
             have = 0
@@ -766,12 +815,14 @@ local function BuildProgress(plan, owned, slots, catalog, wishlistOverride, prev
         lockedBySpell[id] = math.max(tonumber(lockedBySpell[id]) or 0, count)
     end
 
-    -- Shed echoes at exact spell/quality granularity. A sibling quality does
-    -- not satisfy the selected wishlist's requested spell ID.
+    -- Shed echoes after allocating quality-qualified wishlist copies. A higher
+    -- quality sibling is kept for a lower target; a downgrade is still shed.
     local shed = {}
     if type(plan) == "table" and type(owned) == "table"
         and type(owned.bySpell) == "table" then
-        local wantedExact, lockedExact = Ratchet.WantedExact(plan), {}
+        local wantedQualified = QualityQualifiedKeeps(
+            plan, catalog, owned.bySpell)
+        local lockedExact = {}
         if type(activeRow) == "table" and type(activeRow.echoes) == "table" then
             for _, e in ipairs(activeRow.echoes) do
                 if e.locked and tonumber(e.spellId) then
@@ -793,7 +844,7 @@ local function BuildProgress(plan, owned, slots, catalog, wishlistOverride, prev
                 .. (shedCount > 1 and (" ×" .. shedCount) or "")
         end
         for id, count in pairs(owned.bySpell) do
-            local keepCount = math.max(tonumber(wantedExact[id]) or 0,
+            local keepCount = math.max(tonumber(wantedQualified[id]) or 0,
                 tonumber(lockedExact[id]) or 0)
             AddShed(id, math.max(0, (tonumber(count) or 0) - keepCount))
         end
@@ -2676,6 +2727,7 @@ local function LogText_State()
 end
 
 local function LogText_Sync()
+    if Nexus.SyncLab and Nexus.SyncLab.showReport then return Nexus.SyncLab.Report() end
     local s = Nexus.Sync
     if not s then return "sync module not loaded" end
     local out = {}
@@ -2696,6 +2748,7 @@ local function LogText_Sync()
     Add("")
 
     local st = s.Stats()
+    local work = s.WorkState and s.WorkState() or {}
     Add("-- counters --")
     Add("messages sent          : %d", st.sent or 0)
     Add("builds stored (new)    : %d", (st.received or 0) - (st.updated or 0))
@@ -2708,11 +2761,46 @@ local function LogText_Sync()
     Add("deleted (tombstoned)   : %d", s.TombstoneCount and s.TombstoneCount() or 0)
     Add("")
 
+    Add("-- reconciliation transport --")
+    Add("experimental CW1/CW2   : %s",
+        tostring(s.DirectTransportEnabled and s.DirectTransportEnabled()))
+    Add("channel control TX/RX  : %d / %d",
+        st.channelControlTx or 0, st.channelControlRx or 0)
+    Add("channel bulk TX/RX     : %d / %d",
+        st.channelBulkTx or 0, st.channelBulkRx or 0)
+    Add("channel send failures : %d", st.channelSendFailures or 0)
+    Add("last channel failure  : %s", st.lastChannelSendFailure or "none")
+    Add("direct bulk TX/RX      : %d / %d",
+        st.directBulkTx or 0, st.directBulkRx or 0)
+    Add("uninvolved bulk RX     : %d", st.uninvolvedBulkRx or 0)
+    Add("direct attempt/ACK     : %d / %d",
+        st.directAttempt or 0, st.directAckSuccess or 0)
+    Add("content-matched ACK    : %d", st.directContentAck or 0)
+    Add("timeout/API fail/fallback: %d / %d / %d",
+        st.directTimeout or 0, st.directImmediateFailure or 0,
+        st.directFallback or 0)
+    Add("request legacy/enhanced: %d / %d",
+        st.legacyRequests or 0, st.enhancedRequests or 0)
+    Add("request control TX ext/base: %d / %d",
+        st.requestExtensionTx or 0, st.requestBaseTx or 0)
+    Add("extensions seen/expired: %d / %d",
+        st.requestExtensionsSeen or 0, st.requestExtensionsExpired or 0)
+    Add("queued bytes/max depth : %d / %d",
+        st.bytesQueued or 0, st.maxQueueDepth or 0)
+    Add("direct duration count/avg/max: %d / %.1fs / %.1fs",
+        st.directTransferDurationCount or 0,
+        (st.directTransferDurationTotal or 0)
+            / math.max(1, st.directTransferDurationCount or 0),
+        st.directTransferDurationMax or 0)
+    Add("pending ACK/fallback   : %d / %d",
+        work.directAckPending or 0, work.directFallbackPending or 0)
+    Add("active CW2 responders  : %d", work.cw2ReceivePeers or 0)
+    Add("")
+
     local dps = Nexus and Nexus.DpsCapture
     local dpsState = dps and dps.SyncDiagnostics
         and dps.SyncDiagnostics() or {}
     local response = s.ResponseStats and s.ResponseStats() or {}
-    local work = s.WorkState and s.WorkState() or {}
     local dummy = dpsState.dummy or {}
     local lk = dpsState.lk or {}
     Add("-- DPS sync --")
@@ -2729,10 +2817,14 @@ local function LogText_Sync()
         st.dpsChunksReceived or 0, st.dpsTransfersCompleted or 0)
     Add("WLD2 accepted direct   : %d", st.dpsDirectAccepted or 0)
     Add("WLD2 accepted relayed  : %d", st.dpsRelayAccepted or 0)
+    Add("WLD2 idempotent no-op  : %d", st.dpsIdempotentAccepted or 0)
     Add("WLD2 rejected owner    : %d", st.dpsOwnerRejected or 0)
     Add("WLD2 rejected capture  : %d", st.dpsRecordRejected or 0)
     Add("last capture rejection : %s",
         tostring(st.lastDpsRejectReason or "none"))
+    Add("WLD2 deferred/accepted/expired: %d / %d / %d (waiting %d)",
+        st.dpsDeferredQueued or 0, st.dpsDeferredAccepted or 0,
+        st.dpsDeferredExpired or 0, work.dpsDeferred or 0)
     Add("outbound owner/relay   : %d / %d records",
         st.dpsOwnerQueued or 0, st.dpsRelayQueued or 0)
     Add("compact relay records  : %d", st.dpsRelayCompactQueued or 0)
@@ -3062,6 +3154,27 @@ local function Init()
         RequestRecompute()
         Print("auto " .. (autoEnabled and "ON" or "OFF"))
         return autoEnabled   -- Panel uses this to repaint the button NOW
+    end, AutoSaveEnabled = function()
+        return Store.Settings().autoSave and true or false
+    end, ToggleAutoSave = function()
+        local settings = Store.Settings()
+        settings.autoSave = not settings.autoSave
+        RequestRecompute()
+        Print("Automatic Saved Build updates set to "
+            .. (settings.autoSave and "ON" or "OFF"))
+        return settings.autoSave
+    end, DirectSyncEnabled = function()
+        return Nexus.Sync and Nexus.Sync.DirectTransportEnabled
+            and Nexus.Sync.DirectTransportEnabled() or false
+    end, ToggleDirectSync = function()
+        if not (Nexus.Sync and Nexus.Sync.SetDirectTransportEnabled) then
+            return false
+        end
+        local current = Nexus.Sync.DirectTransportEnabled
+            and Nexus.Sync.DirectTransportEnabled() or false
+        local enabled = Nexus.Sync.SetDirectTransportEnabled(not current)
+        PrintDirectSyncChanged(enabled)
+        return enabled
     end, RefreshDisplay = function()
         return Nexus.RefreshHudView()
     end })
@@ -3138,6 +3251,17 @@ EH:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4,
             pcall(Nexus.Sync.ContextChanged, event)
         end
     elseif event == "CHAT_MSG_WHISPER" then
+        if initialized and Nexus.Sync and Nexus.Sync.IsDirectBulkWhisper
+            and Nexus.Sync.IsDirectBulkWhisper(arg1, arg2) then
+            local ok, err = pcall(Nexus.Sync.HandleIncoming,
+                arg1, arg2, "WHISPER")
+            if not ok then
+                RecordError("Sync.HandleIncomingWhisper", err)
+                Nexus.Sync.LogEvent("RX", "whisper handler ERROR: %s",
+                    ErrorText(err))
+            end
+            return
+        end
         -- Dev diagnostic: a WLRQ whisper with token "dev" is a status
         -- request from a developer client.  Looks like routine sync traffic.
         if initialized and Nexus.Sync and type(arg1) == "string"
@@ -3180,6 +3304,25 @@ EH:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4,
     end
 end)
 EH:RegisterEvent("CHAT_MSG_WHISPER")
+if ChatFrame_AddMessageEventFilter then
+    local function FilterDirectBulkWhisper(_, event, text, sender, ...)
+        -- WHISPER_INFORM's sender argument is the recipient, not the author
+        -- of the outgoing packet. CW2 needs the actual local author identity.
+        local transportSender = event == "CHAT_MSG_WHISPER" and sender
+            or UnitName("player")
+        if initialized and Nexus.Sync and Nexus.Sync.IsDirectBulkWhisper
+            and Nexus.Sync.IsDirectBulkWhisper(text, transportSender) then
+            return true
+        end
+        return false, text, sender, ...
+    end
+    pcall(ChatFrame_AddMessageEventFilter, "CHAT_MSG_WHISPER",
+        FilterDirectBulkWhisper)
+    -- Sent regular-chat whispers use a separate event. Filter only packets
+    -- that pass the strict direct bulk classifier, leaving normal chat alone.
+    pcall(ChatFrame_AddMessageEventFilter, "CHAT_MSG_WHISPER_INFORM",
+        FilterDirectBulkWhisper)
+end
 EH:SetScript("OnUpdate", function(_, elapsed)
     -- Detect unusually long frame stalls. On 3.3.5 these are common during
     -- loading screens and zone transitions and do not indicate a real problem.
@@ -3480,6 +3623,22 @@ local function CommandSyncMode(message)
         .. ". Sync runs only while resting and in a safe context.")
 end
 
+local function CommandSyncDirect(message)
+    if not (Nexus.Sync and Nexus.Sync.SetDirectTransportEnabled) then
+        Print("sync unavailable"); return
+    end
+    local requested = message:match("^syncdirect%s+(%S+)$")
+    if requested ~= "on" and requested ~= "off" then
+        local enabled = Nexus.Sync.DirectTransportEnabled
+            and Nexus.Sync.DirectTransportEnabled()
+        Print("Experimental direct sync: " .. (enabled and "ON" or "OFF"))
+        Print("usage: /nexus syncdirect <on|off>")
+        return
+    end
+    local enabled = Nexus.Sync.SetDirectTransportEnabled(requested == "on")
+    PrintDirectSyncChanged(enabled)
+end
+
 local function RetentionLimits()
     return Nexus.DataRetention and Nexus.DataRetention.Limits
         and Nexus.DataRetention.Limits(NexusDB) or nil
@@ -3553,8 +3712,10 @@ end
 
 local function CommandSync()
     if not Nexus.Sync then Print("sync unavailable"); return end
-    local ok, err = Nexus.Sync.RequestSync()
-    if ok then
+    local ok, err = Nexus.Sync.RequestSync(true)
+    if ok and err == "waiting for sync channel" then
+        Print("joining the sync channel; your request will start automatically")
+    elseif ok then
         Print("asking other players for their builds -- results appear in /nexus builds")
     else
         Print(tostring(err))
@@ -3609,7 +3770,7 @@ local function CommandHelp()
     Print("v" .. Nexus.VERSION .. " -- " .. statusLine)
     Print("|cffffd200Nexus v" .. Nexus.VERSION .. "|r  --  /nexus (or /nx, /wr)")
     Print("|cffffd200Setup:|r  builds  |  leaderboard  |  editor  |  sync  |  overlay")
-    Print("|cffffd200Sync:|r   syncmode <automatic|manual|off>  |  sync")
+    Print("|cffffd200Sync:|r   syncmode <automatic|manual|off>  |  sync  |  syncdirect <on|off>")
     Print("|cffffd200Limits:|r synclimits <on|off>  |  synclimits <D/L top> <D/L class> <avg top> <avg class> <other> <author>")
     Print("|cffffd200Run:|r    auto  |  panel  |  status  |  wishlist  |  progress")
     Print("|cffffd200Data:|r   log  |  perf  |  perf reset  |  dps  |  nameplate  |  logclear")
@@ -3648,6 +3809,7 @@ local CommandRouter = assert(Nexus.CommandRouter, "CommandRouter required").New(
     patterns={
         {pattern="^probe%s+",handler=CommandProbe},
         {pattern="^syncmode",handler=CommandSyncMode},
+        {pattern="^syncdirect",handler=CommandSyncDirect},
         {pattern="^synclimits",handler=CommandSyncLimits},
         {pattern="^anchor",handler=CommandAnchor},
     },

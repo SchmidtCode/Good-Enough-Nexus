@@ -36,6 +36,11 @@ Nexus.BuildCatalog = {
     Get = function(id)
         return db and db.communityBuilds and db.communityBuilds[id]
     end,
+    Put = function(build)
+        db.communityBuilds[build.id] = build
+        return true, "overlay"
+    end,
+    ClearTombstone = function() return true end,
 }
 
 local function reset(builds)
@@ -93,6 +98,34 @@ local function sendDps2(sender, transfer, record)
         accepted = Sync.HandleIncoming(packet, sender) or accepted
     end
     return accepted
+end
+
+local function buildPackets(sender, build, chunkSize)
+    local compact = {
+        id=build.id, t=build.title, a=build.author, c=build.class,
+        m=build.lastModified,
+        e={},
+    }
+    for _, echo in ipairs(build.echoes) do
+        compact.e[#compact.e + 1] = {
+            echo.spellId or echo.id,
+            echo.quality or echo.rank or 0,
+            echo.stacks or echo.count or 1,
+        }
+    end
+    local encoded = Codec.Base64Encode(Codec.JSONEncode(compact))
+    chunkSize = chunkSize or 180
+    local total = math.ceil(#encoded / chunkSize)
+    local packets = {}
+    for index = 1, total do
+        local start = (index - 1) * chunkSize + 1
+        packets[index] = table.concat({
+            "WLRB", sender, build.id, tostring(build.lastModified),
+            string.format("%d/%d", index, total),
+            encoded:sub(start, start + chunkSize - 1),
+        }, "|")
+    end
+    return packets
 end
 
 reset()
@@ -160,6 +193,17 @@ assert(not sendDps2("RelayPeer", "RelayPeer:50004:dummy", compactV6),
     "compact v6 relay without its exact build was accepted")
 assert(Sync.Stats().lastDpsRejectReason == "legacy-build-unavailable",
     "missing-build rejection reason was not exposed")
+assert(Sync.WorkState().dpsDeferred == 1,
+    "dependency-blocked DPS was not retained")
+for _, packet in ipairs(buildPackets("RelayPeer", legacyBuild)) do
+    Sync.HandleIncoming(packet, "RelayPeer")
+end
+assert(db.communityBuilds[legacyBuild.id],
+    "exact dependency build did not enter the catalog")
+assert(Sync.WorkState().dpsDeferred == 0,
+    "dependency-blocked DPS was not retried after its build arrived")
+assert(#DPS.GetDpsBoard("dummy") == 1,
+    "dependency-blocked DPS was not accepted after its exact build arrived")
 
 reset({ [legacyBuild.id] = legacyBuild })
 local mismatchedV6 = {}
@@ -169,6 +213,13 @@ assert(not sendDps2("RelayPeer", "RelayPeer:50005:dummy", mismatchedV6),
     "compact v6 relay with a mismatched build hash was accepted")
 assert(Sync.Stats().lastDpsRejectReason == "legacy-build-hash-mismatch",
     "build-hash rejection reason was not exposed")
+assert(Sync.WorkState().dpsDeferred == 1,
+    "hash-mismatched DPS was not retained for an exact revision")
+uptime = uptime + 301
+Sync.PruneTransientState(uptime)
+assert(Sync.WorkState().dpsDeferred == 0
+    and Sync.Stats().dpsDeferredExpired == 1,
+    "unresolved deferred DPS did not expire at its hard bound")
 
 -- A dropped chat chunk must be recoverable from the next convergence pass.
 -- Keep the partial transfer long enough to merge a retransmission that loses
@@ -178,6 +229,8 @@ H.sentChatMessages = {}
 assert(Sync.RequestSync(), "retry convergence did not start")
 uptime = uptime + 1.2
 Sync.OnUpdate(1.2)
+uptime = uptime + 1.2
+Sync.OnUpdate(1.2) -- WLXQ is paced separately from legacy-compatible WLRQ
 local retryPackets = dps2Packets(
     "RelayPeer", "RelayPeer:50006:dummy", compactV6, 40)
 assert(#retryPackets >= 4, "retry fixture needs a multi-chunk DPS record")
@@ -188,6 +241,8 @@ assert(Sync.WorkState().dpsInflight == 1,
     "partial DPS transfer was not retained")
 uptime = uptime + 61
 Sync.OnUpdate(61)
+uptime = uptime + 1.2
+Sync.OnUpdate(1.2)
 uptime = uptime + 1.2
 Sync.OnUpdate(1.2)
 assert(Sync.WorkState().dpsInflight == 1,

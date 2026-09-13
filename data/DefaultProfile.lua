@@ -24,7 +24,9 @@ DefaultProfile.defaultSettings = {
     autoPick = true,
     autoActivate = true,
     autoDisable = true,
-    autoSave = true,
+    -- Server Saved Build updates require an explicit choice on new installs.
+    -- Store.FillMissing preserves an existing player's saved ON/OFF setting.
+    autoSave = false,
     autoBanish = true,
     -- Separate opt-IN from the other auto-* switches, defaulting OFF: a
     -- fresh capability (LockPerk/UnlockPerk, confirmed live 2026-08-01)
@@ -38,6 +40,9 @@ DefaultProfile.defaultSettings = {
     -- character is resting (cities/inns), out of combat, and outside gameplay
     -- instances. Manual and Off remain persistent user choices.
     syncMode = "automatic", -- "off", "manual", or "automatic"
+    -- Experimental current-client response optimization. The channel remains
+    -- the permanent fallback and this stays off until live validation passes.
+    syncDirectExperimental = false,
     syncOnlyWhileResting = true,
     syncSuspendInCombat = true,
     syncSuspendedInstanceTypes = {

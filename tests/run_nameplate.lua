@@ -20,9 +20,9 @@ DPS.Init({}, nil)
 -- Seed leaderboard records
 local echoes={{spellId=200100,stacks=2},{spellId=200101,stacks=1}}
 local fp=DPS.GetEchoKey(echoes)
-assert(DPS.ReceiveRecord({v=6,f=fp,e=echoes,c="dummy",d=8000000,u=65,t=50000,p="Alice",k="MAGE",l=80}))
-assert(DPS.ReceiveRecord({v=6,f=fp,e=echoes,c="dummy",d=5000000,u=65,t=50001,p="Bob",k="MAGE",l=80}))
-assert(DPS.ReceiveRecord({v=6,f=fp,e=echoes,c="lk",   d=6500000,u=90,t=50002,p="Alice",k="MAGE",l=80}))
+assert(DPS.ReceiveRecord({v=6,f=fp,e=echoes,c="dummy",d=8000000,u=65,t=50000,p="Alice",k="MAGE",l=80},"Alice"))
+assert(DPS.ReceiveRecord({v=6,f=fp,e=echoes,c="dummy",d=5000000,u=65,t=50001,p="Bob",k="MAGE",l=80},nil,"legacy-relay"))
+assert(DPS.ReceiveRecord({v=6,f=fp,e=echoes,c="lk",   d=6500000,u=90,t=50002,p="Alice",k="MAGE",l=80},"Alice"))
 
 -- 1. GetPlayerInfo rank
 local alice=DPS.GetPlayerInfo("Alice")
@@ -51,6 +51,8 @@ assert(#lines >= 2, "should have badge + rank line for Alice: "..#lines.." lines
 assert(lines[1]:find("Nexus"), "first line should be Nexus badge: "..tostring(lines[1]))
 assert(lines[2] and lines[2]:find("1st",1,true),
     "second line should show compact rank: "..tostring(lines[2]))
+assert(not lines[2]:find("Relayed",1,true),
+    "owner evidence was incorrectly marked as relayed: "..tostring(lines[2]))
 print("Tooltip augmentation adds Nexus badge and rank -- OK")
 
 -- 3. Bob gets correct rank 2
@@ -63,7 +65,9 @@ end
 NP._AugmentUnitTooltip(fakeTooltip)
 assert(lines[2] and lines[2]:find("2nd",1,true),
     "Bob should show #2: "..tostring(lines[2]))
-print("Rank 2 displays correctly -- OK")
+assert(lines[2]:find("Relayed",1,true),
+    "relay evidence did not show a concise tooltip marker: "..tostring(lines[2]))
+print("Rank 2 displays with relay provenance -- OK")
 
 -- 4. Self tooltips remain untouched by the non-intrusive 1.19.3 badge.
 lines={}

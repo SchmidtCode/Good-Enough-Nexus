@@ -122,4 +122,26 @@ assert(#lb3 == 1 and lb3[1].player == "Alice" and lb3[1].dps == 120000,
     "lower remote submissions must not replace the record")
 print("single-record leaderboard rejects lower data -- OK")
 
+-- 8. Rejected duplicate/equivalent/weaker submissions return a reason.
+-- These calls exercise DpsCapture directly so the Sync pcall cannot hide a
+-- Lua exception as a generic capture failure.
+local function AssertSubmissionRejected(label, value, stamp)
+    local callOk, accepted, reason = pcall(
+        DPS.ReceiveSubmission, buildId, "Alice", value, 80, "dummy", stamp)
+    assert(callOk, label .. " submission threw: " .. tostring(accepted))
+    assert(accepted == false and reason == "not-better-than-existing",
+        label .. " submission returned the wrong result/reason")
+end
+
+AssertSubmissionRejected("duplicate", 120000, 12345)
+AssertSubmissionRejected("equivalent", 120000, 12346)
+AssertSubmissionRejected("weaker", 119000, 12347)
+local strongerOk, strongerReason = DPS.ReceiveSubmission(
+    buildId, "Alice", 121000, 80, "dummy", 12348)
+assert(strongerOk == true and strongerReason == nil,
+    "stronger submission was not accepted cleanly")
+assert(DPS.GetLeaderboard(buildId,"dummy")[1].dps == 121000,
+    "stronger submission did not replace the prior record")
+print("submission rejection results are exception-free and explicit -- OK")
+
 print("All DPS capture tests passed.")

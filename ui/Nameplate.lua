@@ -95,9 +95,11 @@ local function AugmentUnitTooltip(tooltip)
         local dpsStr   = FmtDps(info.dps) or "?"
         local catStr   = info.category == "lk" and "LK" or "Dummy"
         local buildStr = info.title and ("|cff888888" .. info.title:sub(1, 28) .. "|r  ") or ""
+        local evidenceStr = info.evidence == "relay"
+            and "  |cffffcc55Relayed|r" or ""
         tooltip:AddLine(
-            string.format("%s|cffffd200%s|r on leaderboard  |cff4dff80%s|r  %s",
-                buildStr, rankStr, dpsStr, catStr),
+            string.format("%s|cffffd200%s|r on leaderboard  |cff4dff80%s|r  %s%s",
+                buildStr, rankStr, dpsStr, catStr, evidenceStr),
             1, 1, 1, true)
     elseif isAuthor then
         tooltip:AddLine("|cff888888Community build author|r", 1, 1, 1)

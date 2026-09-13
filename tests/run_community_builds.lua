@@ -44,6 +44,7 @@ assert(stored.title == "Fire Mage AoE", "wrong title stored")
 assert(stored.description == "Great for farming, easy to play.", "wrong description stored")
 assert(#stored.echoes == 2, "expected 2 echoes captured, got " .. #stored.echoes)
 assert(stored.isMine == true, "own posted build should be tagged isMine")
+stored.lastModified = 1700000000
 print("PostCurrentWishlist correctly snapshots the active wishlist -- OK")
 
 -- 3. Show the window, select the build, verify detail rendering
@@ -60,6 +61,10 @@ CB.Select(id1)
 -- Alpha Strike (200100, owns 1/1) but not Double Strike (200104, owns
 -- 0/3) -- expect 1 missing echo out of 2 total.
 local allTexts = {}
+date = function(_, stamp)
+    if tonumber(stamp) == 1700000000 then return "2023-11-14 22:13" end
+    return "unexpected"
+end
 local realCreateFrame = CreateFrame
 CreateFrame = function(...)
     local f = realCreateFrame(...)
@@ -79,14 +84,20 @@ CB2.Show()
 CB2.Select(id1)
 
 local foundMissingCount = false
+local renderedBuildDates = 0
 for _, fs in ipairs(allTexts) do
     local t = fs.text
     if type(t) == "string" then
         -- New detail panel shows "N echoes -- M missing" as a missingText line
         if t:find("1 missing") then foundMissingCount = true end
+        if t:find("Updated 2023-11-14 22:13", 1, true) then
+            renderedBuildDates = renderedBuildDates + 1
+        end
     end
 end
 assert(foundMissingCount, "detail panel did not show the correct missing count (expected 1 missing)")
+assert(renderedBuildDates >= 2,
+    "build card and detail did not both display the last-updated date")
 print("detail panel shows correct owned/missing status -- OK")
 
 -- 5. Lock-in must go through confirmation, then call the REAL upload path

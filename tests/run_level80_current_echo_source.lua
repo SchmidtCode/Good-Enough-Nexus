@@ -1,6 +1,6 @@
--- Level-80 HUD comparison must read the live active Echo loadout. The
--- leveling-run granted table can differ after loading a saved build or using
--- Orb of Lost Memories and must not feed STILL NEEDED or TO SHED.
+-- Initial level-80 HUD comparison must read the active Echo loadout. The
+-- granted table can still describe the previous leveling run immediately
+-- after loading a Saved Build and must not feed STILL NEEDED or TO SHED.
 local H = dofile("tests/harness.lua")
 H.AddEcho(200111, "Gamma Bolt", { quality = 1, groupId = 50 })
 H.AddEcho(200112, "Gamma Bolt", { quality = 2, groupId = 50 })
@@ -59,6 +59,22 @@ assert(progress.owned == 2 and progress.total == 2 and #progress.missing == 0,
     "STILL NEEDED used stale GetGrantedPerks instead of current level-80 Echoes")
 assert(#(progress.shed or {}) == 0,
     "TO SHED used stale GetGrantedPerks instead of current level-80 Echoes")
+
+-- If an Orb run changes granted data first, it becomes current. A later
+-- Saved Build activation changes the active mirror and must take precedence
+-- again rather than leaving the HUD pinned to the old Orb result.
+H.granted = { orb = {{ spellId = 200111 }} }
+H.Advance(6)
+local orbOwned = Nexus.GameAdapter.CurrentOwned()
+assert(orbOwned.source == "level80-granted" and orbOwned.bySpell[200111] == 1,
+    "changed level-80 granted data did not become the current Orb loadout")
+
+H.wishlist = {{ spellId = 200112, stacks = 1 }}
+H.Advance(2)
+local activated = Nexus.GameAdapter.CurrentOwned()
+assert(activated.source == "active-echo-loadout"
+    and activated.bySpell[200112] == 1 and activated.bySpell[200122] == nil,
+    "Saved Build activation did not retake current-loadout precedence")
 
 -- The live mirror can briefly be an empty table while a saved loadout is
 -- activating. That is unavailable data, not proof that the character has no
