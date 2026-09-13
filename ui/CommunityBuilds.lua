@@ -180,6 +180,48 @@ local function SpellIcon(spellId)
     return (ok and icon and icon ~= "") and icon or "Interface\\Icons\\INV_Misc_QuestionMark"
 end
 
+local ECHO_QUALITY_NAMES = {
+    [0] = "Common", [1] = "Uncommon", [2] = "Rare", [3] = "Epic",
+}
+local ECHO_QUALITY_COLORS = {
+    [0] = { 1, 1, 1 }, [1] = { 0.12, 1, 0 },
+    [2] = { 0, 0.44, 0.87 }, [3] = { 0.64, 0.21, 0.93 },
+}
+
+local function ShowEchoTooltip(hit)
+    local spellId = tonumber(hit and hit._spellId)
+    if not spellId or not GameTooltip then return end
+    GameTooltip:SetOwner(hit, "ANCHOR_RIGHT")
+    local linked = false
+    if type(GameTooltip.SetHyperlink) == "function" then
+        linked = pcall(GameTooltip.SetHyperlink, GameTooltip,
+            "spell:" .. tostring(spellId))
+    end
+    if not linked then
+        local name = GetSpellInfo and GetSpellInfo(spellId)
+        GameTooltip:AddLine(name or ("Echo " .. tostring(spellId)), 1, 1, 1)
+    end
+    local quality = tonumber(hit._quality)
+    local qualityName = ECHO_QUALITY_NAMES[quality]
+    if qualityName then
+        local color = ECHO_QUALITY_COLORS[quality]
+        GameTooltip:AddLine(qualityName,
+            color and color[1] or 1, color and color[2] or 1,
+            color and color[3] or 1)
+    end
+    local stacks = math.max(1, tonumber(hit._stacks) or 1)
+    GameTooltip:AddLine(stacks == 1 and "1 stack"
+        or (tostring(stacks) .. " stacks"), 0.8, 0.8, 0.8)
+    if hit._locked then
+        GameTooltip:AddLine("Locked Echo", 1, 0.82, 0.2)
+    end
+    GameTooltip:Show()
+end
+
+local function HideEchoTooltip()
+    if GameTooltip then GameTooltip:Hide() end
+end
+
 -- Class inference is a workspace rule. The UI uses it only to preselect a
 -- class in the post-build preview.
 local InferBuildClass = Workspace.InferClass
@@ -582,6 +624,7 @@ local function EnsureDetailPanel(parent)
     p.lockedLabel:SetText("LOCKED ECHOES")
 
     p.lockedIcons = {}
+    p.lockedIconHits = {}
     for i = 1, 6 do
         local ic = p:CreateTexture(nil,"ARTWORK")
         ic:SetSize(ECHO_ICON_SIZE+4, ECHO_ICON_SIZE+4)
@@ -589,10 +632,19 @@ local function EnsureDetailPanel(parent)
         ic:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
         ic:Hide()
         p.lockedIcons[i] = ic
+        local hit = CreateFrame("Frame", nil, p)
+        hit:SetSize(ECHO_ICON_SIZE+4, ECHO_ICON_SIZE+4)
+        hit:SetPoint("TOPLEFT", 10 + (i-1)*(ECHO_ICON_SIZE+6), -164)
+        hit:EnableMouse(true)
+        hit:SetScript("OnEnter", ShowEchoTooltip)
+        hit:SetScript("OnLeave", HideEchoTooltip)
+        hit:Hide()
+        p.lockedIconHits[i] = hit
     end
 
     -- echo icon grid: up to 80 icons, 13 per row (shifted down 48px for locked row)
     p.echoIcons = {}
+    p.echoIconHits = {}
     local COLS = 13
     for i = 1, 80 do
         local col = (i-1) % COLS
@@ -603,6 +655,15 @@ local function EnsureDetailPanel(parent)
         ic:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
         ic:Hide()
         p.echoIcons[i] = ic
+        local hit = CreateFrame("Frame", nil, p)
+        hit:SetSize(ECHO_ICON_SIZE, ECHO_ICON_SIZE)
+        hit:SetPoint("TOPLEFT", 10 + col*(ECHO_ICON_SIZE+2),
+            -212 - row*(ECHO_ICON_SIZE+2))
+        hit:EnableMouse(true)
+        hit:SetScript("OnEnter", ShowEchoTooltip)
+        hit:SetScript("OnLeave", HideEchoTooltip)
+        hit:Hide()
+        p.echoIconHits[i] = hit
     end
 
     p.missingText = p:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
@@ -811,6 +872,7 @@ local function EnsureDetailPanel(parent)
     end)
 
     detailPanel = p
+    parent._detailPanel = p
     return p
 end
 
@@ -864,6 +926,7 @@ local function RefreshDetailPanel(build)
     -- per-echo `locked` flags -- now threaded through from Adapter.Slots()
     -- via ImportCurrentSavedLoadouts / PublishImportedBuild / Sync -- so the
     -- icons still populate for a build nobody's posted a score for yet.
+    local echoes = build.echoes or {}
     local D = Nexus.DpsCapture
     local lockedEchoes = nil
     if D then
@@ -898,20 +961,48 @@ local function RefreshDetailPanel(build)
             detailPanel.echoLabel:Hide()
             for i, ic in ipairs(detailPanel.lockedIcons) do
                 local e = lockedEchoes[i]
-                if e then ic:SetTexture(SpellIcon(e.spellId or e.id)); ic:Show()
-                else ic:Hide() end
+                local hit = detailPanel.lockedIconHits
+                    and detailPanel.lockedIconHits[i]
+                if e then
+                    local spellId = e.spellId or e.id
+                    local source = e
+                    if source.quality == nil then
+                        for _, candidate in ipairs(echoes) do
+                            if tonumber(candidate.spellId) == tonumber(spellId) then
+                                source = candidate
+                                break
+                            end
+                        end
+                    end
+                    ic:SetTexture(SpellIcon(spellId)); ic:Show()
+                    if hit then
+                        hit._spellId = spellId
+                        hit._quality = source.quality
+                        hit._stacks = source.stacks or 1
+                        hit._locked = true
+                        hit:Show()
+                    end
+                else
+                    ic:Hide()
+                    if hit then hit:Hide() end
+                end
             end
         else
             detailPanel.lockedLabel:Hide()
             detailPanel.echoLabel:Show()
-            for _, ic in ipairs(detailPanel.lockedIcons) do ic:Hide() end
+            for i, ic in ipairs(detailPanel.lockedIcons) do
+                ic:Hide()
+                if detailPanel.lockedIconHits
+                    and detailPanel.lockedIconHits[i] then
+                    detailPanel.lockedIconHits[i]:Hide()
+                end
+            end
         end
     end
 
     -- echo icons
     local owned = Adapter and Adapter.Owned and Adapter.Owned()
     local bySpell = (owned and owned.bySpell) or {}
-    local echoes = build.echoes or {}
     local hasLoadout = type(build.echoes) == "table" and #build.echoes > 0
     if not hasLoadout and Nexus.Sync and Nexus.Sync.RequestLoadout then
         Nexus.Sync.RequestLoadout(build.id)
@@ -919,6 +1010,7 @@ local function RefreshDetailPanel(build)
     local missing = 0
     for i, ic in ipairs(detailPanel.echoIcons) do
         local e = echoes[i]
+        local hit = detailPanel.echoIconHits and detailPanel.echoIconHits[i]
         if e then
             ic:SetTexture(SpellIcon(e.spellId))
             local have = tonumber(bySpell[e.spellId]) or 0
@@ -930,7 +1022,17 @@ local function RefreshDetailPanel(build)
                 pcall(function() ic:SetVertexColor(1,1,1) end)
             end
             ic:Show()
-        else ic:Hide() end
+            if hit then
+                hit._spellId = e.spellId
+                hit._quality = e.quality
+                hit._stacks = e.stacks or 1
+                hit._locked = e.locked and true or false
+                hit:Show()
+            end
+        else
+            ic:Hide()
+            if hit then hit:Hide() end
+        end
     end
     if hasLoadout then
         local totalSlots = 0

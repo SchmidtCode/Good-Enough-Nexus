@@ -57,6 +57,22 @@ StaticPopupDialogs["NEXUS_UPDATE_RELEASES"] = {
 
 local function SafeText(v) return v ~= nil and tostring(v) or "" end
 
+local QUALITY_COLORS = {
+    Common = "ffffffff",
+    Uncommon = "ff1eff00",
+    Rare = "ff0070dd",
+    Epic = "ffa335ee",
+}
+
+function M.ColorizeQualityText(value)
+    local text = SafeText(value)
+    for quality, color in pairs(QUALITY_COLORS) do
+        text = text:gsub("(%f[%a]" .. quality .. "%f[%A])",
+            "|c" .. color .. "%1|r")
+    end
+    return text
+end
+
 local function DefensiveCopy(value, seen)
     if type(value) ~= "table" then return value end
     seen = seen or {}
@@ -181,14 +197,8 @@ local function CreateToLockWidgets(f)
         GameTooltip:AddLine("they never need to be rolled again.", 0.9, 0.9, 0.9, true)
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("Still need to acquire:", 0.85, 0.6, 1)
-        for i, name in ipairs(toLockNamesCache) do
+        for _, name in ipairs(toLockNamesCache) do
             GameTooltip:AddLine("  • " .. name, 0.85, 0.7, 1)
-            if i >= 25 then
-                if #toLockNamesCache > 25 then
-                    GameTooltip:AddLine("  +" .. (#toLockNamesCache - 25) .. " more", 0.6, 0.6, 0.6)
-                end
-                break
-            end
         end
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("Click to open Wishlist Editor", 0.4, 0.8, 1)
@@ -460,13 +470,29 @@ local function EnsureFrame()
     statusText:SetPoint("TOPLEFT", 2, -1)
     statusText:SetSize(276, 14)
     statusText:SetJustifyH("LEFT")
+    frame._statusHit = HitFrame(rollArea, statusText)
+    frame._statusHit:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine(statusText:GetText(), 0.9, 0.9, 0.9, true)
+        GameTooltip:Show()
+    end)
+    frame._statusHit:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+    frame._cardHits = {}
     for i = 1, 3 do
         local fs = rollArea:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         fs:SetPoint("TOPLEFT", 2, -19 - (i - 1) * 14)
         fs:SetSize(276, 13)
         fs:SetJustifyH("LEFT")
         cardTexts[i] = fs
+        local hit = HitFrame(rollArea, fs)
+        hit:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine(fs:GetText(), 0.9, 0.9, 0.9, true)
+            GameTooltip:Show()
+        end)
+        hit:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        frame._cardHits[i] = hit
     end
 
     recText = rollArea:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -475,6 +501,13 @@ local function EnsureFrame()
     recText:SetJustifyH("LEFT")
     recText:SetJustifyV("TOP")
     recText:SetTextColor(1, 0.82, 0)
+    frame._recommendationHit = HitFrame(rollArea, recText)
+    frame._recommendationHit:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine(recText:GetText(), 1, 0.82, 0, true)
+        GameTooltip:Show()
+    end)
+    frame._recommendationHit:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     rollDivider = rollArea:CreateTexture(nil, "ARTWORK")
     rollDivider:SetSize(278, 1)
@@ -512,14 +545,8 @@ local function EnsureFrame()
         GameTooltip:AddLine("to unlock it. They drop from world content and vendors.", 0.9, 0.9, 0.9, true)
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("Echoes blocked by missing tomes:", 1, 0.8, 0.4)
-        for i, name in ipairs(unknownTomesCache) do
+        for _, name in ipairs(unknownTomesCache) do
             GameTooltip:AddLine("  • " .. name, 1, 0.45, 0.45)
-            if i >= 25 then
-                if #unknownTomesCache > i then
-                    GameTooltip:AddLine("  +" .. (#unknownTomesCache - i) .. " more", 0.7, 0.7, 0.7)
-                end
-                break
-            end
         end
         GameTooltip:Show()
     end)
@@ -545,23 +572,9 @@ local function EnsureFrame()
         GameTooltip:AddLine(" ")
         if #missingNamesCache > 0 then
             GameTooltip:AddLine("Missing Echoes:", 1, 0.65, 0.25)
-            for i, name in ipairs(missingNamesCache) do
-                -- Split "Echo Name ×N (Quality:×N ...)" into label and detail
-                local label, detail = name:match("^(.-)%s+(%b())$")
-                if label and detail then
-                    GameTooltip:AddLine("  • " .. label, 0.9, 0.9, 0.9)
-                    -- Strip outer parens and show quality breakdown indented
-                    local inner = detail:sub(2, -2)
-                    GameTooltip:AddLine("      " .. inner, 0.7, 0.7, 0.7)
-                else
-                    GameTooltip:AddLine("  • " .. name, 0.9, 0.9, 0.9)
-                end
-                if i >= 25 then
-                    if #missingNamesCache > 25 then
-                        GameTooltip:AddLine("  +" .. (#missingNamesCache - 25) .. " more", 0.6, 0.6, 0.6)
-                    end
-                    break
-                end
+            for _, name in ipairs(missingNamesCache) do
+                GameTooltip:AddLine("  • " .. M.ColorizeQualityText(name),
+                    0.9, 0.9, 0.9)
             end
         end
         GameTooltip:AddLine(" ")
@@ -570,6 +583,7 @@ local function EnsureFrame()
     end)
     needHit:SetScript("OnLeave", function() GameTooltip:Hide() end)
     needHit:SetScript("OnMouseUp", function() if Nexus.WishlistEditor then Nexus.WishlistEditor.Show() end end)
+    frame._needText, frame._needHit = needText, needHit
 
     shedLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     shedLabel:SetText("TO SHED")
@@ -590,18 +604,14 @@ local function EnsureFrame()
         GameTooltip:AddLine("Locked Echoes (pinned in your build slot) are", 0.75, 0.75, 0.75, true)
         GameTooltip:AddLine("never listed here, even if off-wishlist.", 0.75, 0.75, 0.75, true)
         GameTooltip:AddLine(" ")
-        for i, name in ipairs(shedNamesCache) do
-            GameTooltip:AddLine("  • " .. name, 0.75, 0.6, 1)
-            if i >= 25 then
-                if #shedNamesCache > 25 then
-                    GameTooltip:AddLine("  +" .. (#shedNamesCache - 25) .. " more", 0.6, 0.6, 0.6)
-                end
-                break
-            end
+        for _, name in ipairs(shedNamesCache) do
+            GameTooltip:AddLine("  • " .. M.ColorizeQualityText(name),
+                0.9, 0.9, 0.9)
         end
         GameTooltip:Show()
     end)
     shedHit:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    frame._shedText, frame._shedHit = shedText, shedHit
 
     -- The TO LOCK row's widgets are built lazily by M.Render (via
     -- CreateToLockWidgets), not here -- EnsureFrame is already at Lua
@@ -811,6 +821,32 @@ local function EnsureFrame()
                     showPerformance = not showPerformance
                     NexusDB.uiShowPerformance = showPerformance
                     if M.Refresh then M.Refresh() end
+                end),
+            },
+            {
+                text = "Automatic Saved Build updates: "
+                    .. ((callbacks and type(callbacks.AutoSaveEnabled) == "function"
+                        and callbacks.AutoSaveEnabled()) and "ON" or "OFF"),
+                notCheckable = true,
+                func = MenuAction(function()
+                    if callbacks and type(callbacks.ToggleAutoSave) == "function" then
+                        callbacks.ToggleAutoSave()
+                    end
+                end),
+            },
+            {
+                text = "Direct sync (experimental): "
+                    .. ((callbacks and type(callbacks.DirectSyncEnabled) == "function"
+                        and callbacks.DirectSyncEnabled()) and "ON" or "OFF"),
+                notCheckable = true,
+                disabled = not (callbacks
+                    and type(callbacks.ToggleDirectSync) == "function"),
+                tooltipTitle = "Experimental direct sync",
+                tooltipText = "Uses recipient-specific chat whispers between capable current clients. Channel sync remains the fallback.",
+                func = MenuAction(function()
+                    if callbacks and type(callbacks.ToggleDirectSync) == "function" then
+                        callbacks.ToggleDirectSync()
+                    end
                 end),
             },
             {
@@ -1470,9 +1506,7 @@ function M.Render(model)
         local needLines = {}
         local shown = math.min(#missingNamesCache, 2)
         for i = 1, shown do
-            -- Strip " (Poor:×N Common:×N ...)" from HUD label — quality
-            -- breakdown is in the tooltip on mouseover instead.
-            needLines[#needLines + 1] = missingNamesCache[i]:gsub("%s+%b()", "")
+            needLines[#needLines + 1] = M.ColorizeQualityText(missingNamesCache[i])
         end
         if #missingNamesCache > shown then needLines[#needLines + 1] = "+" .. (#missingNamesCache - shown) .. " more" end
         needText:SetText(#needLines > 0 and table.concat(needLines, "\n") or "|cff888888No remaining demand|r")
@@ -1482,7 +1516,9 @@ function M.Render(model)
         shedText:SetWidth(frame:GetWidth() / 2 - 18)
         local shedLines = {}
         local shedShown = math.min(#shedNamesCache, 2)
-        for i = 1, shedShown do shedLines[#shedLines + 1] = shedNamesCache[i] end
+        for i = 1, shedShown do
+            shedLines[#shedLines + 1] = M.ColorizeQualityText(shedNamesCache[i])
+        end
         if #shedNamesCache > shedShown then shedLines[#shedLines + 1] = "+" .. (#shedNamesCache - shedShown) .. " more" end
         shedText:SetText(#shedLines > 0 and table.concat(shedLines, "\n") or "|cff888888None|r")
 

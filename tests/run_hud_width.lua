@@ -17,7 +17,7 @@ Nexus.Panel.Init({ToggleAuto=function() return false end})
 local menu
 EasyMenu = function(items) menu = items end
 CloseDropDownMenus = function() end
-Nexus.Panel.Render({progress={wishlistName="Wrand Fury Proc 85",owned=29,total=78,
+Nexus.Panel.Render({progress={wishlistName="Example Fury Build",owned=29,total=78,
     missing={"Arcane Cadence", "Archmage's Mark"},
     shed={"Agility Boost (Common) x2", "Armor Penetration"},
     unknownTomes={"Tome of Arcane Cadence"}}, cards={}, auto=false,level=80})

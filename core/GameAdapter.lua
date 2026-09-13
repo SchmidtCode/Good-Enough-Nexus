@@ -53,6 +53,9 @@ local lastAutoAcceptState, lastRivalState = nil, nil
 local progressCheckAt, progressCheckRequested = 0, false
 local lastProgressSignature
 local knownDiscoveryKeys, knownDiscoveryCount = {}, 0
+local activeLoadoutCheckAt, lastActiveLoadoutSignature = 0, nil
+local ACTIVE_LOADOUT_CHECK_SECONDS = 1
+local level80OwnedSource = "active"
 
 local CORRECTED_CLASS_MASKS = {
     -- PerkClassMasks.DRUID is a client bug (0x200); every Druid DB row uses
@@ -546,16 +549,46 @@ end
 
 local function PollProgressChanges()
     local now = GetTime()
-    if not progressCheckRequested and now < progressCheckAt then return end
-    progressCheckRequested = false
-    progressCheckAt = now + 5
-    local signature, discovered = ProgressSignature()
-    local discoveryChanged = DiscoveryChanged(discovered)
-    if lastProgressSignature ~= nil
-        and (signature ~= lastProgressSignature or discoveryChanged) then
-        dataDirty = true
+    local level = A.Level()
+    if progressCheckRequested or now >= progressCheckAt then
+        progressCheckRequested = false
+        progressCheckAt = now + 5
+        local signature, discovered = ProgressSignature()
+        local discoveryChanged = DiscoveryChanged(discovered)
+        local grantedChanged = lastProgressSignature ~= nil
+            and signature ~= lastProgressSignature
+        if grantedChanged or discoveryChanged then
+            dataDirty = true
+        end
+        if level == 80 and grantedChanged and signature ~= nil
+            and signature ~= "" then
+            level80OwnedSource = "granted"
+        end
+        lastProgressSignature = signature
     end
-    lastProgressSignature = signature
+
+    -- Orb replacements and Saved Build activation mutate the level-80 live
+    -- loadout mirror without necessarily changing GetGrantedPerks or firing a
+    -- journal callback. Compare only its compact spell/count signature once a
+    -- second. A changed signature authorizes one normal Main recomputation;
+    -- unchanged polls never rebuild the HUD.
+    if level == 80 and now >= activeLoadoutCheckAt then
+        activeLoadoutCheckAt = now + ACTIVE_LOADOUT_CHECK_SECONDS
+        local service = PS()
+        local active = service and SafeCall(service.GetActiveEchoLoadout)
+        local counts = EchoListCounts(active)
+        local signature = ClientOwnedSig(counts)
+        if lastActiveLoadoutSignature ~= nil
+            and signature ~= lastActiveLoadoutSignature then
+            dataDirty = true
+            if next(counts) ~= nil then level80OwnedSource = "active" end
+        end
+        lastActiveLoadoutSignature = signature
+    elseif level ~= 80 then
+        lastActiveLoadoutSignature = nil
+        activeLoadoutCheckAt = now
+        level80OwnedSource = "active"
+    end
 end
 
 function A.Owned()
@@ -622,12 +655,20 @@ function A.Owned()
              generation = ownedGeneration }
 end
 
--- Level 80 has a separate live loadout after saved-build activation and Orb
--- replacements. GetGrantedPerks remains the leveling-run source, so the HUD
--- must read GetActiveEchoLoadout instead. A verified active server slot is a
--- fallback for the short window where the direct mirror is unavailable.
+-- Level 80 exposes two live mirrors. Saved-build activation updates
+-- GetActiveEchoLoadout, while Ebonhold's Orb board can update GetGrantedPerks
+-- without changing that persisted loadout. Use whichever populated source
+-- changed most recently. Initial login still prefers the active loadout. A
+-- verified active server slot covers its short unavailable window.
 function A.CurrentOwned()
     if A.Level() ~= 80 then return A.Owned() end
+    if level80OwnedSource == "granted" then
+        local granted = A.Owned()
+        if granted and granted.synced and next(granted.bySpell or {}) ~= nil then
+            granted.source = "level80-granted"
+            return granted
+        end
+    end
     local service = PS()
     local active = service and SafeCall(service.GetActiveEchoLoadout)
     local activeCounts = EchoListCounts(active)
@@ -2021,7 +2062,10 @@ local function InstallHooks()
     -- pcall'd handler chain; an error here breaks the client's own handler
     if pe.PerkUI and type(pe.PerkUI.Show) == "function" then
         hooksecurefunc(pe.PerkUI, "Show", function()
-            local ok = pcall(function() boardDirty = true end)
+            local ok = pcall(function()
+                boardDirty = true
+                progressCheckRequested = true
+            end)
             if not ok then return end
         end)
     end
@@ -2105,6 +2149,9 @@ function A.OnEvent(event)
         boundaryAt = GetTime()
         lastProgressSignature = nil
         progressCheckAt = 0
+        lastActiveLoadoutSignature = nil
+        activeLoadoutCheckAt = 0
+        level80OwnedSource = "active"
         InstallHooks()
         A.RequestGranted()
         boardDirty, slotsDirty = true, true

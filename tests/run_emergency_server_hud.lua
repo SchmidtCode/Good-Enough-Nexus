@@ -56,11 +56,16 @@ end})
 Nexus.Panel.Render({progress={},cards={},recommendation="",auto=false})
 local panel = _G.NexusPanel
 panel._menuBtn:GetScript("OnClick")(panel._menuBtn)
-assert(menuItems and menuItems[5]
-    and menuItems[5].text == "Use Nexus Difficulty / Soul Ash HUD"
-    and not menuItems[5].disabled,
+local mergeItem
+for _, item in ipairs(menuItems or {}) do
+    if item.text == "Use Nexus Difficulty / Soul Ash HUD" then
+        mergeItem = item
+        break
+    end
+end
+assert(mergeItem and not mergeItem.disabled,
     "detected PEH HUD did not expose an enabled Nexus merge action")
-menuItems[5].func()
+mergeItem.func()
 assert(Nexus.ServerStatus.IsUsingNexusHud() == true
     and not stock:IsShown() and mergedSummary
     and mergedSummary.tier == "HC3" and mergedSummary.ash == "12,345",

@@ -1,5 +1,6 @@
--- Level-80 comparison uses the live active loadout but retains the wishlist's
--- exact Echo quality requirements.
+-- Level-80 comparison uses the live active loadout and the same asymmetric
+-- quality rule as the picker: better siblings satisfy a target, worse siblings
+-- do not.
 local H = dofile("tests/harness.lua")
 H.AddEcho(200110, "Gamma Bolt", { quality = 0, groupId = 50 })
 H.AddEcho(200111, "Gamma Bolt", { quality = 1, groupId = 50 })
@@ -56,18 +57,23 @@ H.Advance(0.5)
 
 local progress = assert(Nexus.Panel._lastModel and Nexus.Panel._lastModel.progress,
     "HUD did not publish level-80 progress")
-assert(progress.owned == 1 and progress.total == 2 and #progress.missing == 1,
-    "Rare Expertise Drills incorrectly satisfied the Uncommon target: "
+assert(progress.owned == 2 and progress.total == 2 and #progress.missing == 0,
+    "higher-quality siblings did not satisfy both targets: "
         .. tostring(progress.owned) .. "/" .. tostring(progress.total)
         .. " missing=" .. table.concat(progress.missing or {}, ","))
 
 local shed = {}
 for _, label in ipairs(progress.shed or {}) do shed[label] = true end
-assert(shed["Expertise Drills (Rare)"],
-    "wrong-quality Expertise Drills was not marked TO SHED")
-assert(shed["Gamma Bolt (Common)"]
-    and shed["Gamma Bolt (Uncommon)"]
-    and shed["Gamma Bolt (Rare) ×2"],
-    "exact-quality excess was not reported correctly")
+assert(not shed["Expertise Drills (Rare)"],
+    "higher-quality Expertise Drills was incorrectly marked TO SHED")
+local uncommonExcess = false
+for label in pairs(shed) do
+    if label:find("Gamma Bolt (Uncommon)", 1, true) then
+        uncommonExcess = true
+    end
+end
+assert(shed["Gamma Bolt (Common)"] and shed["Gamma Bolt (Rare)"]
+    and uncommonExcess,
+    "lower-quality and excess copies were not reported correctly")
 
-print("level-80 live progress retains exact wishlist qualities -- OK")
+print("level-80 live progress respects asymmetric wishlist quality -- OK")

@@ -2174,6 +2174,9 @@ local function EnsureFrame()
         GameTooltip:Show()
     end)
     applyBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    -- Keep the real Save button reachable to end-to-end tests. This avoids a
+    -- second test-only save path that could drift from the UI click handler.
+    frame._applyBtn = applyBtn
 
     -- Cosmetic only, deliberately last: every functional widget above
     -- already exists regardless of whether this succeeds (this exact

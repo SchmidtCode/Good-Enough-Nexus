@@ -79,6 +79,11 @@ local function Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cff7fd5ffNexus:|r " .. tostring(msg))
 end
 
+local function PrintDirectSyncChanged(enabled)
+    Print("Experimental direct sync set to " .. (enabled and "ON" or "OFF")
+        .. ". Channel fallback remains active.")
+end
+
 local function ErrorText(value)
     local errors = Nexus and Nexus.Errors
     if errors and type(errors.SafeText) == "function" then
@@ -338,6 +343,50 @@ local function LockDesignTargetsFor(wishlist)
     return type(bySlot) == "table" and bySlot[key] or nil
 end
 
+-- Allocate owned copies to wishlist targets with the same asymmetric quality
+-- rule used by the picker: a better-quality sibling can fill a lower target,
+-- but a worse-quality sibling cannot fill a higher target. Highest-quality
+-- copies are retained first so a valid upgrade never appears under TO SHED.
+local function QualityQualifiedKeeps(plan, catalog, bySpell)
+    local kept = {}
+    if type(plan) ~= "table" or type(plan.wishedFamilies) ~= "table"
+        or type(bySpell) ~= "table" then return kept end
+    local rows = type(catalog) == "table" and catalog.rows or {}
+    local familyOf = type(catalog) == "table" and catalog.familyOf or {}
+    local candidates = {}
+    for spellId, count in pairs(bySpell) do
+        local id = tonumber(spellId)
+        local row = id and rows[id]
+        local family = id and (familyOf[id] or (row and row.family))
+        count = math.max(0, tonumber(count) or 0)
+        if id and family and plan.wishedFamilies[family] and count > 0 then
+            candidates[#candidates + 1] = {
+                id=id, family=family, quality=tonumber(row and row.quality) or 0,
+                count=count,
+            }
+        end
+    end
+    table.sort(candidates, function(left, right)
+        if left.quality ~= right.quality then return left.quality > right.quality end
+        return left.id < right.id
+    end)
+
+    local simulated = { bySpell={}, byFamily={} }
+    for _, candidate in ipairs(candidates) do
+        for _ = 1, candidate.count do
+            if Model.QualityOfferNeeded(plan, catalog, candidate.family,
+                candidate.quality, simulated) then
+                kept[candidate.id] = (kept[candidate.id] or 0) + 1
+                simulated.bySpell[candidate.id] =
+                    (simulated.bySpell[candidate.id] or 0) + 1
+                simulated.byFamily[candidate.family] =
+                    (simulated.byFamily[candidate.family] or 0) + 1
+            end
+        end
+    end
+    return kept
+end
+
 local function WishlistProgress(plan, owned, catalog, lockOnlyFamilies, wishlist)
     local stackTotal, stackCount, missing, toLock = 0, 0, {}, {}
     if type(plan) ~= "table" or type(plan.wishedFamilies) ~= "table" then
@@ -381,16 +430,15 @@ local function WishlistProgress(plan, owned, catalog, lockOnlyFamilies, wishlist
         end
     end
 
-    -- Coverage is counted per EXACT spellId (Ratchet.WantedExact/ExactCoverage),
-    -- the same identity the save gate uses. Counting by family here made a
-    -- forced Uncommon sibling read as one of the Rare copies the wishlist asked
-    -- for, so STILL NEEDED and the save gate contradicted each other on the
-    -- same run -- see the Ratchet.lua header for the live 2026-08-02 case.
+    local lockedOwned = { byFamily=lockedByFamily, bySpell=lockedBySpell }
+    -- Count with the picker's quality-aware target rule. This remains strict
+    -- against downgrades while allowing a Rare copy to satisfy an Uncommon
+    -- target in Progress and STILL NEEDED.
     for fam in pairs(plan.wishedFamilies) do
         local target = targets[fam]
-        local famExact = Ratchet.TargetExact(target)
-        local have, want = Ratchet.ExactCoverage(famExact, bySpell)
-        local lockedHave = Ratchet.ExactCoverage(famExact, lockedBySpell)
+        local have, want = Model.TargetProgress(plan, catalog, fam, owned)
+        local lockedHave = Model.TargetProgress(
+            plan, catalog, fam, lockedOwned)
         if want <= 0 then
             -- Malformed/absent target: degrade to family granularity rather
             -- than silently dropping the family out of the "N / 79" total.
@@ -676,16 +724,16 @@ local function LoadoutCoverage(activeRow, plan, catalog)
         return {}, nil, {}
     end
     local targets = type(plan.targets) == "table" and plan.targets or {}
-    -- Exact spellId counts, matching WishlistProgress and the save gate: a
-    -- wrong-quality sibling sitting in the loadout is not coverage.
-    local bySpell = {}
+    local bySpell, byFamily = {}, {}
     local locked = {}
     for i = 1, #activeRow.echoes do
         local e = activeRow.echoes[i]
         local fam = e and e.family
         local id = e and tonumber(e.spellId)
         if fam and id and plan.wishedFamilies[fam] then
-            bySpell[id] = (bySpell[id] or 0) + (tonumber(e.stacks) or 1)
+            local count = tonumber(e.stacks) or 1
+            bySpell[id] = (bySpell[id] or 0) + count
+            byFamily[fam] = (byFamily[fam] or 0) + count
             if e.locked then
                 local row = catalog and catalog.rows and catalog.rows[id]
                 locked[#locked + 1] = (row and row.name) or ("spell " .. tostring(id))
@@ -694,10 +742,11 @@ local function LoadoutCoverage(activeRow, plan, catalog)
     end
     local stackTotal, stackCount = 0, 0
     local missing = {}
+    local loadoutOwned = { bySpell=bySpell, byFamily=byFamily }
     for fam in pairs(plan.wishedFamilies) do
         local target = targets[fam]
-        local famExact = Ratchet.TargetExact(target)
-        local have, want = Ratchet.ExactCoverage(famExact, bySpell)
+        local have, want = Model.TargetProgress(
+            plan, catalog, fam, loadoutOwned)
         if want <= 0 then
             want = (type(target) == "table" and tonumber(target.targetStacks)) or 1
             have = 0
@@ -766,12 +815,14 @@ local function BuildProgress(plan, owned, slots, catalog, wishlistOverride, prev
         lockedBySpell[id] = math.max(tonumber(lockedBySpell[id]) or 0, count)
     end
 
-    -- Shed echoes at exact spell/quality granularity. A sibling quality does
-    -- not satisfy the selected wishlist's requested spell ID.
+    -- Shed echoes after allocating quality-qualified wishlist copies. A higher
+    -- quality sibling is kept for a lower target; a downgrade is still shed.
     local shed = {}
     if type(plan) == "table" and type(owned) == "table"
         and type(owned.bySpell) == "table" then
-        local wantedExact, lockedExact = Ratchet.WantedExact(plan), {}
+        local wantedQualified = QualityQualifiedKeeps(
+            plan, catalog, owned.bySpell)
+        local lockedExact = {}
         if type(activeRow) == "table" and type(activeRow.echoes) == "table" then
             for _, e in ipairs(activeRow.echoes) do
                 if e.locked and tonumber(e.spellId) then
@@ -793,7 +844,7 @@ local function BuildProgress(plan, owned, slots, catalog, wishlistOverride, prev
                 .. (shedCount > 1 and (" ×" .. shedCount) or "")
         end
         for id, count in pairs(owned.bySpell) do
-            local keepCount = math.max(tonumber(wantedExact[id]) or 0,
+            local keepCount = math.max(tonumber(wantedQualified[id]) or 0,
                 tonumber(lockedExact[id]) or 0)
             AddShed(id, math.max(0, (tonumber(count) or 0) - keepCount))
         end
@@ -2717,6 +2768,8 @@ local function LogText_Sync()
         st.channelControlTx or 0, st.channelControlRx or 0)
     Add("channel bulk TX/RX     : %d / %d",
         st.channelBulkTx or 0, st.channelBulkRx or 0)
+    Add("channel send failures : %d", st.channelSendFailures or 0)
+    Add("last channel failure  : %s", st.lastChannelSendFailure or "none")
     Add("direct bulk TX/RX      : %d / %d",
         st.directBulkTx or 0, st.directBulkRx or 0)
     Add("uninvolved bulk RX     : %d", st.uninvolvedBulkRx or 0)
@@ -3101,6 +3154,27 @@ local function Init()
         RequestRecompute()
         Print("auto " .. (autoEnabled and "ON" or "OFF"))
         return autoEnabled   -- Panel uses this to repaint the button NOW
+    end, AutoSaveEnabled = function()
+        return Store.Settings().autoSave and true or false
+    end, ToggleAutoSave = function()
+        local settings = Store.Settings()
+        settings.autoSave = not settings.autoSave
+        RequestRecompute()
+        Print("Automatic Saved Build updates set to "
+            .. (settings.autoSave and "ON" or "OFF"))
+        return settings.autoSave
+    end, DirectSyncEnabled = function()
+        return Nexus.Sync and Nexus.Sync.DirectTransportEnabled
+            and Nexus.Sync.DirectTransportEnabled() or false
+    end, ToggleDirectSync = function()
+        if not (Nexus.Sync and Nexus.Sync.SetDirectTransportEnabled) then
+            return false
+        end
+        local current = Nexus.Sync.DirectTransportEnabled
+            and Nexus.Sync.DirectTransportEnabled() or false
+        local enabled = Nexus.Sync.SetDirectTransportEnabled(not current)
+        PrintDirectSyncChanged(enabled)
+        return enabled
     end, RefreshDisplay = function()
         return Nexus.RefreshHudView()
     end })
@@ -3562,8 +3636,7 @@ local function CommandSyncDirect(message)
         return
     end
     local enabled = Nexus.Sync.SetDirectTransportEnabled(requested == "on")
-    Print("Experimental direct sync set to " .. (enabled and "ON" or "OFF")
-        .. ". Channel fallback remains active.")
+    PrintDirectSyncChanged(enabled)
 end
 
 local function RetentionLimits()

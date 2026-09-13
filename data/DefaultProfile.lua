@@ -24,7 +24,9 @@ DefaultProfile.defaultSettings = {
     autoPick = true,
     autoActivate = true,
     autoDisable = true,
-    autoSave = true,
+    -- Server Saved Build updates require an explicit choice on new installs.
+    -- Store.FillMissing preserves an existing player's saved ON/OFF setting.
+    autoSave = false,
     autoBanish = true,
     -- Separate opt-IN from the other auto-* switches, defaulting OFF: a
     -- fresh capability (LockPerk/UnlockPerk, confirmed live 2026-08-01)
