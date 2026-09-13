@@ -76,6 +76,10 @@ cases remain open.
 
 ## Before publishing
 
+The maintainer reports the disposable-slot safety test passed after the live
+HUD fix. The following procedure remains the repeatable candidate smoke test;
+real v1.19.5 coexistence and complete historical convergence are still unproven.
+
 1. Restart both clients with the candidate. On each run `/nexus syncmode manual`,
    `/nexus syncdirect off`, then `/nexus sync` on BOTH clients. Manual mode is
    disconnected while idle; the sync command opens the session. Wait ten seconds
@@ -107,9 +111,9 @@ sustained 1/10/100/200-message loads. Cross-faction requires its own validation
 before advertising support.
 
 Full 200-record convergence and private-server throttling remain unproven.
-Direct stays default off. The build-loss report remains open until the
-disposable-slot check passes. Quality-table consolidation and a larger Sync.lua
-module split are deferred.
+Direct stays default off. The maintainer reports the disposable-slot check
+passed; the original third-party build-loss reports remain unexplained.
+Quality-table consolidation and a larger Sync.lua module split are deferred.
 
 The HUD's top-left settings menu exposes the persistent
 `Direct sync (experimental): ON/OFF` control. It calls the same setter as the

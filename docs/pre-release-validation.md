@@ -8,8 +8,10 @@ raw reports remain in ignored local notes.
 
 ## Current release decision
 
-Candidate preparation is in progress. Publishing remains contingent on the
-live checks below. No tag, push, or public release is performed by this pass.
+The maintainer reports the final disposable-slot safety test succeeded and
+requests release review. The candidate is recommended as an experimental
+prerelease with direct transport default OFF, pending publication approval.
+Broader live compatibility and convergence coverage remains incomplete.
 
 The updated candidate passes 148/148 Lua tests, 7/7 Node tests, static Lua 5.1
 parsing, and diff checks. Its changed runtime files are installed locally with
@@ -38,8 +40,9 @@ See [release-candidate-1.96.5.md](release-candidate-1.96.5.md) for the next test
 - Later live CW2 delivery sent 384 direct bulk messages with 17 content ACKs and
   no failure in that sample. Receiver reload then produced two timeouts and two
   canonical channel fallbacks with no duplicate-row damage.
-- Before publication: complete the disposable-slot safety check, default-off
-  channel history check, and old/new coexistence. Wanted-Echo refresh passed.
+- The maintainer reports the disposable-slot safety check passed. Wanted-Echo
+  refresh and default-off channel delivery also passed live. Full old/new
+  coexistence remains a validation limitation.
   Full whisper failure and fanout validation remains necessary before claiming
   direct transport production-ready or enabling it by default.
 - Quality-table consolidation and a larger Sync.lua module split are deferred.
@@ -184,7 +187,9 @@ the live matrix distinguishes transport delivery from unsendable evidence.
 
 ### Builds reported as auto-deleted
 
-Status: unproven, high severity, release blocker.
+Status: original third-party loss reports remain unexplained. The maintainer
+reports the candidate's disposable-slot safety test passed. This closes the
+candidate test gate, not the investigation into historical reports.
 
 New or missing settings now default `autoSave` to false. Existing explicit true
 settings remain true. When enabled, after a completed observed run passes the
