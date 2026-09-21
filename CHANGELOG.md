@@ -1,3 +1,9 @@
+# Nexus 1.96.6 Still Needed rarity fix
+
+- Shows the requested rarity for single-quality targets in Still Needed, with the same rarity colors as To Shed in both the HUD and tooltip.
+
+Verified in-game on Project Ebonhold. This small patch retains v1.96.5's experimental release status.
+
 # Nexus 1.96.5 Experimental Leaderboard Sync
 
 - Lets current Nexus clients carry stored DPS records while the original player is offline.

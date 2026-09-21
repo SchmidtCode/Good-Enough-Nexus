@@ -27,7 +27,7 @@ for _, invalid in ipairs({"", "v", "01.2.3", "1..2", "1.2.3-", "1.2.3+",
     assert(Version.Parse(invalid) == nil, "malformed version accepted: " .. tostring(invalid))
 end
 
-assert(Nexus.Release.version == "1.96.5"
+assert(Nexus.Release.version == "1.96.6"
     and Nexus.Release.baseVersion == "1.19.5"
     and Nexus.Release.published == true
     and Nexus.Release.emergencyCommunityOff == false,

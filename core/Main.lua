@@ -6,7 +6,7 @@
 -- any closure that reads it.
 
 Nexus = Nexus or {}
-Nexus.VERSION = (Nexus.Release and Nexus.Release.version) or "1.96.5"
+Nexus.VERSION = (Nexus.Release and Nexus.Release.version) or "1.96.6"
 
 local Model, Policy, Ratchet, Strategy, Store, Adapter
 local Readout, Panel, JournalTab, DefaultProfile
@@ -479,7 +479,12 @@ local function WishlistProgress(plan, owned, catalog, lockOnlyFamilies, wishlist
                 end
                 missing[#missing + 1] = label
             else
-                missing[#missing + 1] = tostring(nm or fam) .. (remain > 1 and (" ×" .. remain) or "")
+                -- Preserve the requested quality even for a single-tier family.
+                -- Panel uses the same quality labels to color Needed and Shed.
+                local q = tiers and tiers[1] and tonumber(tiers[1].q)
+                missing[#missing + 1] = tostring(nm or fam)
+                    .. (q ~= nil and (" (" .. QualityName(q) .. ")") or "")
+                    .. (remain > 1 and (" ×" .. remain) or "")
             end
         end
         end

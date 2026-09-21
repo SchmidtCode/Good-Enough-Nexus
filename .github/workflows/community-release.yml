@@ -3,7 +3,7 @@ name: Draft Nexus community release
 on:
   push:
     tags:
-      - "v1.96.5"
+      - "v1.96.6"
 
 permissions:
   contents: write
