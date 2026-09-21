@@ -10,7 +10,7 @@ const toc = fs.readFileSync(path.join(root, "Nexus.toc"), "utf8");
 const release = fs.readFileSync(path.join(root, "data", "Release.lua"), "utf8");
 const runtimeFiles = Packager.parseToc(toc);
 
-assert.strictEqual(Packager.tocVersion(toc), "1.96.5",
+assert.strictEqual(Packager.tocVersion(toc), "1.96.6",
     "TOC should carry the community release version");
 assert.ok(runtimeFiles.includes("core/Main.lua")
     && runtimeFiles.includes("ui/Leaderboard.lua"),
@@ -19,9 +19,9 @@ assert.ok(runtimeFiles.every((file) => !/^(tests|benchmarks|tools)\//.test(file)
     "packager should exclude development files");
 assert.ok(!runtimeFiles.includes("core/SyncLab.lua"),
     "player package must not load the development sync lab");
-assert.deepStrictEqual(Packager.validateIdentity("v1.96.5",
-    "SchmidtCode/Good-Enough-Nexus", toc, release).version, "1.96.5");
-Packager.validateRuntimeIdentity("1.96.5",
+assert.deepStrictEqual(Packager.validateIdentity("v1.96.6",
+    "SchmidtCode/Good-Enough-Nexus", toc, release).version, "1.96.6");
+Packager.validateRuntimeIdentity("1.96.6",
     fs.readFileSync(path.join(root, "core", "Main.lua"), "utf8"),
     fs.readFileSync(path.join(root, "ui", "Changelog.lua"), "utf8"));
 assert.throws(() => Packager.validateIdentity("v1.96.2",
@@ -29,12 +29,12 @@ assert.throws(() => Packager.validateIdentity("v1.96.2",
 "packager should reject a tag and addon version mismatch");
 assert.throws(() => Packager.safeRuntimePath("../tests/harness.lua"), /unsafe/,
     "packager should reject TOC path traversal");
-assert.throws(() => Packager.validateRuntimeIdentity("1.96.5", "", ""),
+assert.throws(() => Packager.validateRuntimeIdentity("1.96.6", "", ""),
     /does not match/, "packager should reject stale runtime release identities");
 
 const workflowPath = path.join(root, ".github", "workflows", "community-release.yml");
 const workflow = fs.readFileSync(workflowPath, "utf8");
-assert.match(workflow, /tags:\s*\n\s*- "v1\.96\.5"/,
+assert.match(workflow, /tags:\s*\n\s*- "v1\.96\.6"/,
     "release workflow should run only for the intended tag");
 assert.match(workflow, /refs\/remotes\/origin\/main/,
     "release workflow should require the branch tip");

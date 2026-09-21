@@ -4,8 +4,8 @@ Nexus = Nexus or {}
 local M = {}
 Nexus.Changelog = M
 
-local VERSION = "1.96.5"
-local RELEASE_KEY = "1.96.5"
+local VERSION = "1.96.6"
+local RELEASE_KEY = "1.96.6"
 local frame
 local shownThisSession = false
 
@@ -43,28 +43,22 @@ local function Create()
 
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -20)
-    title:SetText("Nexus 1.96.5 Experimental")
+    title:SetText("Nexus 1.96.6 Rarity fix")
 
     local body = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     body:SetPoint("TOPLEFT", 28, -52)
     body:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 52)
     body:SetJustifyH("LEFT")
     body:SetJustifyV("TOP")
-    body:SetText([[|cffff5050Experimental leaderboard sync|r
+    body:SetText([[|cffffd200Still Needed rarity fix|r
 
-- Back up NexusDB and WishlistRealizerDB before testing this release.
-- If Nexus causes stutter, long syncs, FPS loss, or unusual memory use, report it to me and reinstall v1.96.4.
+Still Needed now shows the requested rarity for single-quality Echo targets in both the HUD and tooltip, using the same rarity colors as To Shed.
 
-|cffffd200How DPS sync now works|r
+|cffff5050Experimental leaderboard sync|r
 
-- Your own addon still records only your highest DPS for each encounter.
-- Current clients attach a server timestamp to the owner's saved record. The newest owner snapshot wins during sync.
-- Current clients can relay stored records while the original player is offline, so history spreads as more players update.
+This patch retains v1.96.5's experimental sync behavior and settings. During sync, the newest owner snapshot wins; local capture still keeps your highest DPS.
 
-|cffffd200Older versions|r
-
-- Records sent directly by v1.19.5 players are accepted.
-- Older clients cannot carry third-party history and may continue showing their older highest score until they update.]])
+Back up NexusDB and WishlistRealizerDB before testing. If sync causes stutter, long syncs, FPS loss, or unusual memory use, report it and reinstall v1.96.4.]])
 
     local close = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     close:SetSize(92, 24)

@@ -50,6 +50,16 @@ local before = assert(Nexus.Panel._lastModel and Nexus.Panel._lastModel.progress
 assert(before.owned == 0 and before.total == 1 and #before.missing == 1,
     "test setup did not begin with Unbridled Fury missing")
 
+assert(NexusPanel._needText.text:find("|cff1eff00Uncommon|r", 1, true),
+    "Still Needed omitted the single-tier target quality/color")
+GameTooltip = {
+    lines = {}, SetOwner = function(self) self.lines = {} end,
+    AddLine = function(self, text) self.lines[#self.lines + 1] = tostring(text or "") end,
+    Show = function() end, Hide = function() end,
+}
+NexusPanel._needHit:GetScript("OnEnter")(NexusPanel._needHit)
+assert(table.concat(GameTooltip.lines, "\n"):find("|cff1eff00Uncommon|r", 1, true),
+    "Still Needed tooltip omitted the single-tier target quality/color")
 -- The orb grants Rare while the selected target only asks for Uncommon.
 H.granted = { current = {{ spellId = 200112, stacks = 1 }} }
 H.Advance(6)
